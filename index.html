@@ -1,0 +1,749 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <meta name="theme-color" content="#0f172a" />
+    <title>Admin · Flipkart Pickup</title>
+
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-database.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+
+    <style>
+        * {
+            -webkit-tap-highlight-color: transparent;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #f1f5f9;
+            min-height: 100vh;
+            overscroll-behavior: none;
+        }
+
+        .glass {
+            background: rgba(255, 255, 255, 0.8);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+        }
+
+        .sidebar-link {
+            transition: all 0.2s;
+            border-left: 3px solid transparent;
+            padding: 10px 16px;
+            border-radius: 0 10px 10px 0;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            font-weight: 500;
+            color: #64748b;
+            cursor: pointer;
+        }
+        .sidebar-link:hover {
+            background: #f1f5f9;
+            color: #0f172a;
+        }
+        .sidebar-link.active {
+            background: #eef2ff;
+            color: #4f46e5;
+            border-left-color: #4f46e5;
+        }
+        .sidebar-link i {
+            width: 20px;
+            height: 20px;
+        }
+
+        .stat-card {
+            transition: all 0.2s;
+            border: 1px solid #e2e8f0;
+        }
+        .stat-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(0, 0, 0, 0.06);
+        }
+
+        .order-row {
+            transition: background 0.15s;
+            cursor: pointer;
+        }
+        .order-row:hover {
+            background: #f8fafc;
+        }
+
+        .badge-status {
+            padding: 3px 12px;
+            border-radius: 20px;
+            font-size: 11px;
+            font-weight: 700;
+            display: inline-block;
+            letter-spacing: 0.3px;
+        }
+        .badge-status.pickup {
+            background: #d1fae5;
+            color: #065f46;
+        }
+        .badge-status.rejected {
+            background: #fee2e2;
+            color: #991b1b;
+        }
+        .badge-status.reschedule {
+            background: #fef3c7;
+            color: #92400e;
+        }
+
+        .fade-in {
+            animation: fadeIn 0.35s ease;
+        }
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(8px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .modal-overlay {
+            backdrop-filter: blur(6px);
+            background: rgba(15, 23, 42, 0.5);
+        }
+
+        ::-webkit-scrollbar {
+            width: 4px;
+            height: 4px;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #cbd5e1;
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        .no-scrollbar {
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+        }
+        .no-scrollbar::-webkit-scrollbar {
+            display: none;
+        }
+
+        .table-wrap {
+            overflow-x: auto;
+            -webkit-overflow-scrolling: touch;
+        }
+
+        .filter-chip {
+            padding: 4px 14px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+            border: 2px solid #e2e8f0;
+            background: #fff;
+            cursor: pointer;
+            transition: all 0.2s;
+            color: #64748b;
+        }
+        .filter-chip.active {
+            border-color: #4f46e5;
+            background: #eef2ff;
+            color: #4f46e5;
+        }
+        .filter-chip:active {
+            transform: scale(0.95);
+        }
+
+        .btn-action {
+            padding: 6px 14px;
+            border-radius: 8px;
+            font-size: 12px;
+            font-weight: 600;
+            border: none;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .btn-action:active {
+            transform: scale(0.94);
+        }
+        .btn-action i {
+            width: 16px;
+            height: 16px;
+        }
+
+        .btn-action.view {
+            background: #eef2ff;
+            color: #4f46e5;
+        }
+        .btn-action.view:hover {
+            background: #c7d2fe;
+        }
+        .btn-action.edit {
+            background: #fef3c7;
+            color: #d97706;
+        }
+        .btn-action.edit:hover {
+            background: #fde68a;
+        }
+        .btn-action.delete {
+            background: #fee2e2;
+            color: #dc2626;
+        }
+        .btn-action.delete:hover {
+            background: #fecaca;
+        }
+        .btn-action.export {
+            background: #d1fae5;
+            color: #059669;
+        }
+        .btn-action.export:hover {
+            background: #a7f3d0;
+        }
+        .btn-action.save {
+            background: #dbeafe;
+            color: #2563eb;
+        }
+        .btn-action.save:hover {
+            background: #bfdbfe;
+        }
+
+        .spinner-sm {
+            border: 2px solid #e2e8f0;
+            border-top: 2px solid #4f46e5;
+            border-radius: 50%;
+            width: 20px;
+            height: 20px;
+            animation: spin 0.7s linear infinite;
+            display: inline-block;
+        }
+        @keyframes spin {
+            0% {
+                transform: rotate(0deg);
+            }
+            100% {
+                transform: rotate(360deg);
+            }
+        }
+
+        /* Mobile sidebar overlay */
+        .sidebar-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(15, 23, 42, 0.4);
+            z-index: 40;
+            backdrop-filter: blur(4px);
+        }
+        .sidebar-overlay.open {
+            display: block;
+        }
+
+        @media (max-width: 768px) {
+            .sidebar {
+                position: fixed;
+                left: -280px;
+                top: 0;
+                bottom: 0;
+                width: 280px;
+                z-index: 50;
+                transition: left 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+                background: #fff;
+                box-shadow: 4px 0 30px rgba(0, 0, 0, 0.08);
+                padding-top: 20px;
+            }
+            .sidebar.open {
+                left: 0;
+            }
+            .sidebar-overlay.open {
+                display: block;
+            }
+        }
+
+        @media (min-width: 769px) {
+            .sidebar {
+                position: sticky;
+                top: 0;
+                height: 100vh;
+                width: 240px;
+                flex-shrink: 0;
+                background: #fff;
+                border-right: 1px solid #e2e8f0;
+                padding: 20px 12px;
+                overflow-y: auto;
+            }
+            .sidebar-overlay {
+                display: none !important;
+            }
+            .menu-toggle {
+                display: none !important;
+            }
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 48px 20px;
+            color: #94a3b8;
+        }
+        .empty-state i {
+            width: 48px;
+            height: 48px;
+            margin-bottom: 12px;
+            color: #cbd5e1;
+        }
+
+        .detail-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+        }
+        @media (max-width: 500px) {
+            .detail-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+        .detail-item {
+            background: #f8fafc;
+            border-radius: 10px;
+            padding: 10px 14px;
+        }
+        .detail-item .label {
+            font-size: 10px;
+            font-weight: 700;
+            color: #94a3b8;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .detail-item .value {
+            font-size: 14px;
+            font-weight: 600;
+            color: #0f172a;
+            word-break: break-all;
+            margin-top: 2px;
+        }
+
+        .toast-fixed {
+            position: fixed;
+            bottom: 24px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: #0f172a;
+            color: #fff;
+            padding: 12px 28px;
+            border-radius: 14px;
+            font-weight: 600;
+            font-size: 14px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+            z-index: 999;
+            opacity: 0;
+            transition: opacity 0.3s, transform 0.3s;
+            transform: translateX(-50%) translateY(20px);
+            pointer-events: none;
+            max-width: 90%;
+        }
+        .toast-fixed.show {
+            opacity: 1;
+            transform: translateX(-50%) translateY(0);
+            pointer-events: auto;
+        }
+        .toast-fixed.success {
+            background: #065f46;
+        }
+        .toast-fixed.error {
+            background: #991b1b;
+        }
+        .toast-fixed.info {
+            background: #1e40af;
+        }
+
+        /* Editable form within modal */
+        .edit-field {
+            border: 2px solid #e2e8f0;
+            border-radius: 10px;
+            padding: 8px 12px;
+            width: 100%;
+            font-size: 14px;
+            outline: none;
+            transition: border 0.2s;
+            background: #fff;
+        }
+        .edit-field:focus {
+            border-color: #4f46e5;
+            box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.1);
+        }
+        .edit-field-sm {
+            font-size: 13px;
+            padding: 6px 10px;
+        }
+        .edit-label {
+            font-size: 10px;
+            font-weight: 700;
+            color: #64748b;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            display: block;
+            margin-bottom: 3px;
+        }
+
+        .status-select {
+            border: 2px solid #e2e8f0;
+            border-radius: 10px;
+            padding: 8px 12px;
+            width: 100%;
+            font-size: 14px;
+            font-weight: 600;
+            outline: none;
+            background: #fff;
+        }
+        .status-select:focus {
+            border-color: #4f46e5;
+        }
+
+        .badge-onway {
+            background: #dbeafe;
+            color: #1e40af;
+            font-size: 10px;
+            font-weight: 700;
+            padding: 2px 10px;
+            border-radius: 12px;
+            display: inline-block;
+        }
+        .badge-pending {
+            background: #fef3c7;
+            color: #92400e;
+            font-size: 10px;
+            font-weight: 700;
+            padding: 2px 10px;
+            border-radius: 12px;
+            display: inline-block;
+        }
+        .pending-item {
+            border-left: 4px solid #f59e0b;
+            transition: all 0.2s;
+        }
+        .pending-item:active {
+            transform: scale(0.99);
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Toast -->
+    <div id="toast" class="toast-fixed"></div>
+
+    <!-- Sidebar Overlay (mobile) -->
+    <div id="sidebarOverlay" class="sidebar-overlay" onclick="closeSidebar()"></div>
+
+    <!-- Main Layout -->
+    <div class="flex min-h-screen">
+
+        <!-- ========== SIDEBAR ========== -->
+        <aside id="sidebar" class="sidebar">
+            <div class="flex items-center gap-3 px-3 mb-6">
+                <div class="w-10 h-10 bg-gradient-to-br from-indigo-600 to-purple-600 rounded-xl flex items-center justify-center shadow-lg flex-shrink-0">
+                    <i data-lucide="layout-dashboard" class="w-5 h-5 text-white"></i>
+                </div>
+                <div>
+                    <h1 class="text-sm font-bold text-gray-800">Admin Panel</h1>
+                    <p class="text-[10px] text-gray-400 font-medium">Flipkart Pickup</p>
+                </div>
+            </div>
+
+            <nav class="space-y-0.5">
+                <div class="sidebar-link active" data-page="dashboard" onclick="navigate('dashboard')">
+                    <i data-lucide="layout-dashboard"></i> Dashboard
+                </div>
+                <div class="sidebar-link" data-page="orders" onclick="navigate('orders')">
+                    <i data-lucide="package"></i> All Orders
+                    <span id="orderCountBadge" class="ml-auto text-xs bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full">0</span>
+                </div>
+                <div class="sidebar-link" data-page="pending" onclick="navigate('pending')">
+                    <i data-lucide="clock"></i> Pending
+                    <span id="pendingBadge" class="ml-auto text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full">0</span>
+                </div>
+                <div class="sidebar-link" data-page="rejected" onclick="navigate('rejected')">
+                    <i data-lucide="x-circle"></i> Rejected
+                    <span id="rejectedBadge" class="ml-auto text-xs bg-red-100 text-red-700 px-2 py-0.5 rounded-full">0</span>
+                </div>
+            </nav>
+
+            <div class="mt-auto pt-6 border-t border-gray-100 px-3">
+                <div class="flex items-center gap-3">
+                    <div class="w-8 h-8 bg-gray-200 rounded-full flex items-center justify-center">
+                        <i data-lucide="user" class="w-4 h-4 text-gray-600"></i>
+                    </div>
+                    <div>
+                        <p class="text-xs font-bold text-gray-800">Admin</p>
+                        <p class="text-[10px] text-gray-400">Supervisor</p>
+                    </div>
+                </div>
+                <button onclick="refreshAll()" class="mt-3 w-full text-xs font-medium text-gray-500 hover:text-gray-800 flex items-center justify-center gap-1.5 py-2 rounded-lg hover:bg-gray-50 transition">
+                    <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i> Refresh
+                </button>
+            </div>
+        </aside>
+
+        <!-- ========== MAIN CONTENT ========== -->
+        <main class="flex-1 min-w-0 px-4 sm:px-6 py-5 md:py-8">
+
+            <!-- Mobile Header -->
+            <div class="flex items-center justify-between mb-5 md:hidden">
+                <button onclick="toggleSidebar()" class="p-2 -ml-2 rounded-lg hover:bg-gray-100">
+                    <i data-lucide="menu" class="w-6 h-6 text-gray-700"></i>
+                </button>
+                <h2 class="text-lg font-bold text-gray-800">Admin Panel</h2>
+                <button onclick="refreshAll()" class="p-2 rounded-lg hover:bg-gray-100">
+                    <i data-lucide="refresh-cw" class="w-5 h-5 text-gray-500"></i>
+                </button>
+            </div>
+
+            <!-- ===== DASHBOARD ===== -->
+            <div id="page-dashboard" class="page-content fade-in">
+                <div class="flex items-center justify-between mb-5">
+                    <div>
+                        <h2 class="text-2xl font-bold text-gray-800">Dashboard</h2>
+                        <p class="text-sm text-gray-500">Real-time overview of all pickup activity</p>
+                    </div>
+                    <div class="flex items-center gap-2 text-xs text-gray-400">
+                        <i data-lucide="clock" class="w-3.5 h-3.5"></i>
+                        <span id="liveTime">--:--:--</span>
+                    </div>
+                </div>
+
+                <!-- Stats Grid -->
+                <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4 mb-6">
+                    <div class="stat-card glass rounded-2xl p-4 shadow-sm">
+                        <div class="flex items-center gap-3">
+                            <div class="w-10 h-10 bg-indigo-100 rounded-xl flex items-center justify-center">
+                                <i data-lucide="shopping-bag" class="w-5 h-5 text-indigo-600"></i>
+                            </div>
+                            <div>
+                                <p class="text-2xl font-bold text-gray-800" id="statTotal">0</p>
+                                <p class="text-xs text-gray-500 font-medium">Total Orders</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="stat-card glass rounded-2xl p-4 shadow-sm">
+                        <div class="flex items-center gap-3">
+                            <div class="w-10 h-10 bg-green-100 rounded-xl flex items-center justify-center">
+                                <i data-lucide="check-circle" class="w-5 h-5 text-green-600"></i>
+                            </div>
+                            <div>
+                                <p class="text-2xl font-bold text-gray-800" id="statPickup">0</p>
+                                <p class="text-xs text-gray-500 font-medium">Pickups</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="stat-card glass rounded-2xl p-4 shadow-sm">
+                        <div class="flex items-center gap-3">
+                            <div class="w-10 h-10 bg-red-100 rounded-xl flex items-center justify-center">
+                                <i data-lucide="x-circle" class="w-5 h-5 text-red-600"></i>
+                            </div>
+                            <div>
+                                <p class="text-2xl font-bold text-gray-800" id="statRejected">0</p>
+                                <p class="text-xs text-gray-500 font-medium">Rejected</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="stat-card glass rounded-2xl p-4 shadow-sm">
+                        <div class="flex items-center gap-3">
+                            <div class="w-10 h-10 bg-amber-100 rounded-xl flex items-center justify-center">
+                                <i data-lucide="clock" class="w-5 h-5 text-amber-600"></i>
+                            </div>
+                            <div>
+                                <p class="text-2xl font-bold text-gray-800" id="statPending">0</p>
+                                <p class="text-xs text-gray-500 font-medium">Pending</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Recent Activity -->
+                <div class="glass rounded-2xl p-5 shadow-sm border border-gray-100">
+                    <div class="flex items-center justify-between mb-4">
+                        <h3 class="font-bold text-gray-800 flex items-center gap-2">
+                            <i data-lucide="activity" class="w-4 h-4 text-indigo-600"></i>
+                            Recent Activity
+                        </h3>
+                        <button onclick="navigate('orders')" class="text-xs text-indigo-600 font-semibold hover:underline">
+                            View all →
+                        </button>
+                    </div>
+                    <div id="recentList" class="space-y-2 max-h-[340px] overflow-y-auto no-scrollbar">
+                        <div class="empty-state">
+                            <i data-lucide="inbox"></i>
+                            <p class="text-sm font-medium">No activity yet</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ===== ORDERS ===== -->
+            <div id="page-orders" class="page-content fade-in" style="display:none;">
+                <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+                    <div>
+                        <h2 class="text-2xl font-bold text-gray-800">All Orders</h2>
+                        <p class="text-sm text-gray-500">Complete history of all pickups</p>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <button onclick="exportCSV()" class="btn-action export">
+                            <i data-lucide="download"></i> Export CSV
+                        </button>
+                        <button onclick="refreshOrders()" class="btn-action view">
+                            <i data-lucide="refresh-cw"></i>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Filters -->
+                <div class="glass rounded-2xl p-4 shadow-sm border border-gray-100 mb-4">
+                    <div class="flex flex-wrap items-center gap-2">
+                        <span class="text-xs font-bold text-gray-500 mr-1">Filter:</span>
+                        <button class="filter-chip active" data-filter="all" onclick="setOrderFilter('all')">All</button>
+                        <button class="filter-chip" data-filter="pickup" onclick="setOrderFilter('pickup')">Pickup</button>
+                        <button class="filter-chip" data-filter="rejected" onclick="setOrderFilter('rejected')">Rejected</button>
+                        <button class="filter-chip" data-filter="reschedule" onclick="setOrderFilter('reschedule')">Pending</button>
+                    </div>
+                    <div class="flex flex-wrap items-center gap-2 mt-3">
+                        <input type="text" id="orderSearch" placeholder="Search by Order ID..." class="flex-1 min-w-[160px] px-4 py-2 border border-gray-200 rounded-xl text-sm outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100" />
+                        <button onclick="applyOrderSearch()" class="px-4 py-2 bg-indigo-600 text-white rounded-xl text-sm font-semibold hover:bg-indigo-700 transition">Search</button>
+                        <button onclick="clearOrderSearch()" class="px-4 py-2 bg-gray-100 text-gray-600 rounded-xl text-sm font-semibold hover:bg-gray-200 transition">Clear</button>
+                    </div>
+                </div>
+
+                <!-- Table -->
+                <div class="glass rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+                    <div class="table-wrap">
+                        <table class="w-full text-sm">
+                            <thead>
+                                <tr class="bg-gray-50 border-b border-gray-100">
+                                    <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">#</th>
+                                    <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">Order ID</th>
+                                    <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">Status</th>
+                                    <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase hidden sm:table-cell">Model</th>
+                                    <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase hidden md:table-cell">IMEI</th>
+                                    <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase hidden lg:table-cell">Value</th>
+                                    <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase hidden xl:table-cell">Customer</th>
+                                    <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="ordersTableBody">
+                                <tr><td colspan="8"><div class="empty-state"><i data-lucide="inbox"></i><p class="text-sm font-medium">No orders found</p></div></td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    <div class="flex items-center justify-between px-4 py-3 border-t border-gray-100 text-xs text-gray-500">
+                        <span id="orderCountDisplay">0 orders</span>
+                        <div class="flex items-center gap-2">
+                            <button onclick="prevOrderPage()" class="px-3 py-1 rounded-lg bg-gray-100 hover:bg-gray-200 transition disabled:opacity-40" id="prevOrderPageBtn">← Prev</button>
+                            <span id="orderPageInfo">1 / 1</span>
+                            <button onclick="nextOrderPage()" class="px-3 py-1 rounded-lg bg-gray-100 hover:bg-gray-200 transition disabled:opacity-40" id="nextOrderPageBtn">Next →</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ===== PENDING ===== -->
+            <div id="page-pending" class="page-content fade-in" style="display:none;">
+                <div class="flex items-center justify-between mb-4">
+                    <div>
+                        <h2 class="text-2xl font-bold text-gray-800">Pending Orders</h2>
+                        <p class="text-sm text-gray-500">Orders that are rescheduled or on hold</p>
+                    </div>
+                    <button onclick="refreshPending()" class="btn-action view">
+                        <i data-lucide="refresh-cw"></i> Refresh
+                    </button>
+                </div>
+
+                <div class="glass rounded-2xl shadow-sm border border-gray-100 p-4">
+                    <div id="pendingListAdmin" class="space-y-3 max-h-[600px] overflow-y-auto no-scrollbar">
+                        <div class="empty-state">
+                            <i data-lucide="inbox"></i>
+                            <p class="text-sm font-medium">No pending orders</p>
+                            <p class="text-xs text-gray-400">Orders will appear here when rescheduled</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ===== REJECTED ===== -->
+            <div id="page-rejected" class="page-content fade-in" style="display:none;">
+                <div class="flex items-center justify-between mb-4">
+                    <div>
+                        <h2 class="text-2xl font-bold text-gray-800">Rejected Orders</h2>
+                        <p class="text-sm text-gray-500">Orders that were not purchased</p>
+                    </div>
+                    <button onclick="refreshRejected()" class="btn-action view">
+                        <i data-lucide="refresh-cw"></i> Refresh
+                    </button>
+                </div>
+
+                <div class="glass rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+                    <div class="table-wrap">
+                        <table class="w-full text-sm">
+                            <thead>
+                                <tr class="bg-gray-50 border-b border-gray-100">
+                                    <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">#</th>
+                                    <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">Order ID</th>
+                                    <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">Reason</th>
+                                    <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase hidden sm:table-cell">Time</th>
+                                    <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="rejectedTableBody">
+                                <tr><td colspan="5"><div class="empty-state"><i data-lucide="inbox"></i><p class="text-sm font-medium">No rejected orders</p></div></td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+        </main>
+    </div>
+
+    <!-- ========== ORDER DETAIL MODAL (with edit) ========== -->
+    <div id="detailModal" class="fixed inset-0 z-50 modal-overlay flex items-center justify-center p-4" style="display:none;">
+        <div class="bg-white rounded-3xl w-full max-w-2xl max-h-[95vh] overflow-y-auto shadow-2xl animate-[fadeIn_0.25s_ease]">
+            <div class="sticky top-0 bg-white z-10 flex items-center justify-between p-5 border-b border-gray-100">
+                <h3 class="font-bold text-lg flex items-center gap-2">
+                    <i data-lucide="file-text" class="w-5 h-5 text-indigo-600"></i>
+                    <span id="detailModalTitle">Order Details</span>
+                </h3>
+                <button onclick="closeDetail()" class="p-2 hover:bg-gray-100 rounded-full transition">
+                    <i data-lucide="x" class="w-5 h-5 text-gray-500"></i>
+                </button>
+            </div>
+            <div class="p-5 space-y-4" id="detailContent">
+                <div class="text-center py-8 text-gray-400">
+                    <span class="spinner-sm"></span> Loading...
+                </div>
+            </div>
+            <div class="sticky bottom-0 bg-white border-t border-gray-100 p-4 flex flex-wrap gap-2 justify-end" id="detailActions">
+                <button onclick="closeDetail()" class="px-5 py-2.5 rounded-xl bg-gray-100 text-gray-700 font-semibold hover:bg-gray-200 transition">Close</button>
+                <button id="detailEditBtn" onclick="toggleEditMode()" class="px-5 py-2.5 rounded-xl bg-amber-100 text-amber-700 font-semibold hover:bg-amber-200 transition flex items-center gap-2">
+                    <i data-lucide="pencil" class="w-4 h-4"></i> Edit
+                </button>
+                <button id="detailDeleteBtn" onclick="deleteOrderFromDetail()" class="px-5 py-2.5 rounded-xl bg-red-500 text-white font-semibold hover:bg-red-600 transition flex items-center gap-2">
+                    <i data-lucide="trash-2" class="w-4 h-4"></i> Delete
+                </button>
+            </div>
+            <!-- Hidden save button (shown in edit mode) -->
+            <div id="detailSaveActions" style="display:none;" class="sticky bottom-0 bg-white border-t border-gray-100 p-4 flex gap-2 justify-end">
+                <button onclick="cancelEdit()" class="px-5 py-2.5 rounded-xl bg-gray-100 text-gray-700 font-semibold hover:bg-gray-200 transition">Cancel</button>
+                <button onclick="saveEdit()" class="px-5 py-2.5 rounded-xl bg-indigo-600 text-white font-semibold hover:bg-indigo-700 transition flex items-center gap-2">
+                    <i data-lucide="save" class="w-4 h-4"></i> Save Changes
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- External JS File -->
+    <script src="script.js"></script>
+
+</body>
+</html>
