@@ -28,6 +28,13 @@ let isRefreshing = false;
 let isEditMode = false;
 let editData = {};
 
+// Inventory & Sales state
+let inventoryList = [];
+let salesList = [];
+let filteredInventory = [];
+let filteredSales = [];
+let sellOrderData = null;
+
 // ==========================================
 // DOM REFS
 // ==========================================
@@ -82,6 +89,8 @@ function navigate(page) {
     else if (page === 'orders') loadOrders();
     else if (page === 'pending') loadPendingAdmin();
     else if (page === 'rejected') loadRejectedAdmin();
+    else if (page === 'inventory') loadInventory();
+    else if (page === 'sales') loadSales();
 }
 
 // ==========================================
@@ -101,25 +110,47 @@ async function loadDashboard() {
             pickupCount = 0,
             rejectedCount = 0,
             rescheduleCount = 0;
+        let soldCount = 0,
+            unsoldCount = 0,
+            revenue = 0,
+            profit = 0;
 
         Object.values(pickups).forEach(item => {
-            total++;
-            if (item.status === 'pickup') pickupCount++;
-            else if (item.status === 'rejected') rejectedCount++;
-            else if (item.status === 'reschedule') rescheduleCount++;
-        });
-
+    total++;
+    if (item.status === 'pickup') {
+        pickupCount++;
+        if (item.sold) {
+            soldCount++;
+            revenue += item.salePrice || 0;
+            // ✅ FIX: Profit calculate karo agar missing hai
+            const itemProfit = item.profit !== undefined 
+                ? item.profit 
+                : ((item.salePrice || 0) - (item.value || 0));
+            profit += itemProfit;
+        } else {
+            unsoldCount++;
+        }
+    } else if (item.status === 'rejected') rejectedCount++;
+    else if (item.status === 'reschedule') rescheduleCount++;
+});
         const pendingCount = Object.keys(pending).length;
 
         document.getElementById('statTotal').textContent = total;
         document.getElementById('statPickup').textContent = pickupCount;
         document.getElementById('statRejected').textContent = rejectedCount;
         document.getElementById('statPending').textContent = pendingCount;
+        document.getElementById('statInventory').textContent = unsoldCount;
+        document.getElementById('statSold').textContent = soldCount;
+        document.getElementById('statRevenue').textContent = '₹' + revenue;
+        document.getElementById('statProfit').textContent = '₹' + profit;
 
         document.getElementById('orderCountBadge').textContent = total;
         document.getElementById('pendingBadge').textContent = pendingCount;
         document.getElementById('rejectedBadge').textContent = rejectedCount;
+        document.getElementById('inventoryBadge').textContent = unsoldCount;
+        document.getElementById('salesBadge').textContent = soldCount;
 
+        // Recent activity
         const recent = Object.entries(pickups)
             .sort((a, b) => (b[1].timestamp || 0) - (a[1].timestamp || 0))
             .slice(0, 10);
@@ -132,9 +163,9 @@ async function loadDashboard() {
             let html = '';
             recent.forEach(([id, item]) => {
                 const statusLabel = item.status || 'unknown';
-                const statusClass = statusLabel === 'pickup' ? 'pickup' :
+                let statusClass = statusLabel === 'pickup' ? (item.sold ? 'sold' : 'pickup') :
                     statusLabel === 'rejected' ? 'rejected' : 'reschedule';
-                const displayName = statusLabel === 'pickup' ? 'Pickup' :
+                let displayName = statusLabel === 'pickup' ? (item.sold ? 'Sold' : 'Pickup') :
                     statusLabel === 'rejected' ? 'Rejected' : 'Pending';
                 const time = item.timestampIST || item.timestamp || '';
                 const model = item.phoneModel || '—';
@@ -160,7 +191,7 @@ async function loadDashboard() {
 }
 
 // ==========================================
-// ORDERS (with pagination)
+// ORDERS (with pagination & date filter)
 // ==========================================
 async function loadOrders() {
     try {
@@ -184,16 +215,49 @@ function applyOrderFilter(filter) {
         el.classList.toggle('active', el.dataset.filter === filter);
     });
     let filtered = [...allOrders];
+    // Status filter
     if (filter !== 'all') {
         filtered = filtered.filter(item => item.status === filter);
     }
+    // Search by Order ID
     const searchVal = document.getElementById('orderSearch').value.trim().toUpperCase();
     if (searchVal) {
         filtered = filtered.filter(item => (item.orderId || '').toUpperCase().includes(searchVal));
     }
+    // NEW: Date range filter
+    const dateFrom = document.getElementById('orderDateFrom').value;
+    const dateTo = document.getElementById('orderDateTo').value;
+    if (dateFrom) {
+        // Compare only date part (YYYY-MM-DD)
+        filtered = filtered.filter(item => {
+            if (!item.timestamp) return false;
+            const d = new Date(item.timestamp);
+            const dateStr = d.toISOString().split('T')[0];
+            return dateStr >= dateFrom;
+        });
+    }
+    if (dateTo) {
+        filtered = filtered.filter(item => {
+            if (!item.timestamp) return false;
+            const d = new Date(item.timestamp);
+            const dateStr = d.toISOString().split('T')[0];
+            return dateStr <= dateTo;
+        });
+    }
     filteredOrders = filtered;
     currentPage = 1;
     renderOrdersTable();
+}
+
+function applyOrderDateFilter() {
+    applyOrderFilter(currentOrderFilter);
+}
+
+function clearOrderDateFilter() {
+    document.getElementById('orderDateFrom').value = '';
+    document.getElementById('orderDateTo').value = '';
+    applyOrderFilter(currentOrderFilter);
+    showToast('Date filters cleared', 'info');
 }
 
 function setOrderFilter(filter) {
@@ -235,9 +299,9 @@ function renderOrdersTable() {
     pageItems.forEach((item, idx) => {
         const num = start + idx + 1;
         const statusLabel = item.status || 'unknown';
-        const statusClass = statusLabel === 'pickup' ? 'pickup' :
+        let statusClass = statusLabel === 'pickup' ? (item.sold ? 'sold' : 'pickup') :
             statusLabel === 'rejected' ? 'rejected' : 'reschedule';
-        const displayName = statusLabel === 'pickup' ? 'Pickup' :
+        let displayName = statusLabel === 'pickup' ? (item.sold ? 'Sold' : 'Pickup') :
             statusLabel === 'rejected' ? 'Rejected' : 'Pending';
         const model = item.phoneModel || '—';
         const imei = item.imei || '—';
@@ -258,9 +322,7 @@ function renderOrdersTable() {
                         <button onclick="viewOrder('${item.id}')" class="btn-action view" title="View Details">
                             <i data-lucide="eye"></i>
                         </button>
-                        <button onclick="editOrderDirect('${item.id}')" class="btn-action edit" title="Edit">
-                            <i data-lucide="pencil"></i>
-                        </button>
+                        ${!item.sold && item.status === 'pickup' ? `<button onclick="openSellModalFromOrders('${item.id}')" class="btn-action sell" title="Sell"><i data-lucide="badge-dollar-sign"></i></button>` : ''}
                         <button onclick="deleteOrder('${item.id}')" class="btn-action delete" title="Delete">
                             <i data-lucide="trash-2"></i>
                         </button>
@@ -271,6 +333,15 @@ function renderOrdersTable() {
     });
     tbody.innerHTML = html;
     lucide.createIcons();
+}
+
+function openSellModalFromOrders(orderId) {
+    const order = inventoryList.find(item => item.id === orderId);
+    if (order) {
+        openSellModal(orderId);
+    } else {
+        showToast('Order not in inventory', 'error');
+    }
 }
 
 function prevOrderPage() {
@@ -337,7 +408,6 @@ async function loadPendingAdmin() {
             container.innerHTML = html;
         }
         lucide.createIcons();
-
         document.getElementById('pendingBadge').textContent = items.length;
 
     } catch (e) {
@@ -349,6 +419,29 @@ async function loadPendingAdmin() {
 function refreshPending() {
     loadPendingAdmin();
     showToast('🔄 Pending refreshed', 'info');
+}
+
+async function deletePending(orderId) {
+    const result = await Swal.fire({
+        title: 'Remove from Pending?',
+        text: 'This will remove the order from the pending list.',
+        icon: 'question',
+        showCancelButton: true,
+        confirmButtonColor: '#dc2626',
+        cancelButtonColor: '#64748b',
+        confirmButtonText: 'Remove',
+        cancelButtonText: 'Cancel'
+    });
+    if (!result.isConfirmed) return;
+    try {
+        await db.ref('pending/' + orderId).remove();
+        showToast('🗑️ Removed from pending', 'success');
+        loadPendingAdmin();
+        loadDashboard();
+    } catch (e) {
+        showToast('Error removing pending', 'error');
+        console.error(e);
+    }
 }
 
 // ==========================================
@@ -382,9 +475,6 @@ async function loadRejectedAdmin() {
                                 <button onclick="viewOrder('${item.id}')" class="btn-action view" title="View Details">
                                     <i data-lucide="eye"></i>
                                 </button>
-                                <button onclick="editOrderDirect('${item.id}')" class="btn-action edit" title="Edit">
-                                    <i data-lucide="pencil"></i>
-                                </button>
                                 <button onclick="deleteOrder('${item.id}')" class="btn-action delete" title="Delete">
                                     <i data-lucide="trash-2"></i>
                                 </button>
@@ -396,7 +486,6 @@ async function loadRejectedAdmin() {
             tbody.innerHTML = html;
         }
         lucide.createIcons();
-
         document.getElementById('rejectedBadge').textContent = items.length;
 
     } catch (e) {
@@ -411,6 +500,347 @@ function refreshRejected() {
 }
 
 // ==========================================
+// INVENTORY
+// ==========================================
+async function loadInventory() {
+    try {
+        const snap = await db.ref('pickups').once('value');
+        const data = snap.val() || {};
+        inventoryList = Object.entries(data)
+            .filter(([_, item]) => item.status === 'pickup' && !item.sold)
+            .map(([id, item]) => ({ id, ...item }));
+        inventoryList.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+        applyInventorySearch();
+    } catch (e) {
+        console.error('Inventory error:', e);
+        showToast('Error loading inventory', 'error');
+    }
+}
+
+function applyInventorySearch() {
+    const searchVal = document.getElementById('inventorySearch').value.trim().toLowerCase();
+    let filtered = inventoryList;
+    if (searchVal) {
+        filtered = filtered.filter(item =>
+            (item.orderId || '').toLowerCase().includes(searchVal) ||
+            (item.phoneModel || '').toLowerCase().includes(searchVal)
+        );
+    }
+    filteredInventory = filtered;
+    renderInventoryTable();
+    document.getElementById('inventoryCount').textContent = filteredInventory.length + ' units';
+}
+
+function clearInventorySearch() {
+    document.getElementById('inventorySearch').value = '';
+    applyInventorySearch();
+}
+
+function renderInventoryTable() {
+    const tbody = document.getElementById('inventoryTableBody');
+    if (filteredInventory.length === 0) {
+        tbody.innerHTML =
+            `<tr><td colspan="7"><div class="empty-state"><i data-lucide="inbox"></i><p class="text-sm font-medium">No inventory available</p></div></td></tr>`;
+        lucide.createIcons();
+        return;
+    }
+
+    let html = '';
+    filteredInventory.forEach((item, idx) => {
+        html += `
+            <tr class="order-row border-b border-gray-50">
+                <td class="py-3 px-4 text-gray-400 font-mono text-xs">${idx + 1}</td>
+                <td class="py-3 px-4 font-mono font-bold text-gray-800 text-sm">${item.orderId || item.id}</td>
+                <td class="py-3 px-4 text-gray-600 text-sm">${item.phoneModel || '—'}</td>
+                <td class="py-3 px-4 hidden md:table-cell font-mono text-xs text-gray-500">${item.imei || '—'}</td>
+                <td class="py-3 px-4 font-bold text-gray-700">₹${item.value || 0}</td>
+                <td class="py-3 px-4 hidden lg:table-cell text-gray-600 text-sm">${item.customerName || '—'}</td>
+                <td class="py-3 px-4">
+                    <button onclick="openSellModal('${item.id}')" class="btn-action sell">
+                        <i data-lucide="badge-dollar-sign"></i> Sell
+                    </button>
+                    <button onclick="viewOrder('${item.id}')" class="btn-action view" title="View">
+                        <i data-lucide="eye"></i>
+                    </button>
+                </td>
+            </tr>
+        `;
+    });
+    tbody.innerHTML = html;
+    lucide.createIcons();
+}
+
+function refreshInventory() {
+    loadInventory();
+    showToast('🔄 Inventory refreshed', 'info');
+}
+
+// ==========================================
+// SELL MODAL
+// ==========================================
+function openSellModal(orderId) {
+    const order = inventoryList.find(item => item.id === orderId);
+    if (!order) {
+        showToast('Order not found in inventory', 'error');
+        return;
+    }
+    sellOrderData = order;
+    document.getElementById('sellOrderId').value = order.orderId || order.id;
+    document.getElementById('sellModel').value = order.phoneModel || '—';
+    document.getElementById('sellPurchasePrice').value = '₹' + (order.value || 0);
+    document.getElementById('sellSalePrice').value = '';
+    document.getElementById('sellBuyerName').value = '';
+    document.getElementById('sellBuyerContact').value = '';
+    const today = new Date().toISOString().split('T')[0];
+    document.getElementById('sellSaleDate').value = today;
+    document.getElementById('sellProfitPreview').className = 'profit-preview neutral';
+    document.getElementById('sellProfitPreview').textContent = 'Enter sale price to see profit';
+    document.getElementById('sellModal').style.display = 'flex';
+    lucide.createIcons();
+
+    document.getElementById('sellSalePrice').oninput = updateProfitPreview;
+    updateProfitPreview();
+    setTimeout(() => document.getElementById('sellSalePrice').focus(), 300);
+}
+
+function updateProfitPreview() {
+    const purchase = sellOrderData ? (sellOrderData.value || 0) : 0;
+    const sale = parseFloat(document.getElementById('sellSalePrice').value) || 0;
+    const profit = sale - purchase;
+    const preview = document.getElementById('sellProfitPreview');
+    if (sale > 0) {
+        preview.textContent = `Profit: ₹${profit} (${profit >= 0 ? '✅' : '⚠️ Loss'})`;
+        preview.className = profit >= 0 ? 'profit-preview positive' : 'profit-preview negative';
+    } else {
+        preview.textContent = 'Enter sale price to see profit';
+        preview.className = 'profit-preview neutral';
+    }
+}
+
+function closeSellModal() {
+    document.getElementById('sellModal').style.display = 'none';
+    sellOrderData = null;
+}
+
+async function confirmSell() {
+    if (!sellOrderData) return;
+
+    const salePrice = parseFloat(document.getElementById('sellSalePrice').value);
+    const buyerName = document.getElementById('sellBuyerName').value.trim();
+    const buyerContact = document.getElementById('sellBuyerContact').value.trim();
+    const saleDate = document.getElementById('sellSaleDate').value;
+
+    if (!salePrice || salePrice <= 0) {
+        showToast('Please enter a valid sale price', 'error');
+        return;
+    }
+    if (!buyerName) {
+        showToast('Please enter buyer name', 'error');
+        return;
+    }
+
+    const purchasePrice = sellOrderData.value || 0;
+    const profit = salePrice - purchasePrice;
+
+    const confirm = await Swal.fire({
+        title: 'Confirm Sale',
+        html: `
+            <div class="text-left space-y-1 text-sm">
+                <p><strong>Order:</strong> ${sellOrderData.orderId}</p>
+                <p><strong>Model:</strong> ${sellOrderData.phoneModel}</p>
+                <p><strong>Purchase:</strong> ₹${purchasePrice}</p>
+                <p><strong>Sale Price:</strong> ₹${salePrice}</p>
+                <p><strong>Profit:</strong> <span class="${profit >= 0 ? 'text-green-600' : 'text-red-600'} font-bold">₹${profit}</span></p>
+                <p><strong>Buyer:</strong> ${buyerName}</p>
+                <p><strong>Sale Date:</strong> ${saleDate}</p>
+            </div>
+        `,
+        icon: 'question',
+        showCancelButton: true,
+        confirmButtonColor: '#059669',
+        cancelButtonColor: '#64748b',
+        confirmButtonText: '✅ Confirm Sale',
+        cancelButtonText: 'Cancel'
+    });
+    if (!confirm.isConfirmed) return;
+
+    try {
+        const updates = {
+            sold: true,
+            salePrice: salePrice,
+            profit: profit,
+            buyerName: buyerName,
+            buyerContact: buyerContact || '',
+            saleDate: saleDate,
+            saleTimestamp: new Date().toISOString()
+        };
+        await db.ref('pickups/' + sellOrderData.id).update(updates);
+        showToast(`✅ Sold! Profit: ₹${profit}`, 'success');
+
+        closeSellModal();
+        await loadInventory();
+        await loadSales();
+        loadDashboard();
+        document.getElementById('inventoryBadge').textContent = inventoryList.length;
+        document.getElementById('salesBadge').textContent = salesList.length;
+        if (currentPageView === 'sales') applySalesFilters();
+
+    } catch (e) {
+        console.error('Sale error:', e);
+        showToast('Error saving sale', 'error');
+    }
+}
+
+// ==========================================
+// SALES
+// ==========================================
+async function loadSales() {
+    try {
+        const snap = await db.ref('pickups').once('value');
+        const data = snap.val() || {};
+        salesList = Object.entries(data)
+            .filter(([_, item]) => item.sold === true)
+            .map(([id, item]) => {
+                if (item.profit === undefined && item.salePrice !== undefined && item.value !== undefined) {
+                    item.profit = item.salePrice - item.value;
+                }
+                return { id, ...item };
+            });
+        salesList.sort((a, b) => (b.saleTimestamp || b.timestamp || 0) - (a.saleTimestamp || a.timestamp || 0));
+        applySalesFilters();
+        document.getElementById('salesBadge').textContent = salesList.length;
+    } catch (e) {
+        console.error('Sales error:', e);
+        showToast('Error loading sales', 'error');
+    }
+}
+
+function applySalesFilters() {
+    const search = document.getElementById('salesSearch').value.trim().toLowerCase();
+    const dateFrom = document.getElementById('salesDateFrom').value;
+    const dateTo = document.getElementById('salesDateTo').value;
+
+    let filtered = salesList;
+    if (search) {
+        filtered = filtered.filter(item =>
+            (item.orderId || '').toLowerCase().includes(search) ||
+            (item.buyerName || '').toLowerCase().includes(search)
+        );
+    }
+    if (dateFrom) {
+        filtered = filtered.filter(item => (item.saleDate || '') >= dateFrom);
+    }
+    if (dateTo) {
+        filtered = filtered.filter(item => (item.saleDate || '') <= dateTo);
+    }
+    filteredSales = filtered;
+    renderSalesTable();
+    updateSalesSummary();
+}
+
+function clearSalesFilters() {
+    document.getElementById('salesSearch').value = '';
+    document.getElementById('salesDateFrom').value = '';
+    document.getElementById('salesDateTo').value = '';
+    applySalesFilters();
+}
+
+function updateSalesSummary() {
+    const total = filteredSales.length;
+    let revenue = 0,
+        profit = 0;
+    filteredSales.forEach(item => {
+        revenue += item.salePrice || 0;
+        const p = item.profit !== undefined ? item.profit : (item.salePrice - item.value);
+        profit += p || 0;
+    });
+    document.getElementById('salesTotalCount').textContent = total;
+    document.getElementById('salesTotalRevenue').textContent = '₹' + revenue;
+    document.getElementById('salesTotalProfit').textContent = '₹' + profit;
+    document.getElementById('salesAvgProfit').textContent = total > 0 ? '₹' + Math.round(profit / total) : '₹0';
+}
+
+function renderSalesTable() {
+    const tbody = document.getElementById('salesTableBody');
+    if (filteredSales.length === 0) {
+        tbody.innerHTML =
+            `<tr><td colspan="10"><div class="empty-state"><i data-lucide="inbox"></i><p class="text-sm font-medium">No sales found</p></div></td></tr>`;
+        lucide.createIcons();
+        return;
+    }
+
+    let html = '';
+    filteredSales.forEach((item, idx) => {
+        const profit = item.profit !== undefined ? item.profit : (item.salePrice - item.value);
+        const profitNum = profit || 0;
+        const profitClass = profitNum >= 0 ? 'profit-green' : 'profit-red';
+        const saleDate = item.saleDate || item.timestampIST || '—';
+        html += `
+            <tr class="order-row border-b border-gray-50">
+                <td class="py-3 px-4 text-gray-400 font-mono text-xs">${idx + 1}</td>
+                <td class="py-3 px-4 font-mono font-bold text-gray-800 text-sm">${item.orderId || item.id}</td>
+                <td class="py-3 px-4 text-gray-600 text-sm">${item.phoneModel || '—'}</td>
+                <td class="py-3 px-4 hidden md:table-cell font-mono text-xs text-gray-500">${item.imei || '—'}</td>
+                <td class="py-3 px-4 text-gray-600">₹${item.value || 0}</td>
+                <td class="py-3 px-4 font-bold text-gray-800">₹${item.salePrice || 0}</td>
+                <td class="py-3 px-4 font-bold ${profitClass}">₹${profitNum}</td>
+                <td class="py-3 px-4 hidden lg:table-cell text-gray-600 text-sm">${item.buyerName || '—'}</td>
+                <td class="py-3 px-4 text-xs text-gray-500">${saleDate}</td>
+                <td class="py-3 px-4">
+                    <button onclick="viewOrder('${item.id}')" class="btn-action view" title="View Details">
+                        <i data-lucide="eye"></i>
+                    </button>
+                </td>
+            </tr>
+        `;
+    });
+    tbody.innerHTML = html;
+    lucide.createIcons();
+}
+
+function refreshSales() {
+    loadSales();
+    showToast('🔄 Sales refreshed', 'info');
+}
+
+function exportSalesCSV() {
+    if (filteredSales.length === 0) {
+        showToast('No sales data to export', 'error');
+        return;
+    }
+    const headers = ['Order ID', 'Model', 'IMEI', 'Purchase Price', 'Sale Price', 'Profit', 'Buyer', 'Buyer Contact',
+        'Sale Date'
+    ];
+    const rows = filteredSales.map(item => {
+        const profit = item.profit !== undefined ? item.profit : (item.salePrice - item.value);
+        return [
+            item.orderId || item.id || '',
+            item.phoneModel || '',
+            item.imei || '',
+            item.value || 0,
+            item.salePrice || 0,
+            profit || 0,
+            item.buyerName || '',
+            item.buyerContact || '',
+            item.saleDate || ''
+        ];
+    });
+    let csv = '\uFEFF' + headers.join(',') + '\n';
+    rows.forEach(row => {
+        csv += row.map(val => `"${String(val).replace(/"/g, '""')}"`).join(',') + '\n';
+    });
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = `sales_report_${new Date().toISOString().slice(0,10)}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(link.href);
+    showToast('📥 Sales CSV exported', 'success');
+}
+
+// ==========================================
 // VIEW ORDER DETAIL
 // ==========================================
 function viewOrder(orderId) {
@@ -422,7 +852,6 @@ function viewOrder(orderId) {
     modal.style.display = 'flex';
     content.innerHTML = `<div class="text-center py-8"><span class="spinner-sm"></span><p class="text-sm text-gray-400 mt-2">Loading...</p></div>`;
 
-    // Show actions
     document.getElementById('detailActions').style.display = 'flex';
     document.getElementById('detailSaveActions').style.display = 'none';
     document.getElementById('detailEditBtn').textContent = '✏️ Edit';
@@ -435,7 +864,9 @@ function viewOrder(orderId) {
                 `<div class="empty-state"><i data-lucide="alert-circle"></i><p class="text-sm font-medium">Order not found</p></div>`;
             return;
         }
-        // Store data for edit
+        if (item.sold && item.profit === undefined && item.salePrice !== undefined && item.value !== undefined) {
+            item.profit = item.salePrice - item.value;
+        }
         editData = { ...item, id: orderId };
         renderDetailView(item);
     }).catch(err => {
@@ -448,10 +879,29 @@ function viewOrder(orderId) {
 function renderDetailView(item) {
     const content = document.getElementById('detailContent');
     const statusLabel = item.status || 'unknown';
-    const statusClass = statusLabel === 'pickup' ? 'pickup' :
+    let statusClass = statusLabel === 'pickup' ? (item.sold ? 'sold' : 'pickup') :
         statusLabel === 'rejected' ? 'rejected' : 'reschedule';
-    const displayName = statusLabel === 'pickup' ? 'Pickup Completed' :
+    let displayName = statusLabel === 'pickup' ? (item.sold ? 'Sold' : 'Pickup Completed') :
         statusLabel === 'rejected' ? 'Rejected' : 'Pending';
+
+    let profitDisplay = '—';
+    let profitClass = '';
+    if (item.sold) {
+        const profit = item.profit !== undefined ? item.profit : (item.salePrice - item.value);
+        profitDisplay = '₹' + (profit || 0);
+        profitClass = (profit || 0) >= 0 ? 'green' : 'red';
+    }
+
+    let saleHtml = '';
+    if (item.sold) {
+        saleHtml = `
+            <div class="detail-item"><div class="label">Sale Price</div><div class="value green">₹${item.salePrice || 0}</div></div>
+            <div class="detail-item"><div class="label">Profit</div><div class="value ${profitClass}">${profitDisplay}</div></div>
+            <div class="detail-item"><div class="label">Buyer</div><div class="value">${item.buyerName || '—'}</div></div>
+            <div class="detail-item"><div class="label">Buyer Contact</div><div class="value">${item.buyerContact || '—'}</div></div>
+            <div class="detail-item"><div class="label">Sale Date</div><div class="value">${item.saleDate || '—'}</div></div>
+        `;
+    }
 
     let html = `
         <div class="flex items-center gap-3 mb-4">
@@ -462,16 +912,16 @@ function renderDetailView(item) {
             <div class="detail-item"><div class="label">Phone Model</div><div class="value" id="dv-model">${item.phoneModel || '—'}</div></div>
             <div class="detail-item"><div class="label">IMEI</div><div class="value font-mono text-xs" id="dv-imei">${item.imei || '—'}</div></div>
             ${item.imei2 ? `<div class="detail-item"><div class="label">IMEI 2</div><div class="value font-mono text-xs" id="dv-imei2">${item.imei2}</div></div>` : ''}
-            <div class="detail-item"><div class="label">Agreed Value</div><div class="value font-bold" id="dv-value">${item.value !== undefined && item.value !== null ? '₹' + item.value : '—'}</div></div>
+            <div class="detail-item"><div class="label">Purchase Price</div><div class="value font-bold" id="dv-value">${item.value !== undefined && item.value !== null ? '₹' + item.value : '—'}</div></div>
             <div class="detail-item"><div class="label">Customer Name</div><div class="value" id="dv-customer">${item.customerName || '—'}</div></div>
             <div class="detail-item"><div class="label">Reason</div><div class="value" id="dv-reason">${item.reason || '—'}</div></div>
             <div class="detail-item"><div class="label">Status</div><div class="value" id="dv-status">${displayName}</div></div>
             <div class="detail-item"><div class="label">Time (IST)</div><div class="value text-xs" id="dv-time">${item.timestampIST || item.timestamp || '—'}</div></div>
+            ${saleHtml}
         </div>
     `;
     content.innerHTML = html;
     lucide.createIcons();
-    // Store current item for cancel
     editData = { ...item };
 }
 
@@ -479,26 +929,20 @@ function renderDetailView(item) {
 // EDIT MODE
 // ==========================================
 function editOrderDirect(orderId) {
-    // Open detail and immediately switch to edit
     viewOrder(orderId);
     setTimeout(() => toggleEditMode(), 300);
 }
 
 function toggleEditMode() {
-    if (isEditMode) {
-        // If already in edit, do nothing (or cancel)
-        return;
-    }
+    if (isEditMode) return;
     isEditMode = true;
     document.getElementById('detailModalTitle').textContent = 'Edit Order';
     document.getElementById('detailActions').style.display = 'none';
     document.getElementById('detailSaveActions').style.display = 'flex';
 
-    // Build editable form
     const content = document.getElementById('detailContent');
     const item = editData;
 
-    // Convert timestamp to datetime-local value
     let datetimeVal = '';
     if (item.timestamp) {
         const d = new Date(item.timestamp);
@@ -539,7 +983,7 @@ function toggleEditMode() {
                 <input type="text" id="edit-imei2" value="${item.imei2 || ''}" class="edit-field font-mono">
             </div>
             <div>
-                <label class="edit-label">Agreed Value (₹)</label>
+                <label class="edit-label">Purchase Price (₹)</label>
                 <input type="number" id="edit-value" value="${item.value !== undefined && item.value !== null ? item.value : ''}" class="edit-field">
             </div>
             <div>
@@ -554,6 +998,27 @@ function toggleEditMode() {
                 <label class="edit-label">Date & Time (IST)</label>
                 <input type="datetime-local" id="edit-datetime" value="${datetimeVal}" class="edit-field">
             </div>
+            ${item.sold ? `
+                <div class="border-t border-gray-200 pt-3">
+                    <p class="text-sm font-bold text-gray-700">Sale Details</p>
+                    <div class="mt-2">
+                        <label class="edit-label">Sale Price (₹)</label>
+                        <input type="number" id="edit-salePrice" value="${item.salePrice || ''}" class="edit-field">
+                    </div>
+                    <div class="mt-2">
+                        <label class="edit-label">Buyer Name</label>
+                        <input type="text" id="edit-buyer" value="${item.buyerName || ''}" class="edit-field">
+                    </div>
+                    <div class="mt-2">
+                        <label class="edit-label">Buyer Contact</label>
+                        <input type="text" id="edit-buyerContact" value="${item.buyerContact || ''}" class="edit-field">
+                    </div>
+                    <div class="mt-2">
+                        <label class="edit-label">Sale Date</label>
+                        <input type="date" id="edit-saleDate" value="${item.saleDate || ''}" class="edit-field">
+                    </div>
+                </div>
+            ` : ''}
         </div>
     `;
     content.innerHTML = html;
@@ -562,7 +1027,6 @@ function toggleEditMode() {
 
 function cancelEdit() {
     isEditMode = false;
-    // Re-render view
     if (detailOrderId) {
         db.ref('pickups/' + detailOrderId).once('value').then(snap => {
             const item = snap.val();
@@ -580,7 +1044,6 @@ function cancelEdit() {
 }
 
 async function saveEdit() {
-    // Gather data from form
     const orderId = document.getElementById('edit-orderId').value.trim();
     const status = document.getElementById('edit-status').value;
     const model = document.getElementById('edit-model').value.trim();
@@ -591,33 +1054,33 @@ async function saveEdit() {
     const reason = document.getElementById('edit-reason').value.trim();
     const datetimeVal = document.getElementById('edit-datetime').value;
 
-    // Validate
+    const salePrice = parseFloat(document.getElementById('edit-salePrice')?.value) || 0;
+    const buyer = document.getElementById('edit-buyer')?.value.trim() || '';
+    const buyerContact = document.getElementById('edit-buyerContact')?.value.trim() || '';
+    const saleDate = document.getElementById('edit-saleDate')?.value || '';
+
     if (!orderId) {
         showToast('Order ID is required', 'error');
         return;
     }
 
-    // Build updated data
-    const updated = {
+    let updated = {
         orderId,
         status,
         phoneModel: model,
         imei,
         imei2: imei2 || undefined,
-        value: value,
+        value,
         customerName: customer || 'N/A',
         reason: reason || '',
-        // Keep original timestampIST if datetime not changed, else update
-        timestamp: editData.timestamp, // keep old ISO by default
+        timestamp: editData.timestamp,
         timestampIST: editData.timestampIST || '',
     };
 
-    // Update timestamp if datetime changed
     if (datetimeVal) {
         const d = new Date(datetimeVal);
         if (!isNaN(d)) {
             updated.timestamp = d.toISOString();
-            // Format IST
             const istOffset = 5.5 * 60 * 60 * 1000;
             const istTime = new Date(d.getTime() + istOffset);
             const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -633,12 +1096,19 @@ async function saveEdit() {
             updated.timestampIST = `${dd}-${mmm}-${yyyy}, ${hh}:${minutes}:${seconds} ${ampm} IST`;
         }
     } else {
-        // If no datetime provided, keep old
         updated.timestamp = editData.timestamp;
         updated.timestampIST = editData.timestampIST;
     }
 
-    // Confirm with user
+    if (editData.sold) {
+        updated.sold = true;
+        updated.salePrice = salePrice;
+        updated.buyerName = buyer;
+        updated.buyerContact = buyerContact;
+        updated.saleDate = saleDate;
+        updated.profit = salePrice - value;
+    }
+
     const confirm = await Swal.fire({
         title: 'Save Changes?',
         text: 'Are you sure you want to update this order?',
@@ -654,12 +1124,14 @@ async function saveEdit() {
     try {
         await db.ref('pickups/' + detailOrderId).update(updated);
         showToast('✅ Order updated successfully', 'success');
-        // Refresh views
+
         if (currentPageView === 'orders') loadOrders();
         else if (currentPageView === 'dashboard') loadDashboard();
         else if (currentPageView === 'pending') loadPendingAdmin();
         else if (currentPageView === 'rejected') loadRejectedAdmin();
-        // Re-render detail view
+        else if (currentPageView === 'inventory') loadInventory();
+        else if (currentPageView === 'sales') loadSales();
+
         isEditMode = false;
         await db.ref('pickups/' + detailOrderId).once('value').then(snap => {
             const item = snap.val();
@@ -697,13 +1169,15 @@ async function deleteOrder(orderId) {
 
     try {
         await db.ref('pickups/' + orderId).remove();
-        // Also remove from pending if exists
         await db.ref('pending/' + orderId).remove();
         showToast('🗑️ Order deleted successfully', 'success');
+
         if (currentPageView === 'orders') loadOrders();
         else if (currentPageView === 'dashboard') loadDashboard();
         else if (currentPageView === 'pending') loadPendingAdmin();
         else if (currentPageView === 'rejected') loadRejectedAdmin();
+        else if (currentPageView === 'inventory') loadInventory();
+        else if (currentPageView === 'sales') loadSales();
         closeDetail();
     } catch (e) {
         showToast('Error deleting order', 'error');
@@ -717,42 +1191,22 @@ function deleteOrderFromDetail() {
     }
 }
 
-// ==========================================
-// DELETE PENDING (admin)
-// ==========================================
-async function deletePending(orderId) {
-    const result = await Swal.fire({
-        title: 'Remove from Pending?',
-        text: 'This will remove the order from the pending list.',
-        icon: 'question',
-        showCancelButton: true,
-        confirmButtonColor: '#dc2626',
-        cancelButtonColor: '#64748b',
-        confirmButtonText: 'Remove',
-        cancelButtonText: 'Cancel'
-    });
-    if (!result.isConfirmed) return;
-
-    try {
-        await db.ref('pending/' + orderId).remove();
-        showToast('🗑️ Removed from pending', 'success');
-        loadPendingAdmin();
-        loadDashboard();
-    } catch (e) {
-        showToast('Error removing pending', 'error');
-        console.error(e);
-    }
+function closeDetail() {
+    document.getElementById('detailModal').style.display = 'none';
+    detailOrderId = null;
+    isEditMode = false;
+    document.getElementById('detailActions').style.display = 'flex';
+    document.getElementById('detailSaveActions').style.display = 'none';
 }
 
 // ==========================================
-// EXPORT CSV
+// EXPORT CSV (All Orders)
 // ==========================================
 function exportCSV() {
     if (allOrders.length === 0) {
         showToast('No data to export', 'error');
         return;
     }
-
     const headers = ['Order ID', 'Status', 'Model', 'IMEI', 'IMEI2', 'Value', 'Customer', 'Reason', 'Time (IST)'];
     const rows = allOrders.map(item => [
         item.orderId || item.id || '',
@@ -765,12 +1219,10 @@ function exportCSV() {
         item.reason || '',
         item.timestampIST || item.timestamp || ''
     ]);
-
     let csv = '\uFEFF' + headers.join(',') + '\n';
     rows.forEach(row => {
         csv += row.map(val => `"${String(val).replace(/"/g, '""')}"`).join(',') + '\n';
     });
-
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement('a');
     link.href = URL.createObjectURL(blob);
@@ -779,7 +1231,7 @@ function exportCSV() {
     link.click();
     document.body.removeChild(link);
     URL.revokeObjectURL(link.href);
-    showToast('📥 CSV exported successfully', 'success');
+    showToast('📥 Orders CSV exported', 'success');
 }
 
 // ==========================================
@@ -794,7 +1246,9 @@ function refreshAll() {
         loadDashboard(),
         loadOrders(),
         loadPendingAdmin(),
-        loadRejectedAdmin()
+        loadRejectedAdmin(),
+        loadInventory(),
+        loadSales()
     ]).then(() => {
         isRefreshing = false;
         showToast('✅ All data refreshed', 'success');
@@ -818,17 +1272,6 @@ setInterval(updateClock, 1000);
 updateClock();
 
 // ==========================================
-// CLOSE MODAL
-// ==========================================
-function closeDetail() {
-    document.getElementById('detailModal').style.display = 'none';
-    detailOrderId = null;
-    isEditMode = false;
-    document.getElementById('detailActions').style.display = 'flex';
-    document.getElementById('detailSaveActions').style.display = 'none';
-}
-
-// ==========================================
 // INIT
 // ==========================================
 document.addEventListener('DOMContentLoaded', () => {
@@ -837,15 +1280,19 @@ document.addEventListener('DOMContentLoaded', () => {
     loadOrders();
     loadPendingAdmin();
     loadRejectedAdmin();
+    loadInventory();
+    loadSales();
 
     setInterval(() => {
         if (currentPageView === 'dashboard') loadDashboard();
         else if (currentPageView === 'orders') loadOrders();
         else if (currentPageView === 'pending') loadPendingAdmin();
         else if (currentPageView === 'rejected') loadRejectedAdmin();
+        else if (currentPageView === 'inventory') loadInventory();
+        else if (currentPageView === 'sales') loadSales();
     }, 60000);
 
-    console.log('✅ Admin panel ready with edit capabilities');
+    console.log('✅ Admin panel with date filter');
     showToast('👋 Welcome to Admin Panel', 'info', 2000);
 });
 
@@ -853,11 +1300,15 @@ document.addEventListener('DOMContentLoaded', () => {
 document.getElementById('detailModal').addEventListener('click', function(e) {
     if (e.target === this) closeDetail();
 });
+document.getElementById('sellModal').addEventListener('click', function(e) {
+    if (e.target === this) closeSellModal();
+});
 
 // ESC key
 document.addEventListener('keydown', function(e) {
     if (e.key === 'Escape') {
         closeDetail();
+        closeSellModal();
         closeSidebar();
     }
 });

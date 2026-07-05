@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
     <meta name="theme-color" content="#0f172a" />
-    <title>Admin · Flipkart Pickup</title>
+    <title>Admin · Flipkart</title>
 
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-app.js"></script>
@@ -22,13 +22,11 @@
             min-height: 100vh;
             overscroll-behavior: none;
         }
-
         .glass {
             background: rgba(255, 255, 255, 0.8);
             backdrop-filter: blur(12px);
             -webkit-backdrop-filter: blur(12px);
         }
-
         .sidebar-link {
             transition: all 0.2s;
             border-left: 3px solid transparent;
@@ -54,7 +52,6 @@
             width: 20px;
             height: 20px;
         }
-
         .stat-card {
             transition: all 0.2s;
             border: 1px solid #e2e8f0;
@@ -63,7 +60,6 @@
             transform: translateY(-2px);
             box-shadow: 0 8px 25px rgba(0, 0, 0, 0.06);
         }
-
         .order-row {
             transition: background 0.15s;
             cursor: pointer;
@@ -71,7 +67,6 @@
         .order-row:hover {
             background: #f8fafc;
         }
-
         .badge-status {
             padding: 3px 12px;
             border-radius: 20px;
@@ -92,7 +87,14 @@
             background: #fef3c7;
             color: #92400e;
         }
-
+        .badge-status.sold {
+            background: #dbeafe;
+            color: #1e40af;
+        }
+        .badge-status.unsold {
+            background: #fef3c7;
+            color: #92400e;
+        }
         .fade-in {
             animation: fadeIn 0.35s ease;
         }
@@ -106,12 +108,10 @@
                 transform: translateY(0);
             }
         }
-
         .modal-overlay {
             backdrop-filter: blur(6px);
             background: rgba(15, 23, 42, 0.5);
         }
-
         ::-webkit-scrollbar {
             width: 4px;
             height: 4px;
@@ -123,7 +123,6 @@
         ::-webkit-scrollbar-track {
             background: transparent;
         }
-
         .no-scrollbar {
             -ms-overflow-style: none;
             scrollbar-width: none;
@@ -131,12 +130,10 @@
         .no-scrollbar::-webkit-scrollbar {
             display: none;
         }
-
         .table-wrap {
             overflow-x: auto;
             -webkit-overflow-scrolling: touch;
         }
-
         .filter-chip {
             padding: 4px 14px;
             border-radius: 20px;
@@ -156,7 +153,6 @@
         .filter-chip:active {
             transform: scale(0.95);
         }
-
         .btn-action {
             padding: 6px 14px;
             border-radius: 8px;
@@ -176,7 +172,6 @@
             width: 16px;
             height: 16px;
         }
-
         .btn-action.view {
             background: #eef2ff;
             color: #4f46e5;
@@ -212,7 +207,13 @@
         .btn-action.save:hover {
             background: #bfdbfe;
         }
-
+        .btn-action.sell {
+            background: #dbeafe;
+            color: #1e40af;
+        }
+        .btn-action.sell:hover {
+            background: #bfdbfe;
+        }
         .spinner-sm {
             border: 2px solid #e2e8f0;
             border-top: 2px solid #4f46e5;
@@ -230,8 +231,6 @@
                 transform: rotate(360deg);
             }
         }
-
-        /* Mobile sidebar overlay */
         .sidebar-overlay {
             display: none;
             position: fixed;
@@ -243,7 +242,6 @@
         .sidebar-overlay.open {
             display: block;
         }
-
         @media (max-width: 768px) {
             .sidebar {
                 position: fixed;
@@ -264,7 +262,6 @@
                 display: block;
             }
         }
-
         @media (min-width: 769px) {
             .sidebar {
                 position: sticky;
@@ -284,7 +281,6 @@
                 display: none !important;
             }
         }
-
         .empty-state {
             text-align: center;
             padding: 48px 20px;
@@ -296,7 +292,6 @@
             margin-bottom: 12px;
             color: #cbd5e1;
         }
-
         .detail-grid {
             display: grid;
             grid-template-columns: 1fr 1fr;
@@ -326,7 +321,15 @@
             word-break: break-all;
             margin-top: 2px;
         }
-
+        .detail-item .value.green {
+            color: #059669;
+        }
+        .detail-item .value.blue {
+            color: #2563eb;
+        }
+        .detail-item .value.red {
+            color: #dc2626;
+        }
         .toast-fixed {
             position: fixed;
             bottom: 24px;
@@ -360,8 +363,6 @@
         .toast-fixed.info {
             background: #1e40af;
         }
-
-        /* Editable form within modal */
         .edit-field {
             border: 2px solid #e2e8f0;
             border-radius: 10px;
@@ -389,7 +390,6 @@
             display: block;
             margin-bottom: 3px;
         }
-
         .status-select {
             border: 2px solid #e2e8f0;
             border-radius: 10px;
@@ -403,7 +403,6 @@
         .status-select:focus {
             border-color: #4f46e5;
         }
-
         .badge-onway {
             background: #dbeafe;
             color: #1e40af;
@@ -429,6 +428,80 @@
         .pending-item:active {
             transform: scale(0.99);
         }
+        .sell-modal .field-group {
+            margin-bottom: 16px;
+        }
+        .sell-modal label {
+            font-size: 13px;
+            font-weight: 600;
+            color: #1e293b;
+            display: block;
+            margin-bottom: 4px;
+        }
+        .sell-modal input {
+            width: 100%;
+            padding: 10px 14px;
+            border: 2px solid #e2e8f0;
+            border-radius: 10px;
+            font-size: 15px;
+            outline: none;
+            transition: border 0.2s;
+            background: #fff;
+        }
+        .sell-modal input:focus {
+            border-color: #4f46e5;
+            box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.1);
+        }
+        .sell-modal input:disabled {
+            background: #f1f5f9;
+            cursor: not-allowed;
+        }
+        .sell-modal .hint {
+            font-size: 12px;
+            color: #94a3b8;
+            margin-top: 4px;
+        }
+        .profit-preview {
+            padding: 10px 14px;
+            border-radius: 10px;
+            font-weight: 700;
+            text-align: center;
+            font-size: 16px;
+        }
+        .profit-preview.positive {
+            background: #d1fae5;
+            color: #065f46;
+        }
+        .profit-preview.negative {
+            background: #fee2e2;
+            color: #991b1b;
+        }
+        .profit-preview.neutral {
+            background: #f1f5f9;
+            color: #64748b;
+        }
+        .pulse-ring {
+            animation: pulseRing 2s cubic-bezier(0.215, 0.61, 0.355, 1) infinite;
+        }
+        @keyframes pulseRing {
+            0% {
+                box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.7);
+            }
+            70% {
+                box-shadow: 0 0 0 10px rgba(34, 197, 94, 0);
+            }
+            100% {
+                box-shadow: 0 0 0 0 rgba(34, 197, 94, 0);
+            }
+        }
+        .profit-green {
+            color: #059669;
+            font-weight: 700;
+        }
+        .profit-red {
+            color: #dc2626;
+            font-weight: 700;
+        }
     </style>
 </head>
 <body>
@@ -450,7 +523,7 @@
                 </div>
                 <div>
                     <h1 class="text-sm font-bold text-gray-800">Admin Panel</h1>
-                    <p class="text-[10px] text-gray-400 font-medium">Flipkart Pickup</p>
+                    <p class="text-[10px] text-gray-400 font-medium">Flipkart</p>
                 </div>
             </div>
 
@@ -469,6 +542,14 @@
                 <div class="sidebar-link" data-page="rejected" onclick="navigate('rejected')">
                     <i data-lucide="x-circle"></i> Rejected
                     <span id="rejectedBadge" class="ml-auto text-xs bg-red-100 text-red-700 px-2 py-0.5 rounded-full">0</span>
+                </div>
+                <div class="sidebar-link" data-page="inventory" onclick="navigate('inventory')">
+                    <i data-lucide="package-check"></i> Inventory
+                    <span id="inventoryBadge" class="ml-auto text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full">0</span>
+                </div>
+                <div class="sidebar-link" data-page="sales" onclick="navigate('sales')">
+                    <i data-lucide="trending-up"></i> Sales
+                    <span id="salesBadge" class="ml-auto text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full">0</span>
                 </div>
             </nav>
 
@@ -507,7 +588,7 @@
                 <div class="flex items-center justify-between mb-5">
                     <div>
                         <h2 class="text-2xl font-bold text-gray-800">Dashboard</h2>
-                        <p class="text-sm text-gray-500">Real-time overview of all pickup activity</p>
+                        <p class="text-sm text-gray-500">Real-time overview of all activity</p>
                     </div>
                     <div class="flex items-center gap-2 text-xs text-gray-400">
                         <i data-lucide="clock" class="w-3.5 h-3.5"></i>
@@ -541,6 +622,32 @@
                     </div>
                     <div class="stat-card glass rounded-2xl p-4 shadow-sm">
                         <div class="flex items-center gap-3">
+                            <div class="w-10 h-10 bg-blue-100 rounded-xl flex items-center justify-center">
+                                <i data-lucide="package-check" class="w-5 h-5 text-blue-600"></i>
+                            </div>
+                            <div>
+                                <p class="text-2xl font-bold text-gray-800" id="statInventory">0</p>
+                                <p class="text-xs text-gray-500 font-medium">In Stock</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="stat-card glass rounded-2xl p-4 shadow-sm">
+                        <div class="flex items-center gap-3">
+                            <div class="w-10 h-10 bg-purple-100 rounded-xl flex items-center justify-center">
+                                <i data-lucide="trending-up" class="w-5 h-5 text-purple-600"></i>
+                            </div>
+                            <div>
+                                <p class="text-2xl font-bold text-gray-800" id="statSold">0</p>
+                                <p class="text-xs text-gray-500 font-medium">Sold</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Sales Stats (Revenue & Profit) -->
+                <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4 mb-6">
+                    <div class="stat-card glass rounded-2xl p-4 shadow-sm">
+                        <div class="flex items-center gap-3">
                             <div class="w-10 h-10 bg-red-100 rounded-xl flex items-center justify-center">
                                 <i data-lucide="x-circle" class="w-5 h-5 text-red-600"></i>
                             </div>
@@ -558,6 +665,28 @@
                             <div>
                                 <p class="text-2xl font-bold text-gray-800" id="statPending">0</p>
                                 <p class="text-xs text-gray-500 font-medium">Pending</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="stat-card glass rounded-2xl p-4 shadow-sm">
+                        <div class="flex items-center gap-3">
+                            <div class="w-10 h-10 bg-emerald-100 rounded-xl flex items-center justify-center">
+                                <i data-lucide="indian-rupee" class="w-5 h-5 text-emerald-600"></i>
+                            </div>
+                            <div>
+                                <p class="text-2xl font-bold text-gray-800" id="statRevenue">₹0</p>
+                                <p class="text-xs text-gray-500 font-medium">Revenue</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="stat-card glass rounded-2xl p-4 shadow-sm">
+                        <div class="flex items-center gap-3">
+                            <div class="w-10 h-10 bg-amber-100 rounded-xl flex items-center justify-center">
+                                <i data-lucide="badge-dollar-sign" class="w-5 h-5 text-amber-600"></i>
+                            </div>
+                            <div>
+                                <p class="text-2xl font-bold text-gray-800" id="statProfit">₹0</p>
+                                <p class="text-xs text-gray-500 font-medium">Total Profit</p>
                             </div>
                         </div>
                     </div>
@@ -613,6 +742,15 @@
                         <input type="text" id="orderSearch" placeholder="Search by Order ID..." class="flex-1 min-w-[160px] px-4 py-2 border border-gray-200 rounded-xl text-sm outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100" />
                         <button onclick="applyOrderSearch()" class="px-4 py-2 bg-indigo-600 text-white rounded-xl text-sm font-semibold hover:bg-indigo-700 transition">Search</button>
                         <button onclick="clearOrderSearch()" class="px-4 py-2 bg-gray-100 text-gray-600 rounded-xl text-sm font-semibold hover:bg-gray-200 transition">Clear</button>
+                    </div>
+                    <!-- NEW: Date range filters -->
+                    <div class="flex flex-wrap items-center gap-2 mt-3 border-t border-gray-200 pt-3">
+                        <span class="text-xs font-bold text-gray-500 mr-1">Date Range:</span>
+                        <input type="date" id="orderDateFrom" class="px-4 py-2 border border-gray-200 rounded-xl text-sm outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100" />
+                        <span class="text-xs text-gray-400">to</span>
+                        <input type="date" id="orderDateTo" class="px-4 py-2 border border-gray-200 rounded-xl text-sm outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100" />
+                        <button onclick="applyOrderDateFilter()" class="px-4 py-2 bg-indigo-600 text-white rounded-xl text-sm font-semibold hover:bg-indigo-700 transition">Apply</button>
+                        <button onclick="clearOrderDateFilter()" class="px-4 py-2 bg-gray-100 text-gray-600 rounded-xl text-sm font-semibold hover:bg-gray-200 transition">Clear Dates</button>
                     </div>
                 </div>
 
@@ -703,7 +841,178 @@
                 </div>
             </div>
 
+            <!-- ===== INVENTORY ===== -->
+            <div id="page-inventory" class="page-content fade-in" style="display:none;">
+                <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+                    <div>
+                        <h2 class="text-2xl font-bold text-gray-800">Inventory</h2>
+                        <p class="text-sm text-gray-500">All phones available for sale</p>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <span class="text-sm font-semibold text-gray-600" id="inventoryCount">0 units</span>
+                        <button onclick="refreshInventory()" class="btn-action view">
+                            <i data-lucide="refresh-cw"></i>
+                        </button>
+                    </div>
+                </div>
+
+                <div class="glass rounded-2xl p-4 shadow-sm border border-gray-100 mb-4">
+                    <div class="flex flex-wrap items-center gap-2">
+                        <input type="text" id="inventorySearch" placeholder="Search by Order ID or Model..." class="flex-1 min-w-[160px] px-4 py-2 border border-gray-200 rounded-xl text-sm outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100" />
+                        <button onclick="applyInventorySearch()" class="px-4 py-2 bg-indigo-600 text-white rounded-xl text-sm font-semibold hover:bg-indigo-700 transition">Search</button>
+                        <button onclick="clearInventorySearch()" class="px-4 py-2 bg-gray-100 text-gray-600 rounded-xl text-sm font-semibold hover:bg-gray-200 transition">Clear</button>
+                    </div>
+                </div>
+
+                <div class="glass rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+                    <div class="table-wrap">
+                        <table class="w-full text-sm">
+                            <thead>
+                                <tr class="bg-gray-50 border-b border-gray-100">
+                                    <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">#</th>
+                                    <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">Order ID</th>
+                                    <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">Model</th>
+                                    <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase hidden md:table-cell">IMEI</th>
+                                    <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">Purchase Price</th>
+                                    <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase hidden lg:table-cell">Customer</th>
+                                    <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="inventoryTableBody">
+                                <tr><td colspan="7"><div class="empty-state"><i data-lucide="inbox"></i><p class="text-sm font-medium">No inventory</p></div></td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ===== SALES ===== -->
+            <div id="page-sales" class="page-content fade-in" style="display:none;">
+                <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+                    <div>
+                        <h2 class="text-2xl font-bold text-gray-800">Sales</h2>
+                        <p class="text-sm text-gray-500">Complete sales history & profit tracking</p>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <button onclick="exportSalesCSV()" class="btn-action export">
+                            <i data-lucide="download"></i> Export CSV
+                        </button>
+                        <button onclick="refreshSales()" class="btn-action view">
+                            <i data-lucide="refresh-cw"></i>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Sales Summary -->
+                <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
+                    <div class="glass rounded-xl p-3 shadow-sm border border-gray-100 text-center">
+                        <p class="text-xs text-gray-500">Total Sales</p>
+                        <p class="text-lg font-bold text-gray-800" id="salesTotalCount">0</p>
+                    </div>
+                    <div class="glass rounded-xl p-3 shadow-sm border border-gray-100 text-center">
+                        <p class="text-xs text-gray-500">Revenue</p>
+                        <p class="text-lg font-bold text-gray-800" id="salesTotalRevenue">₹0</p>
+                    </div>
+                    <div class="glass rounded-xl p-3 shadow-sm border border-gray-100 text-center">
+                        <p class="text-xs text-gray-500">Total Profit</p>
+                        <p class="text-lg font-bold text-green-600" id="salesTotalProfit">₹0</p>
+                    </div>
+                    <div class="glass rounded-xl p-3 shadow-sm border border-gray-100 text-center">
+                        <p class="text-xs text-gray-500">Avg. Profit</p>
+                        <p class="text-lg font-bold text-blue-600" id="salesAvgProfit">₹0</p>
+                    </div>
+                </div>
+
+                <!-- Filters -->
+                <div class="glass rounded-2xl p-4 shadow-sm border border-gray-100 mb-4">
+                    <div class="flex flex-wrap items-center gap-2">
+                        <input type="text" id="salesSearch" placeholder="Search by Order ID or Buyer..." class="flex-1 min-w-[160px] px-4 py-2 border border-gray-200 rounded-xl text-sm outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100" />
+                        <input type="date" id="salesDateFrom" class="px-4 py-2 border border-gray-200 rounded-xl text-sm outline-none focus:border-indigo-400" />
+                        <input type="date" id="salesDateTo" class="px-4 py-2 border border-gray-200 rounded-xl text-sm outline-none focus:border-indigo-400" />
+                        <button onclick="applySalesFilters()" class="px-4 py-2 bg-indigo-600 text-white rounded-xl text-sm font-semibold hover:bg-indigo-700 transition">Apply</button>
+                        <button onclick="clearSalesFilters()" class="px-4 py-2 bg-gray-100 text-gray-600 rounded-xl text-sm font-semibold hover:bg-gray-200 transition">Clear</button>
+                    </div>
+                </div>
+
+                <div class="glass rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+                    <div class="table-wrap">
+                        <table class="w-full text-sm">
+                            <thead>
+                                <tr class="bg-gray-50 border-b border-gray-100">
+                                    <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">#</th>
+                                    <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">Order ID</th>
+                                    <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">Model</th>
+                                    <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase hidden md:table-cell">IMEI</th>
+                                    <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">Purchase</th>
+                                    <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">Sale Price</th>
+                                    <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">Profit</th>
+                                    <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase hidden lg:table-cell">Buyer</th>
+                                    <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">Sale Date</th>
+                                    <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="salesTableBody">
+                                <tr><td colspan="10"><div class="empty-state"><i data-lucide="inbox"></i><p class="text-sm font-medium">No sales yet</p></div></td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
         </main>
+    </div>
+
+    <!-- ========== SELL MODAL ========== -->
+    <div id="sellModal" class="fixed inset-0 z-50 modal-overlay flex items-center justify-center p-4" style="display:none;">
+        <div class="bg-white rounded-3xl w-full max-w-md shadow-2xl slide-up sell-modal max-h-[95vh] overflow-y-auto">
+            <div class="sticky top-0 bg-white z-10 p-5 border-b border-gray-100 flex items-center justify-between rounded-t-3xl">
+                <h3 class="font-bold text-lg flex items-center gap-2">
+                    <i data-lucide="badge-dollar-sign" class="w-5 h-5 text-green-600"></i>
+                    Sell Phone
+                </h3>
+                <button onclick="closeSellModal()" class="p-2 hover:bg-gray-100 rounded-full transition">
+                    <i data-lucide="x" class="w-5 h-5 text-gray-500"></i>
+                </button>
+            </div>
+            <div class="p-5 space-y-4">
+                <div class="field-group">
+                    <label>Order ID</label>
+                    <input type="text" id="sellOrderId" readonly />
+                </div>
+                <div class="field-group">
+                    <label>Phone Model</label>
+                    <input type="text" id="sellModel" readonly />
+                </div>
+                <div class="field-group">
+                    <label>Purchase Price (₹)</label>
+                    <input type="text" id="sellPurchasePrice" readonly />
+                </div>
+                <div class="field-group">
+                    <label>Sale Price (₹) <span class="text-red-500">*</span></label>
+                    <input type="number" id="sellSalePrice" placeholder="Enter sale price" step="1" min="0" />
+                    <div class="hint">Profit will be calculated automatically</div>
+                </div>
+                <div class="field-group">
+                    <label>Buyer Name <span class="text-red-500">*</span></label>
+                    <input type="text" id="sellBuyerName" placeholder="Enter buyer name" />
+                </div>
+                <div class="field-group">
+                    <label>Buyer Contact <span class="text-gray-400">(optional)</span></label>
+                    <input type="text" id="sellBuyerContact" placeholder="Phone number" />
+                </div>
+                <div class="field-group">
+                    <label>Sale Date</label>
+                    <input type="date" id="sellSaleDate" />
+                </div>
+                <div id="sellProfitPreview" class="profit-preview neutral">Enter sale price to see profit</div>
+            </div>
+            <div class="sticky bottom-0 bg-white p-5 border-t border-gray-100 flex gap-2 rounded-b-3xl">
+                <button onclick="closeSellModal()" class="flex-1 py-3 rounded-xl bg-gray-100 text-gray-700 font-semibold hover:bg-gray-200 transition">Cancel</button>
+                <button onclick="confirmSell()" class="flex-1 py-3 rounded-xl bg-green-600 text-white font-semibold hover:bg-green-700 transition flex items-center justify-center gap-2">
+                    <i data-lucide="check-circle" class="w-4 h-4"></i> Confirm Sale
+                </button>
+            </div>
+        </div>
     </div>
 
     <!-- ========== ORDER DETAIL MODAL (with edit) ========== -->
@@ -732,7 +1041,6 @@
                     <i data-lucide="trash-2" class="w-4 h-4"></i> Delete
                 </button>
             </div>
-            <!-- Hidden save button (shown in edit mode) -->
             <div id="detailSaveActions" style="display:none;" class="sticky bottom-0 bg-white border-t border-gray-100 p-4 flex gap-2 justify-end">
                 <button onclick="cancelEdit()" class="px-5 py-2.5 rounded-xl bg-gray-100 text-gray-700 font-semibold hover:bg-gray-200 transition">Cancel</button>
                 <button onclick="saveEdit()" class="px-5 py-2.5 rounded-xl bg-indigo-600 text-white font-semibold hover:bg-indigo-700 transition flex items-center gap-2">
