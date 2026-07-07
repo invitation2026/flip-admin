@@ -1303,7 +1303,7 @@ function renderAgentsTable() {
     const tbody = document.getElementById('agentsTableBody');
     if (agentsList.length === 0) {
         tbody.innerHTML =
-            `<tr><td colspan="8"><div class="empty-state"><i data-lucide="inbox"></i><p class="text-sm font-medium">No agents registered</p></div></td></tr>`;
+            `<tr><td colspan="9"><div class="empty-state"><i data-lucide="inbox"></i><p class="text-sm font-medium">No agents registered</p></div></td></tr>`;
         lucide.createIcons();
         return;
     }
@@ -1334,6 +1334,9 @@ function renderAgentsTable() {
                     <button onclick="showChangePasswordModal('${item.username}')" class="btn-action edit" title="Change Password">
                         <i data-lucide="key"></i>
                     </button>
+                    <button onclick="forceLogout('${item.username}')" class="btn-action logout" title="Force Logout">
+                        <i data-lucide="log-out"></i>
+                    </button>
                     <button onclick="deleteAgent('${item.username}')" class="btn-action delete" title="Delete Agent">
                         <i data-lucide="trash-2"></i>
                     </button>
@@ -1344,6 +1347,31 @@ function renderAgentsTable() {
     tbody.innerHTML = html;
     document.getElementById('agentsCount').textContent = agentsList.length + ' agents';
     lucide.createIcons();
+}
+
+// ==========================================
+// FORCE LOGOUT (Admin)
+// ==========================================
+async function forceLogout(username) {
+    const result = await Swal.fire({
+        title: `Force Logout "${username}"?`,
+        text: 'This will immediately log out the agent if they are currently logged in.',
+        icon: 'warning',
+        showCancelButton: true,
+        confirmButtonColor: '#dc2626',
+        cancelButtonColor: '#64748b',
+        confirmButtonText: 'Yes, force logout',
+        cancelButtonText: 'Cancel'
+    });
+    if (!result.isConfirmed) return;
+
+    try {
+        await db.ref('users/' + username + '/forceLogout').set(true);
+        showToast(`✅ Force logout signal sent to ${username}`, 'success');
+    } catch (e) {
+        showToast('Error sending force logout', 'error');
+        console.error(e);
+    }
 }
 
 function togglePassword(username) {
