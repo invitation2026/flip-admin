@@ -13,7 +13,6 @@
     <script src="https://unpkg.com/lucide@latest"></script>
 
     <style>
-        /* (all existing styles remain exactly the same) */
         * {
             -webkit-tap-highlight-color: transparent;
         }
@@ -392,10 +391,6 @@
             border-color: #4f46e5;
             box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.1);
         }
-        .edit-field-sm {
-            font-size: 13px;
-            padding: 6px 10px;
-        }
         .edit-label {
             font-size: 10px;
             font-weight: 700;
@@ -517,8 +512,6 @@
             color: #dc2626;
             font-weight: 700;
         }
-
-        /* Agent form */
         .agent-form .field-group {
             margin-bottom: 14px;
         }
@@ -677,7 +670,6 @@
 
             <!-- ===== DASHBOARD ===== -->
             <div id="page-dashboard" class="page-content fade-in">
-                <!-- (unchanged) -->
                 <div class="flex items-center justify-between mb-5">
                     <div>
                         <h2 class="text-2xl font-bold text-gray-800">Dashboard</h2>
@@ -820,7 +812,7 @@
                 </div>
             </div>
 
-            <!-- ===== ORDERS ===== (with agent filter) -->
+            <!-- ===== ORDERS ===== -->
             <div id="page-orders" class="page-content fade-in" style="display:none;">
                 <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
                     <div>
@@ -860,7 +852,7 @@
                         <button onclick="applyOrderDateFilter()" class="px-4 py-2 bg-indigo-600 text-white rounded-xl text-sm font-semibold hover:bg-indigo-700 transition">Apply</button>
                         <button onclick="clearOrderDateFilter()" class="px-4 py-2 bg-gray-100 text-gray-600 rounded-xl text-sm font-semibold hover:bg-gray-200 transition">Clear Dates</button>
                     </div>
-                    <!-- NEW: Agent Filter -->
+                    <!-- Agent Filter -->
                     <div class="flex flex-wrap items-center gap-2 mt-3 border-t border-gray-200 pt-3">
                         <span class="text-xs font-bold text-gray-500 mr-1">Agent:</span>
                         <select id="orderAgentFilter" class="px-4 py-2 border border-gray-200 rounded-xl text-sm outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100">
@@ -904,9 +896,8 @@
                 </div>
             </div>
 
-            <!-- ===== PENDING ===== (unchanged) -->
+            <!-- ===== PENDING ===== -->
             <div id="page-pending" class="page-content fade-in" style="display:none;">
-                <!-- ... same as before ... -->
                 <div class="flex items-center justify-between mb-4">
                     <div>
                         <h2 class="text-2xl font-bold text-gray-800">Pending Orders</h2>
@@ -916,6 +907,7 @@
                         <i data-lucide="refresh-cw"></i> Refresh
                     </button>
                 </div>
+
                 <div class="glass rounded-2xl shadow-sm border border-gray-100 p-4">
                     <div id="pendingListAdmin" class="space-y-3 max-h-[600px] overflow-y-auto no-scrollbar">
                         <div class="empty-state">
@@ -927,9 +919,8 @@
                 </div>
             </div>
 
-            <!-- ===== REJECTED ===== (unchanged) -->
+            <!-- ===== REJECTED ===== -->
             <div id="page-rejected" class="page-content fade-in" style="display:none;">
-                <!-- ... -->
                 <div class="flex items-center justify-between mb-4">
                     <div>
                         <h2 class="text-2xl font-bold text-gray-800">Rejected Orders</h2>
@@ -939,6 +930,7 @@
                         <i data-lucide="refresh-cw"></i> Refresh
                     </button>
                 </div>
+
                 <div class="glass rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
                     <div class="table-wrap">
                         <table class="w-full text-sm">
@@ -959,9 +951,8 @@
                 </div>
             </div>
 
-            <!-- ===== INVENTORY ===== (unchanged) -->
+            <!-- ===== INVENTORY ===== -->
             <div id="page-inventory" class="page-content fade-in" style="display:none;">
-                <!-- ... -->
                 <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
                     <div>
                         <h2 class="text-2xl font-bold text-gray-800">Inventory</h2>
@@ -974,6 +965,7 @@
                         </button>
                     </div>
                 </div>
+
                 <div class="glass rounded-2xl p-4 shadow-sm border border-gray-100 mb-4">
                     <div class="flex flex-wrap items-center gap-2">
                         <input type="text" id="inventorySearch" placeholder="Search by Order ID or Model..." class="flex-1 min-w-[160px] px-4 py-2 border border-gray-200 rounded-xl text-sm outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100" />
@@ -981,6 +973,7 @@
                         <button onclick="clearInventorySearch()" class="px-4 py-2 bg-gray-100 text-gray-600 rounded-xl text-sm font-semibold hover:bg-gray-200 transition">Clear</button>
                     </div>
                 </div>
+
                 <div class="glass rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
                     <div class="table-wrap">
                         <table class="w-full text-sm">
@@ -1003,9 +996,8 @@
                 </div>
             </div>
 
-            <!-- ===== SALES ===== (unchanged) -->
+            <!-- ===== SALES ===== -->
             <div id="page-sales" class="page-content fade-in" style="display:none;">
-                <!-- ... -->
                 <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
                     <div>
                         <h2 class="text-2xl font-bold text-gray-800">Sales</h2>
@@ -1020,6 +1012,8 @@
                         </button>
                     </div>
                 </div>
+
+                <!-- Sales Summary -->
                 <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
                     <div class="glass rounded-xl p-3 shadow-sm border border-gray-100 text-center">
                         <p class="text-xs text-gray-500">Total Sales</p>
@@ -1038,6 +1032,8 @@
                         <p class="text-lg font-bold text-blue-600" id="salesAvgProfit">₹0</p>
                     </div>
                 </div>
+
+                <!-- Filters -->
                 <div class="glass rounded-2xl p-4 shadow-sm border border-gray-100 mb-4">
                     <div class="flex flex-wrap items-center gap-2">
                         <input type="text" id="salesSearch" placeholder="Search by Order ID or Buyer..." class="flex-1 min-w-[160px] px-4 py-2 border border-gray-200 rounded-xl text-sm outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100" />
@@ -1047,6 +1043,7 @@
                         <button onclick="clearSalesFilters()" class="px-4 py-2 bg-gray-100 text-gray-600 rounded-xl text-sm font-semibold hover:bg-gray-200 transition">Clear</button>
                     </div>
                 </div>
+
                 <div class="glass rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
                     <div class="table-wrap">
                         <table class="w-full text-sm">
@@ -1072,7 +1069,7 @@
                 </div>
             </div>
 
-            <!-- ===== AGENTS (with password view & activity) ===== -->
+            <!-- ===== AGENTS ===== -->
             <div id="page-agents" class="page-content fade-in" style="display:none;">
                 <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
                     <div>
@@ -1157,7 +1154,6 @@
 
     <!-- ========== SELL MODAL ========== -->
     <div id="sellModal" class="fixed inset-0 z-50 modal-overlay flex items-center justify-center p-4" style="display:none;">
-        <!-- (unchanged) -->
         <div class="bg-white rounded-3xl w-full max-w-md shadow-2xl slide-up sell-modal max-h-[95vh] overflow-y-auto">
             <div class="sticky top-0 bg-white z-10 p-5 border-b border-gray-100 flex items-center justify-between rounded-t-3xl">
                 <h3 class="font-bold text-lg flex items-center gap-2">
@@ -1211,7 +1207,6 @@
 
     <!-- ========== ORDER DETAIL MODAL ========== -->
     <div id="detailModal" class="fixed inset-0 z-50 modal-overlay flex items-center justify-center p-4" style="display:none;">
-        <!-- (unchanged) -->
         <div class="bg-white rounded-3xl w-full max-w-2xl max-h-[95vh] overflow-y-auto shadow-2xl animate-[fadeIn_0.25s_ease]">
             <div class="sticky top-0 bg-white z-10 flex items-center justify-between p-5 border-b border-gray-100">
                 <h3 class="font-bold text-lg flex items-center gap-2">
@@ -1268,7 +1263,6 @@
         </div>
     </div>
 
-    <!-- External JS File -->
     <script src="script.js"></script>
 
 </body>

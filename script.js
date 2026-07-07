@@ -28,14 +28,12 @@ let isRefreshing = false;
 let isEditMode = false;
 let editData = {};
 
-// Inventory & Sales state
 let inventoryList = [];
 let salesList = [];
 let filteredInventory = [];
 let filteredSales = [];
 let sellOrderData = null;
 
-// Agents state
 let agentsList = [];
 let passwordVisible = {};
 
@@ -111,14 +109,8 @@ async function loadDashboard() {
         const pickups = pickupSnap.val() || {};
         const pending = pendingSnap.val() || {};
 
-        let total = 0,
-            pickupCount = 0,
-            rejectedCount = 0,
-            rescheduleCount = 0;
-        let soldCount = 0,
-            unsoldCount = 0,
-            revenue = 0,
-            profit = 0;
+        let total = 0, pickupCount = 0, rejectedCount = 0, rescheduleCount = 0;
+        let soldCount = 0, unsoldCount = 0, revenue = 0, profit = 0;
         let totalStockValue = 0;
 
         Object.values(pickups).forEach(item => {
@@ -200,7 +192,7 @@ async function loadDashboard() {
 }
 
 // ==========================================
-// ORDERS (with agent filter)
+// ORDERS
 // ==========================================
 async function loadOrders() {
     try {
@@ -545,7 +537,7 @@ function refreshRejected() {
 }
 
 // ==========================================
-// INVENTORY (unchanged)
+// INVENTORY
 // ==========================================
 async function loadInventory() {
     try {
@@ -622,7 +614,7 @@ function refreshInventory() {
 }
 
 // ==========================================
-// SELL MODAL (unchanged)
+// SELL MODAL
 // ==========================================
 function openSellModal(orderId) {
     const order = inventoryList.find(item => item.id === orderId);
@@ -738,7 +730,7 @@ async function confirmSell() {
 }
 
 // ==========================================
-// SALES (unchanged)
+// SALES
 // ==========================================
 async function loadSales() {
     try {
@@ -793,8 +785,7 @@ function clearSalesFilters() {
 
 function updateSalesSummary() {
     const total = filteredSales.length;
-    let revenue = 0,
-        profit = 0;
+    let revenue = 0, profit = 0;
     filteredSales.forEach(item => {
         revenue += item.salePrice || 0;
         const p = item.profit !== undefined ? item.profit : (item.salePrice - item.value);
@@ -889,7 +880,7 @@ function exportSalesCSV() {
 }
 
 // ==========================================
-// VIEW ORDER DETAIL (unchanged)
+// VIEW ORDER DETAIL
 // ==========================================
 function viewOrder(orderId) {
     detailOrderId = orderId;
@@ -975,7 +966,7 @@ function renderDetailView(item) {
 }
 
 // ==========================================
-// EDIT MODE (unchanged)
+// EDIT MODE
 // ==========================================
 function editOrderDirect(orderId) {
     viewOrder(orderId);
@@ -1201,7 +1192,7 @@ async function saveEdit() {
 }
 
 // ==========================================
-// DELETE ORDER — FIXED: proper refresh after deletion
+// DELETE ORDER — with global refresh
 // ==========================================
 async function deleteOrder(orderId) {
     const result = await Swal.fire({
@@ -1221,7 +1212,6 @@ async function deleteOrder(orderId) {
         await db.ref('pending/' + orderId).remove();
         showToast('🗑️ Order deleted successfully', 'success');
 
-        // Refresh ALL views
         await loadDashboard();
         await loadOrders();
         await loadPendingAdmin();
@@ -1230,7 +1220,6 @@ async function deleteOrder(orderId) {
         await loadSales();
         if (currentPageView === 'agents') loadAgents();
 
-        // Close detail modal if open
         closeDetail();
 
     } catch (e) {
@@ -1254,7 +1243,7 @@ function closeDetail() {
 }
 
 // ==========================================
-// EXPORT CSV (All Orders) - with agent
+// EXPORT CSV (All Orders)
 // ==========================================
 function exportCSV() {
     if (allOrders.length === 0) {
@@ -1290,7 +1279,7 @@ function exportCSV() {
 }
 
 // ==========================================
-// AGENTS (with password view, change password, activity)
+// AGENTS
 // ==========================================
 async function loadAgents() {
     try {
@@ -1379,7 +1368,6 @@ async function deleteAgent(username) {
         await db.ref('users/' + username).remove();
         showToast('✅ Agent deleted', 'success');
         loadAgents();
-        // Do NOT affect rider session
     } catch (e) {
         console.error('Delete agent error:', e);
         showToast('Error deleting agent', 'error');
@@ -1461,9 +1449,6 @@ function registerAgent(e) {
         });
 }
 
-// ==========================================
-// CHANGE PASSWORD
-// ==========================================
 function showChangePasswordModal(username) {
     Swal.fire({
         title: `Change Password for "${username}"`,
@@ -1494,7 +1479,6 @@ function showChangePasswordModal(username) {
             try {
                 await db.ref('users/' + username + '/password').set(result.value);
                 showToast('✅ Password updated successfully', 'success');
-                // Refresh agents list to show updated password (hidden)
                 loadAgents();
             } catch (e) {
                 showToast('Error updating password', 'error');
@@ -1635,7 +1619,7 @@ document.addEventListener('DOMContentLoaded', () => {
         else if (currentPageView === 'agents') loadAgents();
     }, 60000);
 
-    console.log('✅ Admin panel with agent activity, password change & fixed delete');
+    console.log('✅ Admin panel ready');
     showToast('👋 Welcome to Admin Panel', 'info', 2000);
 });
 
