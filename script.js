@@ -37,8 +37,6 @@ let sellOrderData = null;
 
 // Agents state
 let agentsList = [];
-
-// Password visibility toggles
 let passwordVisible = {};
 
 // ==========================================
@@ -101,10 +99,9 @@ function navigate(page) {
 }
 
 // ==========================================
-// DASHBOARD (unchanged)
+// DASHBOARD
 // ==========================================
 async function loadDashboard() {
-    // (same as before)
     try {
         const [pickupSnap, pendingSnap] = await Promise.all([
             db.ref('pickups').once('value'),
@@ -131,8 +128,8 @@ async function loadDashboard() {
                 if (item.sold) {
                     soldCount++;
                     revenue += item.salePrice || 0;
-                    const itemProfit = item.profit !== undefined 
-                        ? item.profit 
+                    const itemProfit = item.profit !== undefined
+                        ? item.profit
                         : ((item.salePrice || 0) - (item.value || 0));
                     profit += itemProfit;
                 } else {
@@ -161,7 +158,6 @@ async function loadDashboard() {
         document.getElementById('inventoryBadge').textContent = unsoldCount;
         document.getElementById('salesBadge').textContent = soldCount;
 
-        // Recent activity
         const recent = Object.entries(pickups)
             .sort((a, b) => (b[1].timestamp || 0) - (a[1].timestamp || 0))
             .slice(0, 10);
@@ -228,16 +224,13 @@ function applyOrderFilter(filter) {
         el.classList.toggle('active', el.dataset.filter === filter);
     });
     let filtered = [...allOrders];
-    // Status filter
     if (filter !== 'all') {
         filtered = filtered.filter(item => item.status === filter);
     }
-    // Search by Order ID
     const searchVal = document.getElementById('orderSearch').value.trim().toUpperCase();
     if (searchVal) {
         filtered = filtered.filter(item => (item.orderId || '').toUpperCase().includes(searchVal));
     }
-    // Date range
     const dateFrom = document.getElementById('orderDateFrom').value;
     const dateTo = document.getElementById('orderDateTo').value;
     if (dateFrom) {
@@ -256,7 +249,6 @@ function applyOrderFilter(filter) {
             return dateStr <= dateTo;
         });
     }
-    // Agent filter
     const agentFilter = document.getElementById('orderAgentFilter').value;
     if (agentFilter !== 'all') {
         filtered = filtered.filter(item => (item.agent || '') === agentFilter);
@@ -275,13 +267,11 @@ function clearOrderAgentFilter() {
     applyOrderFilter(currentOrderFilter);
 }
 
-// Load agents for dropdown
 async function loadAgentsForFilter() {
     try {
         const snap = await db.ref('users').once('value');
         const data = snap.val() || {};
         const select = document.getElementById('orderAgentFilter');
-        // Preserve current value
         const currentVal = select.value;
         select.innerHTML = '<option value="all">All Agents</option>';
         Object.keys(data).forEach(username => {
@@ -413,10 +403,9 @@ function refreshOrders() {
 }
 
 // ==========================================
-// PENDING ADMIN (unchanged)
+// PENDING ADMIN
 // ==========================================
 async function loadPendingAdmin() {
-    // (same as before)
     try {
         const snap = await db.ref('pending').once('value');
         const data = snap.val() || {};
@@ -477,7 +466,6 @@ function refreshPending() {
 }
 
 async function deletePending(orderId) {
-    // (same)
     const result = await Swal.fire({
         title: 'Remove from Pending?',
         text: 'This will remove the order from the pending list.',
@@ -501,10 +489,9 @@ async function deletePending(orderId) {
 }
 
 // ==========================================
-// REJECTED ADMIN (unchanged)
+// REJECTED ADMIN
 // ==========================================
 async function loadRejectedAdmin() {
-    // (same)
     try {
         const snap = await db.ref('pickups').once('value');
         const data = snap.val() || {};
@@ -561,7 +548,6 @@ function refreshRejected() {
 // INVENTORY (unchanged)
 // ==========================================
 async function loadInventory() {
-    // (same)
     try {
         const snap = await db.ref('pickups').once('value');
         const data = snap.val() || {};
@@ -639,7 +625,6 @@ function refreshInventory() {
 // SELL MODAL (unchanged)
 // ==========================================
 function openSellModal(orderId) {
-    // (same)
     const order = inventoryList.find(item => item.id === orderId);
     if (!order) {
         showToast('Order not found in inventory', 'error');
@@ -684,7 +669,6 @@ function closeSellModal() {
 }
 
 async function confirmSell() {
-    // (same)
     if (!sellOrderData) return;
 
     const salePrice = parseFloat(document.getElementById('sellSalePrice').value);
@@ -757,7 +741,6 @@ async function confirmSell() {
 // SALES (unchanged)
 // ==========================================
 async function loadSales() {
-    // (same)
     try {
         const snap = await db.ref('pickups').once('value');
         const data = snap.val() || {};
@@ -779,7 +762,6 @@ async function loadSales() {
 }
 
 function applySalesFilters() {
-    // (same)
     const search = document.getElementById('salesSearch').value.trim().toLowerCase();
     const dateFrom = document.getElementById('salesDateFrom').value;
     const dateTo = document.getElementById('salesDateTo').value;
@@ -869,7 +851,6 @@ function refreshSales() {
 }
 
 function exportSalesCSV() {
-    // (same)
     if (filteredSales.length === 0) {
         showToast('No sales data to export', 'error');
         return;
@@ -911,7 +892,6 @@ function exportSalesCSV() {
 // VIEW ORDER DETAIL (unchanged)
 // ==========================================
 function viewOrder(orderId) {
-    // (same)
     detailOrderId = orderId;
     isEditMode = false;
     document.getElementById('detailModalTitle').textContent = 'Order Details';
@@ -945,7 +925,6 @@ function viewOrder(orderId) {
 }
 
 function renderDetailView(item) {
-    // (same)
     const content = document.getElementById('detailContent');
     const statusLabel = item.status || 'unknown';
     let statusClass = statusLabel === 'pickup' ? (item.sold ? 'sold' : 'pickup') :
@@ -1004,7 +983,6 @@ function editOrderDirect(orderId) {
 }
 
 function toggleEditMode() {
-    // (same)
     if (isEditMode) return;
     isEditMode = true;
     document.getElementById('detailModalTitle').textContent = 'Edit Order';
@@ -1097,7 +1075,6 @@ function toggleEditMode() {
 }
 
 function cancelEdit() {
-    // (same)
     isEditMode = false;
     if (detailOrderId) {
         db.ref('pickups/' + detailOrderId).once('value').then(snap => {
@@ -1116,7 +1093,6 @@ function cancelEdit() {
 }
 
 async function saveEdit() {
-    // (same)
     const orderId = document.getElementById('edit-orderId').value.trim();
     const status = document.getElementById('edit-status').value;
     const model = document.getElementById('edit-model').value.trim();
@@ -1225,10 +1201,9 @@ async function saveEdit() {
 }
 
 // ==========================================
-// DELETE ORDER (unchanged)
+// DELETE ORDER — FIXED: proper refresh after deletion
 // ==========================================
 async function deleteOrder(orderId) {
-    // (same)
     const result = await Swal.fire({
         title: 'Delete Order?',
         text: 'This action cannot be undone. Are you sure?',
@@ -1246,13 +1221,18 @@ async function deleteOrder(orderId) {
         await db.ref('pending/' + orderId).remove();
         showToast('🗑️ Order deleted successfully', 'success');
 
-        if (currentPageView === 'orders') loadOrders();
-        else if (currentPageView === 'dashboard') loadDashboard();
-        else if (currentPageView === 'pending') loadPendingAdmin();
-        else if (currentPageView === 'rejected') loadRejectedAdmin();
-        else if (currentPageView === 'inventory') loadInventory();
-        else if (currentPageView === 'sales') loadSales();
+        // Refresh ALL views
+        await loadDashboard();
+        await loadOrders();
+        await loadPendingAdmin();
+        await loadRejectedAdmin();
+        await loadInventory();
+        await loadSales();
+        if (currentPageView === 'agents') loadAgents();
+
+        // Close detail modal if open
         closeDetail();
+
     } catch (e) {
         showToast('Error deleting order', 'error');
         console.error(e);
@@ -1274,7 +1254,7 @@ function closeDetail() {
 }
 
 // ==========================================
-// EXPORT CSV (All Orders) - added agent column
+// EXPORT CSV (All Orders) - with agent
 // ==========================================
 function exportCSV() {
     if (allOrders.length === 0) {
@@ -1310,7 +1290,7 @@ function exportCSV() {
 }
 
 // ==========================================
-// AGENTS (with password view & activity)
+// AGENTS (with password view, change password, activity)
 // ==========================================
 async function loadAgents() {
     try {
@@ -1323,7 +1303,6 @@ async function loadAgents() {
         agentsList.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
         renderAgentsTable();
         document.getElementById('agentsBadge').textContent = agentsList.length;
-        // Also update the agent filter dropdown in orders
         loadAgentsForFilter();
     } catch (e) {
         console.error('Load agents error:', e);
@@ -1361,7 +1340,10 @@ function renderAgentsTable() {
                 </td>
                 <td class="py-3 px-4">
                     <button onclick="viewAgentActivity('${item.username}')" class="btn-action activity" title="View Activity">
-                        <i data-lucide="activity"></i> Activity
+                        <i data-lucide="activity"></i>
+                    </button>
+                    <button onclick="showChangePasswordModal('${item.username}')" class="btn-action edit" title="Change Password">
+                        <i data-lucide="key"></i>
                     </button>
                     <button onclick="deleteAgent('${item.username}')" class="btn-action delete" title="Delete Agent">
                         <i data-lucide="trash-2"></i>
@@ -1397,6 +1379,7 @@ async function deleteAgent(username) {
         await db.ref('users/' + username).remove();
         showToast('✅ Agent deleted', 'success');
         loadAgents();
+        // Do NOT affect rider session
     } catch (e) {
         console.error('Delete agent error:', e);
         showToast('Error deleting agent', 'error');
@@ -1476,6 +1459,49 @@ function registerAgent(e) {
             errorEl.textContent = 'Something went wrong. Please try again.';
             errorEl.style.display = 'block';
         });
+}
+
+// ==========================================
+// CHANGE PASSWORD
+// ==========================================
+function showChangePasswordModal(username) {
+    Swal.fire({
+        title: `Change Password for "${username}"`,
+        html: `
+            <input type="password" id="newPassword" class="swal2-input" placeholder="New password" minlength="4">
+            <input type="password" id="confirmPassword" class="swal2-input" placeholder="Confirm new password" minlength="4">
+        `,
+        showCancelButton: true,
+        confirmButtonText: 'Update Password',
+        cancelButtonText: 'Cancel',
+        confirmButtonColor: '#4f46e5',
+        cancelButtonColor: '#64748b',
+        preConfirm: () => {
+            const newPw = document.getElementById('newPassword').value;
+            const confirmPw = document.getElementById('confirmPassword').value;
+            if (!newPw || newPw.length < 4) {
+                Swal.showValidationMessage('Password must be at least 4 characters');
+                return false;
+            }
+            if (newPw !== confirmPw) {
+                Swal.showValidationMessage('Passwords do not match');
+                return false;
+            }
+            return newPw;
+        }
+    }).then(async (result) => {
+        if (result.isConfirmed) {
+            try {
+                await db.ref('users/' + username + '/password').set(result.value);
+                showToast('✅ Password updated successfully', 'success');
+                // Refresh agents list to show updated password (hidden)
+                loadAgents();
+            } catch (e) {
+                showToast('Error updating password', 'error');
+                console.error(e);
+            }
+        }
+    });
 }
 
 // ==========================================
@@ -1609,7 +1635,7 @@ document.addEventListener('DOMContentLoaded', () => {
         else if (currentPageView === 'agents') loadAgents();
     }, 60000);
 
-    console.log('✅ Admin panel with agent activity & password view');
+    console.log('✅ Admin panel with agent activity, password change & fixed delete');
     showToast('👋 Welcome to Admin Panel', 'info', 2000);
 });
 
