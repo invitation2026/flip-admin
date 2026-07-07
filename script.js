@@ -35,6 +35,12 @@ let filteredInventory = [];
 let filteredSales = [];
 let sellOrderData = null;
 
+// Agents state
+let agentsList = [];
+
+// Password visibility toggles
+let passwordVisible = {};
+
 // ==========================================
 // DOM REFS
 // ==========================================
@@ -86,17 +92,19 @@ function navigate(page) {
     closeSidebar();
 
     if (page === 'dashboard') loadDashboard();
-    else if (page === 'orders') loadOrders();
+    else if (page === 'orders') { loadOrders(); loadAgentsForFilter(); }
     else if (page === 'pending') loadPendingAdmin();
     else if (page === 'rejected') loadRejectedAdmin();
     else if (page === 'inventory') loadInventory();
     else if (page === 'sales') loadSales();
+    else if (page === 'agents') loadAgents();
 }
 
 // ==========================================
-// DASHBOARD
+// DASHBOARD (unchanged)
 // ==========================================
 async function loadDashboard() {
+    // (same as before)
     try {
         const [pickupSnap, pendingSnap] = await Promise.all([
             db.ref('pickups').once('value'),
@@ -114,25 +122,27 @@ async function loadDashboard() {
             unsoldCount = 0,
             revenue = 0,
             profit = 0;
+        let totalStockValue = 0;
 
         Object.values(pickups).forEach(item => {
-    total++;
-    if (item.status === 'pickup') {
-        pickupCount++;
-        if (item.sold) {
-            soldCount++;
-            revenue += item.salePrice || 0;
-            // ✅ FIX: Profit calculate karo agar missing hai
-            const itemProfit = item.profit !== undefined 
-                ? item.profit 
-                : ((item.salePrice || 0) - (item.value || 0));
-            profit += itemProfit;
-        } else {
-            unsoldCount++;
-        }
-    } else if (item.status === 'rejected') rejectedCount++;
-    else if (item.status === 'reschedule') rescheduleCount++;
-});
+            total++;
+            if (item.status === 'pickup') {
+                pickupCount++;
+                if (item.sold) {
+                    soldCount++;
+                    revenue += item.salePrice || 0;
+                    const itemProfit = item.profit !== undefined 
+                        ? item.profit 
+                        : ((item.salePrice || 0) - (item.value || 0));
+                    profit += itemProfit;
+                } else {
+                    unsoldCount++;
+                    totalStockValue += (item.value || 0);
+                }
+            } else if (item.status === 'rejected') rejectedCount++;
+            else if (item.status === 'reschedule') rescheduleCount++;
+        });
+
         const pendingCount = Object.keys(pending).length;
 
         document.getElementById('statTotal').textContent = total;
@@ -143,6 +153,7 @@ async function loadDashboard() {
         document.getElementById('statSold').textContent = soldCount;
         document.getElementById('statRevenue').textContent = '₹' + revenue;
         document.getElementById('statProfit').textContent = '₹' + profit;
+        document.getElementById('statStockValue').textContent = '₹' + totalStockValue;
 
         document.getElementById('orderCountBadge').textContent = total;
         document.getElementById('pendingBadge').textContent = pendingCount;
@@ -169,12 +180,14 @@ async function loadDashboard() {
                     statusLabel === 'rejected' ? 'Rejected' : 'Pending';
                 const time = item.timestampIST || item.timestamp || '';
                 const model = item.phoneModel || '—';
+                const agentName = item.agent || '—';
                 html += `
                     <div class="flex items-center justify-between py-2.5 px-3 rounded-xl hover:bg-gray-50 transition cursor-pointer" onclick="viewOrder('${id}')">
                         <div class="flex items-center gap-3 min-w-0">
                             <span class="badge-status ${statusClass}">${displayName}</span>
                             <span class="font-mono font-bold text-gray-700 text-sm truncate">${id}</span>
                             <span class="text-xs text-gray-400 hidden sm:inline">${model}</span>
+                            <span class="text-xs text-gray-400 hidden md:inline">(${agentName})</span>
                         </div>
                         <span class="text-[10px] text-gray-400 flex-shrink-0">${time}</span>
                     </div>
@@ -191,7 +204,7 @@ async function loadDashboard() {
 }
 
 // ==========================================
-// ORDERS (with pagination & date filter)
+// ORDERS (with agent filter)
 // ==========================================
 async function loadOrders() {
     try {
@@ -224,11 +237,10 @@ function applyOrderFilter(filter) {
     if (searchVal) {
         filtered = filtered.filter(item => (item.orderId || '').toUpperCase().includes(searchVal));
     }
-    // NEW: Date range filter
+    // Date range
     const dateFrom = document.getElementById('orderDateFrom').value;
     const dateTo = document.getElementById('orderDateTo').value;
     if (dateFrom) {
-        // Compare only date part (YYYY-MM-DD)
         filtered = filtered.filter(item => {
             if (!item.timestamp) return false;
             const d = new Date(item.timestamp);
@@ -244,9 +256,46 @@ function applyOrderFilter(filter) {
             return dateStr <= dateTo;
         });
     }
+    // Agent filter
+    const agentFilter = document.getElementById('orderAgentFilter').value;
+    if (agentFilter !== 'all') {
+        filtered = filtered.filter(item => (item.agent || '') === agentFilter);
+    }
     filteredOrders = filtered;
     currentPage = 1;
     renderOrdersTable();
+}
+
+function applyOrderAgentFilter() {
+    applyOrderFilter(currentOrderFilter);
+}
+
+function clearOrderAgentFilter() {
+    document.getElementById('orderAgentFilter').value = 'all';
+    applyOrderFilter(currentOrderFilter);
+}
+
+// Load agents for dropdown
+async function loadAgentsForFilter() {
+    try {
+        const snap = await db.ref('users').once('value');
+        const data = snap.val() || {};
+        const select = document.getElementById('orderAgentFilter');
+        // Preserve current value
+        const currentVal = select.value;
+        select.innerHTML = '<option value="all">All Agents</option>';
+        Object.keys(data).forEach(username => {
+            const option = document.createElement('option');
+            option.value = username;
+            option.textContent = username;
+            select.appendChild(option);
+        });
+        if (currentVal && select.querySelector(`option[value="${currentVal}"]`)) {
+            select.value = currentVal;
+        }
+    } catch (e) {
+        console.error('Load agents for filter error:', e);
+    }
 }
 
 function applyOrderDateFilter() {
@@ -290,7 +339,7 @@ function renderOrdersTable() {
 
     if (pageItems.length === 0) {
         tbody.innerHTML =
-            `<tr><td colspan="8"><div class="empty-state"><i data-lucide="inbox"></i><p class="text-sm font-medium">No orders match</p></div></td></tr>`;
+            `<tr><td colspan="9"><div class="empty-state"><i data-lucide="inbox"></i><p class="text-sm font-medium">No orders match</p></div></td></tr>`;
         lucide.createIcons();
         return;
     }
@@ -307,6 +356,7 @@ function renderOrdersTable() {
         const imei = item.imei || '—';
         const value = item.value !== undefined && item.value !== null ? '₹' + item.value : '—';
         const customer = item.customerName || '—';
+        const agent = item.agent || '—';
 
         html += `
             <tr class="order-row border-b border-gray-50">
@@ -317,6 +367,7 @@ function renderOrdersTable() {
                 <td class="py-3 px-4 hidden md:table-cell font-mono text-xs text-gray-500">${imei}</td>
                 <td class="py-3 px-4 hidden lg:table-cell font-bold text-gray-700">${value}</td>
                 <td class="py-3 px-4 hidden xl:table-cell text-gray-600 text-sm">${customer}</td>
+                <td class="py-3 px-4 hidden sm:table-cell text-gray-500 text-sm">${agent}</td>
                 <td class="py-3 px-4">
                     <div class="flex items-center gap-1.5">
                         <button onclick="viewOrder('${item.id}')" class="btn-action view" title="View Details">
@@ -357,13 +408,15 @@ function nextOrderPage() {
 
 function refreshOrders() {
     loadOrders();
+    loadAgentsForFilter();
     showToast('🔄 Orders refreshed', 'info');
 }
 
 // ==========================================
-// PENDING ADMIN
+// PENDING ADMIN (unchanged)
 // ==========================================
 async function loadPendingAdmin() {
+    // (same as before)
     try {
         const snap = await db.ref('pending').once('value');
         const data = snap.val() || {};
@@ -379,6 +432,7 @@ async function loadPendingAdmin() {
             items.forEach(item => {
                 const isOnWay = item.reason && item.reason.toLowerCase().includes('on the way');
                 const time = item.timestampIST || item.timestamp || '';
+                const agent = item.agent || '—';
                 html += `
                     <div class="pending-item glass rounded-xl p-4 shadow-sm border border-gray-100">
                         <div class="flex items-start justify-between">
@@ -386,6 +440,7 @@ async function loadPendingAdmin() {
                                 <div class="flex items-center gap-2 flex-wrap">
                                     <span class="font-mono font-bold text-gray-800 text-sm">${item.orderId || item.id}</span>
                                     ${isOnWay ? '<span class="badge-onway">🚗 On the way</span>' : '<span class="badge-pending">⏳ Pending</span>'}
+                                    <span class="text-xs text-gray-400">(Agent: ${agent})</span>
                                 </div>
                                 <p class="text-xs text-gray-500 mt-1 flex items-center gap-1">
                                     <i data-lucide="message-circle" class="w-3 h-3"></i>
@@ -422,6 +477,7 @@ function refreshPending() {
 }
 
 async function deletePending(orderId) {
+    // (same)
     const result = await Swal.fire({
         title: 'Remove from Pending?',
         text: 'This will remove the order from the pending list.',
@@ -445,9 +501,10 @@ async function deletePending(orderId) {
 }
 
 // ==========================================
-// REJECTED ADMIN
+// REJECTED ADMIN (unchanged)
 // ==========================================
 async function loadRejectedAdmin() {
+    // (same)
     try {
         const snap = await db.ref('pickups').once('value');
         const data = snap.val() || {};
@@ -464,12 +521,13 @@ async function loadRejectedAdmin() {
             let html = '';
             items.forEach((item, idx) => {
                 const time = item.timestampIST || item.timestamp || '';
+                const agent = item.agent || '—';
                 html += `
                     <tr class="order-row border-b border-gray-50">
                         <td class="py-3 px-4 text-gray-400 font-mono text-xs">${idx + 1}</td>
                         <td class="py-3 px-4 font-mono font-bold text-gray-800 text-sm">${item.orderId || item.id}</td>
                         <td class="py-3 px-4 text-gray-600 text-sm">${item.reason || '—'}</td>
-                        <td class="py-3 px-4 hidden sm:table-cell text-xs text-gray-400">${time}</td>
+                        <td class="py-3 px-4 hidden sm:table-cell text-xs text-gray-400">${time} (${agent})</td>
                         <td class="py-3 px-4">
                             <div class="flex items-center gap-1.5">
                                 <button onclick="viewOrder('${item.id}')" class="btn-action view" title="View Details">
@@ -500,9 +558,10 @@ function refreshRejected() {
 }
 
 // ==========================================
-// INVENTORY
+// INVENTORY (unchanged)
 // ==========================================
 async function loadInventory() {
+    // (same)
     try {
         const snap = await db.ref('pickups').once('value');
         const data = snap.val() || {};
@@ -547,6 +606,7 @@ function renderInventoryTable() {
 
     let html = '';
     filteredInventory.forEach((item, idx) => {
+        const agent = item.agent || '—';
         html += `
             <tr class="order-row border-b border-gray-50">
                 <td class="py-3 px-4 text-gray-400 font-mono text-xs">${idx + 1}</td>
@@ -576,9 +636,10 @@ function refreshInventory() {
 }
 
 // ==========================================
-// SELL MODAL
+// SELL MODAL (unchanged)
 // ==========================================
 function openSellModal(orderId) {
+    // (same)
     const order = inventoryList.find(item => item.id === orderId);
     if (!order) {
         showToast('Order not found in inventory', 'error');
@@ -623,6 +684,7 @@ function closeSellModal() {
 }
 
 async function confirmSell() {
+    // (same)
     if (!sellOrderData) return;
 
     const salePrice = parseFloat(document.getElementById('sellSalePrice').value);
@@ -692,9 +754,10 @@ async function confirmSell() {
 }
 
 // ==========================================
-// SALES
+// SALES (unchanged)
 // ==========================================
 async function loadSales() {
+    // (same)
     try {
         const snap = await db.ref('pickups').once('value');
         const data = snap.val() || {};
@@ -716,6 +779,7 @@ async function loadSales() {
 }
 
 function applySalesFilters() {
+    // (same)
     const search = document.getElementById('salesSearch').value.trim().toLowerCase();
     const dateFrom = document.getElementById('salesDateFrom').value;
     const dateTo = document.getElementById('salesDateTo').value;
@@ -775,6 +839,7 @@ function renderSalesTable() {
         const profitNum = profit || 0;
         const profitClass = profitNum >= 0 ? 'profit-green' : 'profit-red';
         const saleDate = item.saleDate || item.timestampIST || '—';
+        const agent = item.agent || '—';
         html += `
             <tr class="order-row border-b border-gray-50">
                 <td class="py-3 px-4 text-gray-400 font-mono text-xs">${idx + 1}</td>
@@ -785,7 +850,7 @@ function renderSalesTable() {
                 <td class="py-3 px-4 font-bold text-gray-800">₹${item.salePrice || 0}</td>
                 <td class="py-3 px-4 font-bold ${profitClass}">₹${profitNum}</td>
                 <td class="py-3 px-4 hidden lg:table-cell text-gray-600 text-sm">${item.buyerName || '—'}</td>
-                <td class="py-3 px-4 text-xs text-gray-500">${saleDate}</td>
+                <td class="py-3 px-4 text-xs text-gray-500">${saleDate} (${agent})</td>
                 <td class="py-3 px-4">
                     <button onclick="viewOrder('${item.id}')" class="btn-action view" title="View Details">
                         <i data-lucide="eye"></i>
@@ -804,12 +869,13 @@ function refreshSales() {
 }
 
 function exportSalesCSV() {
+    // (same)
     if (filteredSales.length === 0) {
         showToast('No sales data to export', 'error');
         return;
     }
     const headers = ['Order ID', 'Model', 'IMEI', 'Purchase Price', 'Sale Price', 'Profit', 'Buyer', 'Buyer Contact',
-        'Sale Date'
+        'Sale Date', 'Agent'
     ];
     const rows = filteredSales.map(item => {
         const profit = item.profit !== undefined ? item.profit : (item.salePrice - item.value);
@@ -822,7 +888,8 @@ function exportSalesCSV() {
             profit || 0,
             item.buyerName || '',
             item.buyerContact || '',
-            item.saleDate || ''
+            item.saleDate || '',
+            item.agent || ''
         ];
     });
     let csv = '\uFEFF' + headers.join(',') + '\n';
@@ -841,9 +908,10 @@ function exportSalesCSV() {
 }
 
 // ==========================================
-// VIEW ORDER DETAIL
+// VIEW ORDER DETAIL (unchanged)
 // ==========================================
 function viewOrder(orderId) {
+    // (same)
     detailOrderId = orderId;
     isEditMode = false;
     document.getElementById('detailModalTitle').textContent = 'Order Details';
@@ -877,6 +945,7 @@ function viewOrder(orderId) {
 }
 
 function renderDetailView(item) {
+    // (same)
     const content = document.getElementById('detailContent');
     const statusLabel = item.status || 'unknown';
     let statusClass = statusLabel === 'pickup' ? (item.sold ? 'sold' : 'pickup') :
@@ -907,6 +976,7 @@ function renderDetailView(item) {
         <div class="flex items-center gap-3 mb-4">
             <span class="badge-status ${statusClass} text-sm px-4 py-1.5">${displayName}</span>
             <span class="font-mono font-bold text-gray-800 text-sm">${item.orderId || item.id}</span>
+            ${item.agent ? `<span class="text-xs text-gray-400">(Agent: ${item.agent})</span>` : ''}
         </div>
         <div class="detail-grid">
             <div class="detail-item"><div class="label">Phone Model</div><div class="value" id="dv-model">${item.phoneModel || '—'}</div></div>
@@ -926,7 +996,7 @@ function renderDetailView(item) {
 }
 
 // ==========================================
-// EDIT MODE
+// EDIT MODE (unchanged)
 // ==========================================
 function editOrderDirect(orderId) {
     viewOrder(orderId);
@@ -934,6 +1004,7 @@ function editOrderDirect(orderId) {
 }
 
 function toggleEditMode() {
+    // (same)
     if (isEditMode) return;
     isEditMode = true;
     document.getElementById('detailModalTitle').textContent = 'Edit Order';
@@ -1026,6 +1097,7 @@ function toggleEditMode() {
 }
 
 function cancelEdit() {
+    // (same)
     isEditMode = false;
     if (detailOrderId) {
         db.ref('pickups/' + detailOrderId).once('value').then(snap => {
@@ -1044,6 +1116,7 @@ function cancelEdit() {
 }
 
 async function saveEdit() {
+    // (same)
     const orderId = document.getElementById('edit-orderId').value.trim();
     const status = document.getElementById('edit-status').value;
     const model = document.getElementById('edit-model').value.trim();
@@ -1152,9 +1225,10 @@ async function saveEdit() {
 }
 
 // ==========================================
-// DELETE ORDER
+// DELETE ORDER (unchanged)
 // ==========================================
 async function deleteOrder(orderId) {
+    // (same)
     const result = await Swal.fire({
         title: 'Delete Order?',
         text: 'This action cannot be undone. Are you sure?',
@@ -1200,14 +1274,14 @@ function closeDetail() {
 }
 
 // ==========================================
-// EXPORT CSV (All Orders)
+// EXPORT CSV (All Orders) - added agent column
 // ==========================================
 function exportCSV() {
     if (allOrders.length === 0) {
         showToast('No data to export', 'error');
         return;
     }
-    const headers = ['Order ID', 'Status', 'Model', 'IMEI', 'IMEI2', 'Value', 'Customer', 'Reason', 'Time (IST)'];
+    const headers = ['Order ID', 'Status', 'Model', 'IMEI', 'IMEI2', 'Value', 'Customer', 'Reason', 'Time (IST)', 'Agent'];
     const rows = allOrders.map(item => [
         item.orderId || item.id || '',
         item.status || '',
@@ -1217,7 +1291,8 @@ function exportCSV() {
         item.value !== undefined ? item.value : '',
         item.customerName || '',
         item.reason || '',
-        item.timestampIST || item.timestamp || ''
+        item.timestampIST || item.timestamp || '',
+        item.agent || ''
     ]);
     let csv = '\uFEFF' + headers.join(',') + '\n';
     rows.forEach(row => {
@@ -1235,6 +1310,245 @@ function exportCSV() {
 }
 
 // ==========================================
+// AGENTS (with password view & activity)
+// ==========================================
+async function loadAgents() {
+    try {
+        const snap = await db.ref('users').once('value');
+        const data = snap.val() || {};
+        agentsList = Object.entries(data).map(([username, item]) => ({
+            username,
+            ...item
+        }));
+        agentsList.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+        renderAgentsTable();
+        document.getElementById('agentsBadge').textContent = agentsList.length;
+        // Also update the agent filter dropdown in orders
+        loadAgentsForFilter();
+    } catch (e) {
+        console.error('Load agents error:', e);
+        showToast('Error loading agents', 'error');
+    }
+}
+
+function renderAgentsTable() {
+    const tbody = document.getElementById('agentsTableBody');
+    if (agentsList.length === 0) {
+        tbody.innerHTML =
+            `<tr><td colspan="8"><div class="empty-state"><i data-lucide="inbox"></i><p class="text-sm font-medium">No agents registered</p></div></td></tr>`;
+        lucide.createIcons();
+        return;
+    }
+
+    let html = '';
+    agentsList.forEach((item, idx) => {
+        const pw = item.password || '****';
+        const showPw = passwordVisible[item.username] || false;
+        const pwDisplay = showPw ? pw : '••••••••';
+        html += `
+            <tr class="user-row border-b border-gray-50">
+                <td class="py-3 px-4 text-gray-400 font-mono text-xs">${idx + 1}</td>
+                <td class="py-3 px-4 font-medium text-gray-800">${item.name || '—'}</td>
+                <td class="py-3 px-4 font-mono text-sm text-gray-700">${item.username}</td>
+                <td class="py-3 px-4 hidden sm:table-cell text-gray-600">${item.mobile || '—'}</td>
+                <td class="py-3 px-4 hidden md:table-cell text-gray-600">${item.aadhar || '—'}</td>
+                <td class="py-3 px-4 hidden lg:table-cell text-gray-600">${item.alternate || '—'}</td>
+                <td class="py-3 px-4 font-mono">
+                    <span class="pw-hidden">${pwDisplay}</span>
+                    <button onclick="togglePassword('${item.username}')" class="btn-action show ml-1" title="Show/Hide Password">
+                        <i data-lucide="${showPw ? 'eye-off' : 'eye'}"></i>
+                    </button>
+                </td>
+                <td class="py-3 px-4">
+                    <button onclick="viewAgentActivity('${item.username}')" class="btn-action activity" title="View Activity">
+                        <i data-lucide="activity"></i> Activity
+                    </button>
+                    <button onclick="deleteAgent('${item.username}')" class="btn-action delete" title="Delete Agent">
+                        <i data-lucide="trash-2"></i>
+                    </button>
+                </td>
+            </tr>
+        `;
+    });
+    tbody.innerHTML = html;
+    document.getElementById('agentsCount').textContent = agentsList.length + ' agents';
+    lucide.createIcons();
+}
+
+function togglePassword(username) {
+    passwordVisible[username] = !passwordVisible[username];
+    renderAgentsTable();
+}
+
+async function deleteAgent(username) {
+    const result = await Swal.fire({
+        title: 'Delete Agent?',
+        text: `Are you sure you want to delete agent "${username}"? This cannot be undone.`,
+        icon: 'warning',
+        showCancelButton: true,
+        confirmButtonColor: '#dc2626',
+        cancelButtonColor: '#64748b',
+        confirmButtonText: 'Yes, delete',
+        cancelButtonText: 'Cancel'
+    });
+    if (!result.isConfirmed) return;
+
+    try {
+        await db.ref('users/' + username).remove();
+        showToast('✅ Agent deleted', 'success');
+        loadAgents();
+    } catch (e) {
+        console.error('Delete agent error:', e);
+        showToast('Error deleting agent', 'error');
+    }
+}
+
+function registerAgent(e) {
+    e.preventDefault();
+
+    const name = document.getElementById('regName').value.trim();
+    const username = document.getElementById('regUsername').value.trim().toLowerCase();
+    const password = document.getElementById('regPassword').value.trim();
+    const mobile = document.getElementById('regMobile').value.trim();
+    const aadhar = document.getElementById('regAadhar').value.trim();
+    const alternate = document.getElementById('regAlternate').value.trim();
+
+    const errorEl = document.getElementById('agentError');
+    const successEl = document.getElementById('agentSuccess');
+
+    errorEl.style.display = 'none';
+    successEl.style.display = 'none';
+
+    if (!name || !username || !password || !mobile) {
+        errorEl.textContent = 'Please fill all required fields (Name, Username, Password, Mobile).';
+        errorEl.style.display = 'block';
+        return;
+    }
+    if (username.length < 3) {
+        errorEl.textContent = 'Username must be at least 3 characters.';
+        errorEl.style.display = 'block';
+        return;
+    }
+    if (password.length < 4) {
+        errorEl.textContent = 'Password must be at least 4 characters.';
+        errorEl.style.display = 'block';
+        return;
+    }
+    if (mobile.length < 10) {
+        errorEl.textContent = 'Please enter a valid 10-digit mobile number.';
+        errorEl.style.display = 'block';
+        return;
+    }
+
+    db.ref('users/' + username).once('value')
+        .then(snap => {
+            if (snap.exists()) {
+                errorEl.textContent = 'Username already taken. Please choose another.';
+                errorEl.style.display = 'block';
+                return;
+            }
+            return db.ref('users/' + username).set({
+                name,
+                username,
+                password,
+                aadhar: aadhar || '',
+                mobile,
+                alternate: alternate || '',
+                createdAt: Date.now()
+            });
+        })
+        .then(() => {
+            successEl.textContent = '✅ Agent registered successfully!';
+            successEl.style.display = 'block';
+            document.getElementById('regName').value = '';
+            document.getElementById('regUsername').value = '';
+            document.getElementById('regPassword').value = '';
+            document.getElementById('regMobile').value = '';
+            document.getElementById('regAadhar').value = '';
+            document.getElementById('regAlternate').value = '';
+            loadAgents();
+            setTimeout(() => {
+                successEl.style.display = 'none';
+            }, 5000);
+        })
+        .catch(err => {
+            console.error('Registration error:', err);
+            errorEl.textContent = 'Something went wrong. Please try again.';
+            errorEl.style.display = 'block';
+        });
+}
+
+// ==========================================
+// AGENT ACTIVITY
+// ==========================================
+function viewAgentActivity(username) {
+    const modal = document.getElementById('activityModal');
+    const content = document.getElementById('activityContent');
+    const title = document.getElementById('activityModalTitle');
+    title.textContent = `Activity: ${username}`;
+    modal.style.display = 'flex';
+    content.innerHTML = `<div class="text-center py-8"><span class="spinner-sm"></span><p class="text-sm text-gray-400 mt-2">Loading...</p></div>`;
+
+    db.ref('pickups').once('value').then(snap => {
+        const data = snap.val() || {};
+        const orders = Object.entries(data)
+            .filter(([_, item]) => item.agent === username)
+            .map(([id, item]) => ({ id, ...item }));
+        orders.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+
+        if (orders.length === 0) {
+            content.innerHTML = `
+                <div class="empty-state">
+                    <i data-lucide="inbox"></i>
+                    <p class="text-sm font-medium">No activity found for this agent.</p>
+                    <p class="text-xs text-gray-400">No orders processed yet.</p>
+                </div>
+            `;
+            lucide.createIcons();
+            return;
+        }
+
+        let html = `<div class="space-y-2">`;
+        orders.forEach(item => {
+            const statusLabel = item.status || 'unknown';
+            const statusClass = statusLabel === 'pickup' ? (item.sold ? 'sold' : 'pickup') :
+                statusLabel === 'rejected' ? 'rejected' : 'reschedule';
+            const displayName = statusLabel === 'pickup' ? (item.sold ? 'Sold' : 'Pickup') :
+                statusLabel === 'rejected' ? 'Rejected' : 'Pending';
+            const time = item.timestampIST || item.timestamp || '';
+            const model = item.phoneModel || '—';
+            const value = item.value !== undefined ? '₹' + item.value : '—';
+            const reason = item.reason || '—';
+            html += `
+                <div class="activity-item flex items-center justify-between py-2 px-3 rounded-xl hover:bg-gray-50 cursor-pointer" onclick="viewOrder('${item.id}')">
+                    <div class="flex items-center gap-3 min-w-0">
+                        <span class="badge-status ${statusClass}">${displayName}</span>
+                        <span class="font-mono font-bold text-gray-700 text-sm truncate">${item.orderId || item.id}</span>
+                        <span class="text-xs text-gray-400 hidden sm:inline">${model}</span>
+                        <span class="text-xs text-gray-400 hidden md:inline">${value}</span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <span class="text-[10px] text-gray-400">${time}</span>
+                        <span class="text-xs text-gray-500 italic">${reason}</span>
+                    </div>
+                </div>
+            `;
+        });
+        html += `</div>`;
+        content.innerHTML = html;
+        lucide.createIcons();
+    }).catch(err => {
+        content.innerHTML =
+            `<div class="empty-state"><i data-lucide="alert-circle"></i><p class="text-sm font-medium text-red-500">Error loading activity</p></div>`;
+        showToast('Error loading activity', 'error');
+    });
+}
+
+function closeActivityModal() {
+    document.getElementById('activityModal').style.display = 'none';
+}
+
+// ==========================================
 // REFRESH ALL
 // ==========================================
 function refreshAll() {
@@ -1248,7 +1562,8 @@ function refreshAll() {
         loadPendingAdmin(),
         loadRejectedAdmin(),
         loadInventory(),
-        loadSales()
+        loadSales(),
+        loadAgents()
     ]).then(() => {
         isRefreshing = false;
         showToast('✅ All data refreshed', 'success');
@@ -1282,17 +1597,19 @@ document.addEventListener('DOMContentLoaded', () => {
     loadRejectedAdmin();
     loadInventory();
     loadSales();
+    loadAgents();
 
     setInterval(() => {
         if (currentPageView === 'dashboard') loadDashboard();
-        else if (currentPageView === 'orders') loadOrders();
+        else if (currentPageView === 'orders') { loadOrders(); loadAgentsForFilter(); }
         else if (currentPageView === 'pending') loadPendingAdmin();
         else if (currentPageView === 'rejected') loadRejectedAdmin();
         else if (currentPageView === 'inventory') loadInventory();
         else if (currentPageView === 'sales') loadSales();
+        else if (currentPageView === 'agents') loadAgents();
     }, 60000);
 
-    console.log('✅ Admin panel with date filter');
+    console.log('✅ Admin panel with agent activity & password view');
     showToast('👋 Welcome to Admin Panel', 'info', 2000);
 });
 
@@ -1303,12 +1620,16 @@ document.getElementById('detailModal').addEventListener('click', function(e) {
 document.getElementById('sellModal').addEventListener('click', function(e) {
     if (e.target === this) closeSellModal();
 });
+document.getElementById('activityModal').addEventListener('click', function(e) {
+    if (e.target === this) closeActivityModal();
+});
 
 // ESC key
 document.addEventListener('keydown', function(e) {
     if (e.key === 'Escape') {
         closeDetail();
         closeSellModal();
+        closeActivityModal();
         closeSidebar();
     }
 });
