@@ -68,7 +68,7 @@ function closeSidebar() {
 }
 
 // ==========================================
-// NAVIGATION
+// NAVIGATION (UPDATED with new pages)
 // ==========================================
 function navigate(page) {
     currentPageView = page;
@@ -93,21 +93,25 @@ function navigate(page) {
     else if (page === 'rejected') loadRejectedAdmin();
     else if (page === 'inventory') loadInventory();
     else if (page === 'sales') loadSales();
+    else if (page === 'attendance') loadAttendance();
+    else if (page === 'salary') loadSalaryData();
     else if (page === 'agents') loadAgents();
 }
 
 // ==========================================
-// DASHBOARD
+// DASHBOARD (UPDATED with agents & present today)
 // ==========================================
 async function loadDashboard() {
     try {
-        const [pickupSnap, pendingSnap] = await Promise.all([
+        const [pickupSnap, pendingSnap, usersSnap] = await Promise.all([
             db.ref('pickups').once('value'),
-            db.ref('pending').once('value')
+            db.ref('pending').once('value'),
+            db.ref('users').once('value')
         ]);
 
         const pickups = pickupSnap.val() || {};
         const pending = pendingSnap.val() || {};
+        const users = usersSnap.val() || {};
 
         let total = 0, pickupCount = 0, rejectedCount = 0, rescheduleCount = 0;
         let soldCount = 0, unsoldCount = 0, revenue = 0, profit = 0;
@@ -120,19 +124,27 @@ async function loadDashboard() {
                 if (item.sold) {
                     soldCount++;
                     revenue += item.salePrice || 0;
-                    const itemProfit = item.profit !== undefined
-                        ? item.profit
-                        : ((item.salePrice || 0) - (item.value || 0));
+                    const itemProfit = item.profit !== undefined ? item.profit : ((item.salePrice || 0) - (item.value || 0));
                     profit += itemProfit;
                 } else {
                     unsoldCount++;
                     totalStockValue += (item.value || 0);
                 }
             } else if (item.status === 'rejected') rejectedCount++;
-            else if (item.status === 'reschedule') rescheduleCount++;
+            else if (item.status === 'reschedule' || item.status === 'on_hold') rescheduleCount++;
         });
 
         const pendingCount = Object.keys(pending).length;
+        const totalAgents = Object.keys(users).length;
+
+        // Count present today
+        const today = new Date().toISOString().split('T')[0];
+        let presentToday = 0;
+        for (const uname of Object.keys(users)) {
+            const attSnap = await db.ref('attendance/' + uname + '/' + today).once('value');
+            const att = attSnap.val();
+            if (att && att.status === 'present') presentToday++;
+        }
 
         document.getElementById('statTotal').textContent = total;
         document.getElementById('statPickup').textContent = pickupCount;
@@ -143,29 +155,37 @@ async function loadDashboard() {
         document.getElementById('statRevenue').textContent = '₹' + revenue;
         document.getElementById('statProfit').textContent = '₹' + profit;
         document.getElementById('statStockValue').textContent = '₹' + totalStockValue;
+        // New stats
+        document.getElementById('statAgents').textContent = totalAgents;
+        document.getElementById('statPresentToday').textContent = presentToday;
 
+        // Badges
         document.getElementById('orderCountBadge').textContent = total;
         document.getElementById('pendingBadge').textContent = pendingCount;
         document.getElementById('rejectedBadge').textContent = rejectedCount;
         document.getElementById('inventoryBadge').textContent = unsoldCount;
         document.getElementById('salesBadge').textContent = soldCount;
+        document.getElementById('agentsBadge').textContent = totalAgents;
+        document.getElementById('attendanceBadge').textContent = presentToday + '/' + totalAgents;
 
+        // Recent activity
         const recent = Object.entries(pickups)
             .sort((a, b) => (b[1].timestamp || 0) - (a[1].timestamp || 0))
             .slice(0, 10);
 
         const container = document.getElementById('recentList');
         if (recent.length === 0) {
-            container.innerHTML =
-                `<div class="empty-state"><i data-lucide="inbox"></i><p class="text-sm font-medium">No activity yet</p></div>`;
+            container.innerHTML = `<div class="empty-state"><i data-lucide="inbox"></i><p class="text-sm font-medium">No activity yet</p></div>`;
         } else {
             let html = '';
             recent.forEach(([id, item]) => {
                 const statusLabel = item.status || 'unknown';
                 let statusClass = statusLabel === 'pickup' ? (item.sold ? 'sold' : 'pickup') :
-                    statusLabel === 'rejected' ? 'rejected' : 'reschedule';
+                    statusLabel === 'rejected' ? 'rejected' :
+                    statusLabel === 'on_hold' ? 'on_hold' : 'reschedule';
                 let displayName = statusLabel === 'pickup' ? (item.sold ? 'Sold' : 'Pickup') :
-                    statusLabel === 'rejected' ? 'Rejected' : 'Pending';
+                    statusLabel === 'rejected' ? 'Rejected' :
+                    statusLabel === 'on_hold' ? 'Hold' : 'Pending';
                 const time = item.timestampIST || item.timestamp || '';
                 const model = item.phoneModel || '—';
                 const agentName = item.agent || '—';
@@ -184,7 +204,6 @@ async function loadDashboard() {
             container.innerHTML = html;
         }
         lucide.createIcons();
-
     } catch (e) {
         console.error('Dashboard error:', e);
         showToast('Error loading dashboard', 'error');
@@ -192,16 +211,13 @@ async function loadDashboard() {
 }
 
 // ==========================================
-// ORDERS
+// ORDERS (Added "Hold" filter)
 // ==========================================
 async function loadOrders() {
     try {
         const snap = await db.ref('pickups').once('value');
         const data = snap.val() || {};
-        allOrders = Object.entries(data).map(([id, item]) => ({
-            id,
-            ...item
-        }));
+        allOrders = Object.entries(data).map(([id, item]) => ({ id, ...item }));
         allOrders.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
         applyOrderFilter(currentOrderFilter);
     } catch (e) {
@@ -320,8 +336,7 @@ function renderOrdersTable() {
     document.getElementById('nextOrderPageBtn').disabled = currentPage >= totalPages;
 
     if (pageItems.length === 0) {
-        tbody.innerHTML =
-            `<tr><td colspan="9"><div class="empty-state"><i data-lucide="inbox"></i><p class="text-sm font-medium">No orders match</p></div></td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="9"><div class="empty-state"><i data-lucide="inbox"></i><p class="text-sm font-medium">No orders match</p></div></td></tr>`;
         lucide.createIcons();
         return;
     }
@@ -331,9 +346,11 @@ function renderOrdersTable() {
         const num = start + idx + 1;
         const statusLabel = item.status || 'unknown';
         let statusClass = statusLabel === 'pickup' ? (item.sold ? 'sold' : 'pickup') :
-            statusLabel === 'rejected' ? 'rejected' : 'reschedule';
+            statusLabel === 'rejected' ? 'rejected' :
+            statusLabel === 'on_hold' ? 'on_hold' : 'reschedule';
         let displayName = statusLabel === 'pickup' ? (item.sold ? 'Sold' : 'Pickup') :
-            statusLabel === 'rejected' ? 'Rejected' : 'Pending';
+            statusLabel === 'rejected' ? 'Rejected' :
+            statusLabel === 'on_hold' ? 'Hold' : 'Pending';
         const model = item.phoneModel || '—';
         const imei = item.imei || '—';
         const value = item.value !== undefined && item.value !== null ? '₹' + item.value : '—';
@@ -378,14 +395,12 @@ function openSellModalFromOrders(orderId) {
 }
 
 function prevOrderPage() {
-    if (currentPage > 1) { currentPage--;
-        renderOrdersTable(); }
+    if (currentPage > 1) { currentPage--; renderOrdersTable(); }
 }
 
 function nextOrderPage() {
     const totalPages = Math.ceil(filteredOrders.length / pageSize);
-    if (currentPage < totalPages) { currentPage++;
-        renderOrdersTable(); }
+    if (currentPage < totalPages) { currentPage++; renderOrdersTable(); }
 }
 
 function refreshOrders() {
@@ -406,8 +421,7 @@ async function loadPendingAdmin() {
 
         const container = document.getElementById('pendingListAdmin');
         if (items.length === 0) {
-            container.innerHTML =
-                `<div class="empty-state"><i data-lucide="inbox"></i><p class="text-sm font-medium">No pending orders</p><p class="text-xs text-gray-400">Orders will appear here when rescheduled</p></div>`;
+            container.innerHTML = `<div class="empty-state"><i data-lucide="inbox"></i><p class="text-sm font-medium">No pending orders</p><p class="text-xs text-gray-400">Orders will appear here when rescheduled</p></div>`;
         } else {
             let html = '';
             items.forEach(item => {
@@ -445,7 +459,6 @@ async function loadPendingAdmin() {
         }
         lucide.createIcons();
         document.getElementById('pendingBadge').textContent = items.length;
-
     } catch (e) {
         console.error('Pending admin error:', e);
         showToast('Error loading pending', 'error');
@@ -481,7 +494,7 @@ async function deletePending(orderId) {
 }
 
 // ==========================================
-// REJECTED ADMIN
+// REJECTED ADMIN (with Approve Reject)
 // ==========================================
 async function loadRejectedAdmin() {
     try {
@@ -494,27 +507,25 @@ async function loadRejectedAdmin() {
 
         const tbody = document.getElementById('rejectedTableBody');
         if (items.length === 0) {
-            tbody.innerHTML =
-                `<tr><td colspan="5"><div class="empty-state"><i data-lucide="inbox"></i><p class="text-sm font-medium">No rejected orders</p></div></td></tr>`;
+            tbody.innerHTML = `<tr><td colspan="7"><div class="empty-state"><i data-lucide="inbox"></i><p class="text-sm font-medium">No rejected orders</p></div></td></tr>`;
         } else {
             let html = '';
             items.forEach((item, idx) => {
                 const time = item.timestampIST || item.timestamp || '';
                 const agent = item.agent || '—';
+                const approved = item.incentive_approved === true;
                 html += `
                     <tr class="order-row border-b border-gray-50">
                         <td class="py-3 px-4 text-gray-400 font-mono text-xs">${idx + 1}</td>
                         <td class="py-3 px-4 font-mono font-bold text-gray-800 text-sm">${item.orderId || item.id}</td>
                         <td class="py-3 px-4 text-gray-600 text-sm">${item.reason || '—'}</td>
-                        <td class="py-3 px-4 hidden sm:table-cell text-xs text-gray-400">${time} (${agent})</td>
+                        <td class="py-3 px-4 hidden sm:table-cell text-gray-500 text-sm">${agent}</td>
+                        <td class="py-3 px-4 hidden sm:table-cell text-xs text-gray-400">${time}</td>
+                        <td class="py-3 px-4">${approved ? '<span class="badge-status approved">Approved</span>' : '<span class="badge-status reschedule">Pending</span>'}</td>
                         <td class="py-3 px-4">
                             <div class="flex items-center gap-1.5">
-                                <button onclick="viewOrder('${item.id}')" class="btn-action view" title="View Details">
-                                    <i data-lucide="eye"></i>
-                                </button>
-                                <button onclick="deleteOrder('${item.id}')" class="btn-action delete" title="Delete">
-                                    <i data-lucide="trash-2"></i>
-                                </button>
+                                ${!approved ? `<button onclick="approveReject('${item.id}')" class="btn-action approve"><i data-lucide="check-circle"></i> Approve</button>` : ''}
+                                <button onclick="viewOrder('${item.id}')" class="btn-action view"><i data-lucide="eye"></i></button>
                             </div>
                         </td>
                     </tr>
@@ -524,7 +535,6 @@ async function loadRejectedAdmin() {
         }
         lucide.createIcons();
         document.getElementById('rejectedBadge').textContent = items.length;
-
     } catch (e) {
         console.error('Rejected admin error:', e);
         showToast('Error loading rejected', 'error');
@@ -534,6 +544,34 @@ async function loadRejectedAdmin() {
 function refreshRejected() {
     loadRejectedAdmin();
     showToast('🔄 Rejected refreshed', 'info');
+}
+
+// NEW: Approve Reject Incentive
+async function approveReject(orderId) {
+    const confirm = await Swal.fire({
+        title: 'Approve Rejection?',
+        text: 'This will count the reject incentive for the agent.',
+        icon: 'question',
+        showCancelButton: true,
+        confirmButtonColor: '#059669',
+        cancelButtonColor: '#64748b',
+        confirmButtonText: 'Yes, approve',
+        cancelButtonText: 'Cancel'
+    });
+    if (!confirm.isConfirmed) return;
+    try {
+        const snap = await db.ref('pickups/' + orderId).once('value');
+        const item = snap.val();
+        if (!item) { showToast('Order not found', 'error'); return; }
+        await db.ref('pickups/' + orderId + '/incentive_approved').set(true);
+        await db.ref('pickups/' + orderId + '/incentive_paid').set(false);
+        showToast('✅ Reject approved! Incentive will be counted.', 'success');
+        loadRejectedAdmin();
+        loadDashboard();
+    } catch (e) {
+        showToast('Error approving reject', 'error');
+        console.error(e);
+    }
 }
 
 // ==========================================
@@ -576,8 +614,7 @@ function clearInventorySearch() {
 function renderInventoryTable() {
     const tbody = document.getElementById('inventoryTableBody');
     if (filteredInventory.length === 0) {
-        tbody.innerHTML =
-            `<tr><td colspan="7"><div class="empty-state"><i data-lucide="inbox"></i><p class="text-sm font-medium">No inventory available</p></div></td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="7"><div class="empty-state"><i data-lucide="inbox"></i><p class="text-sm font-medium">No inventory available</p></div></td></tr>`;
         lucide.createIcons();
         return;
     }
@@ -800,8 +837,7 @@ function updateSalesSummary() {
 function renderSalesTable() {
     const tbody = document.getElementById('salesTableBody');
     if (filteredSales.length === 0) {
-        tbody.innerHTML =
-            `<tr><td colspan="10"><div class="empty-state"><i data-lucide="inbox"></i><p class="text-sm font-medium">No sales found</p></div></td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="10"><div class="empty-state"><i data-lucide="inbox"></i><p class="text-sm font-medium">No sales found</p></div></td></tr>`;
         lucide.createIcons();
         return;
     }
@@ -880,7 +916,7 @@ function exportSalesCSV() {
 }
 
 // ==========================================
-// VIEW ORDER DETAIL
+// VIEW ORDER DETAIL (Added Hold button)
 // ==========================================
 function viewOrder(orderId) {
     detailOrderId = orderId;
@@ -895,12 +931,14 @@ function viewOrder(orderId) {
     document.getElementById('detailSaveActions').style.display = 'none';
     document.getElementById('detailEditBtn').textContent = '✏️ Edit';
     document.getElementById('detailEditBtn').onclick = toggleEditMode;
+    // Show Hold button if not already on hold
+    document.getElementById('detailHoldBtn').style.display = 'inline-flex';
+    document.getElementById('detailHoldBtn').onclick = holdOrderFromDetail;
 
     db.ref('pickups/' + orderId).once('value').then(snap => {
         const item = snap.val();
         if (!item) {
-            content.innerHTML =
-                `<div class="empty-state"><i data-lucide="alert-circle"></i><p class="text-sm font-medium">Order not found</p></div>`;
+            content.innerHTML = `<div class="empty-state"><i data-lucide="alert-circle"></i><p class="text-sm font-medium">Order not found</p></div>`;
             return;
         }
         if (item.sold && item.profit === undefined && item.salePrice !== undefined && item.value !== undefined) {
@@ -908,9 +946,11 @@ function viewOrder(orderId) {
         }
         editData = { ...item, id: orderId };
         renderDetailView(item);
+        if (item.status === 'on_hold') {
+            document.getElementById('detailHoldBtn').style.display = 'none';
+        }
     }).catch(err => {
-        content.innerHTML =
-            `<div class="empty-state"><i data-lucide="alert-circle"></i><p class="text-sm font-medium text-red-500">Error loading details</p></div>`;
+        content.innerHTML = `<div class="empty-state"><i data-lucide="alert-circle"></i><p class="text-sm font-medium text-red-500">Error loading details</p></div>`;
         showToast('Error loading order details', 'error');
     });
 }
@@ -919,9 +959,11 @@ function renderDetailView(item) {
     const content = document.getElementById('detailContent');
     const statusLabel = item.status || 'unknown';
     let statusClass = statusLabel === 'pickup' ? (item.sold ? 'sold' : 'pickup') :
-        statusLabel === 'rejected' ? 'rejected' : 'reschedule';
+        statusLabel === 'rejected' ? 'rejected' :
+        statusLabel === 'on_hold' ? 'on_hold' : 'reschedule';
     let displayName = statusLabel === 'pickup' ? (item.sold ? 'Sold' : 'Pickup Completed') :
-        statusLabel === 'rejected' ? 'Rejected' : 'Pending';
+        statusLabel === 'rejected' ? 'Rejected' :
+        statusLabel === 'on_hold' ? 'Hold' : 'Pending';
 
     let profitDisplay = '—';
     let profitClass = '';
@@ -942,6 +984,11 @@ function renderDetailView(item) {
         `;
     }
 
+    let holdHtml = '';
+    if (item.status === 'on_hold') {
+        holdHtml = `<div class="detail-item"><div class="label">Hold Reason</div><div class="value text-red-600">${item.hold_reason || '—'}</div></div>`;
+    }
+
     let html = `
         <div class="flex items-center gap-3 mb-4">
             <span class="badge-status ${statusClass} text-sm px-4 py-1.5">${displayName}</span>
@@ -957,12 +1004,43 @@ function renderDetailView(item) {
             <div class="detail-item"><div class="label">Reason</div><div class="value" id="dv-reason">${item.reason || '—'}</div></div>
             <div class="detail-item"><div class="label">Status</div><div class="value" id="dv-status">${displayName}</div></div>
             <div class="detail-item"><div class="label">Time (IST)</div><div class="value text-xs" id="dv-time">${item.timestampIST || item.timestamp || '—'}</div></div>
+            ${holdHtml}
             ${saleHtml}
         </div>
     `;
     content.innerHTML = html;
     lucide.createIcons();
     editData = { ...item };
+}
+
+// ==========================================
+// HOLD ORDER (NEW)
+// ==========================================
+async function holdOrderFromDetail() {
+    if (!detailOrderId) return;
+    const { value: reason, isConfirmed } = await Swal.fire({
+        title: 'Hold Order',
+        text: 'Enter reason for holding this order:',
+        input: 'text',
+        inputPlaceholder: 'Reason...',
+        showCancelButton: true,
+        confirmButtonColor: '#3730a3',
+        cancelButtonColor: '#64748b',
+        confirmButtonText: 'Hold',
+        cancelButtonText: 'Cancel'
+    });
+    if (!isConfirmed || !reason) return;
+    try {
+        await db.ref('pickups/' + detailOrderId).update({ status: 'on_hold', hold_reason: reason });
+        showToast('⏸️ Order put on hold', 'success');
+        closeDetail();
+        loadOrders();
+        loadPendingAdmin();
+        loadDashboard();
+    } catch (e) {
+        showToast('Error holding order', 'error');
+        console.error(e);
+    }
 }
 
 // ==========================================
@@ -1008,6 +1086,7 @@ function toggleEditMode() {
                     <option value="pickup" ${item.status === 'pickup' ? 'selected' : ''}>Pickup Completed</option>
                     <option value="rejected" ${item.status === 'rejected' ? 'selected' : ''}>Rejected</option>
                     <option value="reschedule" ${item.status === 'reschedule' ? 'selected' : ''}>Pending / Reschedule</option>
+                    <option value="on_hold" ${item.status === 'on_hold' ? 'selected' : ''}>Hold</option>
                 </select>
             </div>
             <div>
@@ -1279,7 +1358,7 @@ function exportCSV() {
 }
 
 // ==========================================
-// AGENTS
+// AGENTS (UPDATED with Salary/Incentive fields)
 // ==========================================
 async function loadAgents() {
     try {
@@ -1302,8 +1381,7 @@ async function loadAgents() {
 function renderAgentsTable() {
     const tbody = document.getElementById('agentsTableBody');
     if (agentsList.length === 0) {
-        tbody.innerHTML =
-            `<tr><td colspan="9"><div class="empty-state"><i data-lucide="inbox"></i><p class="text-sm font-medium">No agents registered</p></div></td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="9"><div class="empty-state"><i data-lucide="inbox"></i><p class="text-sm font-medium">No agents registered</p></div></td></tr>`;
         lucide.createIcons();
         return;
     }
@@ -1313,14 +1391,18 @@ function renderAgentsTable() {
         const pw = item.password || '****';
         const showPw = passwordVisible[item.username] || false;
         const pwDisplay = showPw ? pw : '••••••••';
+        const salary = item.salary || 0;
+        const pickupInc = item.pickup_incentive || 0;
+        const rejectInc = item.reject_incentive || 0;
         html += `
             <tr class="user-row border-b border-gray-50">
                 <td class="py-3 px-4 text-gray-400 font-mono text-xs">${idx + 1}</td>
                 <td class="py-3 px-4 font-medium text-gray-800">${item.name || '—'}</td>
                 <td class="py-3 px-4 font-mono text-sm text-gray-700">${item.username}</td>
+                <td class="py-3 px-4 hidden sm:table-cell font-bold">₹${salary}</td>
+                <td class="py-3 px-4 hidden md:table-cell">₹${pickupInc}</td>
+                <td class="py-3 px-4 hidden lg:table-cell">₹${rejectInc}</td>
                 <td class="py-3 px-4 hidden sm:table-cell text-gray-600">${item.mobile || '—'}</td>
-                <td class="py-3 px-4 hidden md:table-cell text-gray-600">${item.aadhar || '—'}</td>
-                <td class="py-3 px-4 hidden lg:table-cell text-gray-600">${item.alternate || '—'}</td>
                 <td class="py-3 px-4 font-mono">
                     <span class="pw-hidden">${pwDisplay}</span>
                     <button onclick="togglePassword('${item.username}')" class="btn-action show ml-1" title="Show/Hide Password">
@@ -1411,6 +1493,10 @@ function registerAgent(e) {
     const mobile = document.getElementById('regMobile').value.trim();
     const aadhar = document.getElementById('regAadhar').value.trim();
     const alternate = document.getElementById('regAlternate').value.trim();
+    // NEW fields
+    const salary = parseFloat(document.getElementById('regSalary').value.trim()) || 0;
+    const pickupIncentive = parseFloat(document.getElementById('regPickupIncentive').value.trim()) || 0;
+    const rejectIncentive = parseFloat(document.getElementById('regRejectIncentive').value.trim()) || 0;
 
     const errorEl = document.getElementById('agentError');
     const successEl = document.getElementById('agentSuccess');
@@ -1418,8 +1504,8 @@ function registerAgent(e) {
     errorEl.style.display = 'none';
     successEl.style.display = 'none';
 
-    if (!name || !username || !password || !mobile) {
-        errorEl.textContent = 'Please fill all required fields (Name, Username, Password, Mobile).';
+    if (!name || !username || !password || !mobile || !salary || !pickupIncentive || !rejectIncentive) {
+        errorEl.textContent = 'Please fill all required fields (Name, Username, Password, Mobile, Salary, Pickup Incentive, Reject Incentive).';
         errorEl.style.display = 'block';
         return;
     }
@@ -1453,6 +1539,9 @@ function registerAgent(e) {
                 aadhar: aadhar || '',
                 mobile,
                 alternate: alternate || '',
+                salary,
+                pickup_incentive: pickupIncentive,
+                reject_incentive: rejectIncentive,
                 createdAt: Date.now()
             });
         })
@@ -1465,6 +1554,9 @@ function registerAgent(e) {
             document.getElementById('regMobile').value = '';
             document.getElementById('regAadhar').value = '';
             document.getElementById('regAlternate').value = '';
+            document.getElementById('regSalary').value = '';
+            document.getElementById('regPickupIncentive').value = '';
+            document.getElementById('regRejectIncentive').value = '';
             loadAgents();
             setTimeout(() => {
                 successEl.style.display = 'none';
@@ -1550,9 +1642,11 @@ function viewAgentActivity(username) {
         orders.forEach(item => {
             const statusLabel = item.status || 'unknown';
             const statusClass = statusLabel === 'pickup' ? (item.sold ? 'sold' : 'pickup') :
-                statusLabel === 'rejected' ? 'rejected' : 'reschedule';
+                statusLabel === 'rejected' ? 'rejected' :
+                statusLabel === 'on_hold' ? 'on_hold' : 'reschedule';
             const displayName = statusLabel === 'pickup' ? (item.sold ? 'Sold' : 'Pickup') :
-                statusLabel === 'rejected' ? 'Rejected' : 'Pending';
+                statusLabel === 'rejected' ? 'Rejected' :
+                statusLabel === 'on_hold' ? 'Hold' : 'Pending';
             const time = item.timestampIST || item.timestamp || '';
             const model = item.phoneModel || '—';
             const value = item.value !== undefined ? '₹' + item.value : '—';
@@ -1576,14 +1670,311 @@ function viewAgentActivity(username) {
         content.innerHTML = html;
         lucide.createIcons();
     }).catch(err => {
-        content.innerHTML =
-            `<div class="empty-state"><i data-lucide="alert-circle"></i><p class="text-sm font-medium text-red-500">Error loading activity</p></div>`;
+        content.innerHTML = `<div class="empty-state"><i data-lucide="alert-circle"></i><p class="text-sm font-medium text-red-500">Error loading activity</p></div>`;
         showToast('Error loading activity', 'error');
     });
 }
 
 function closeActivityModal() {
     document.getElementById('activityModal').style.display = 'none';
+}
+
+// ==========================================
+// ATTENDANCE SYSTEM (NEW)
+// ==========================================
+async function generateOTPs() {
+    const usersSnap = await db.ref('users').once('value');
+    const users = usersSnap.val() || {};
+    const today = new Date().toISOString().split('T')[0];
+    if (Object.keys(users).length === 0) {
+        showToast('No agents to generate OTP for', 'error');
+        return;
+    }
+    const confirm = await Swal.fire({
+        title: 'Generate OTPs?',
+        text: `Generate OTP for ${Object.keys(users).length} agents for ${today}?`,
+        icon: 'question',
+        showCancelButton: true,
+        confirmButtonColor: '#059669',
+        cancelButtonColor: '#64748b',
+        confirmButtonText: 'Generate',
+        cancelButtonText: 'Cancel'
+    });
+    if (!confirm.isConfirmed) return;
+    try {
+        const updates = {};
+        for (const uname of Object.keys(users)) {
+            const otp = String(Math.floor(100000 + Math.random() * 900000));
+            updates[`daily_otp/${today}/${uname}`] = { otp, generated_at: Date.now() };
+        }
+        await db.ref().update(updates);
+        showToast(`✅ OTPs generated for ${Object.keys(users).length} agents`, 'success');
+        loadAttendance();
+    } catch (e) {
+        showToast('Error generating OTPs', 'error');
+        console.error(e);
+    }
+}
+
+async function loadAttendance() {
+    const dateInput = document.getElementById('attendanceDate');
+    if (!dateInput.value) {
+        const today = new Date().toISOString().split('T')[0];
+        dateInput.value = today;
+    }
+    const date = dateInput.value;
+    const container = document.getElementById('attendanceList');
+    container.innerHTML = `<div class="text-center py-4"><span class="spinner-sm"></span></div>`;
+    try {
+        const usersSnap = await db.ref('users').once('value');
+        const users = usersSnap.val() || {};
+        if (Object.keys(users).length === 0) {
+            container.innerHTML = `<div class="empty-state"><i data-lucide="inbox"></i><p class="text-sm font-medium">No agents registered</p></div>`;
+            return;
+        }
+        let html = `<div class="space-y-3"><div class="text-sm font-bold text-gray-600 mb-2">📅 ${date}</div>`;
+        for (const [uname, uData] of Object.entries(users)) {
+            const attSnap = await db.ref('attendance/' + uname + '/' + date).once('value');
+            const att = attSnap.val() || {};
+            const otpSnap = await db.ref('daily_otp/' + date + '/' + uname).once('value');
+            const otpData = otpSnap.val() || {};
+            const isBlocked = att.blocked === true || uData.is_blocked === true;
+            const status = att.status || 'Not Marked';
+            let statusHtml = `<span class="text-gray-400">Not Marked</span>`;
+            if (status === 'present') statusHtml = `<span class="attendance-present">✅ Present</span>`;
+            else if (status === 'absent' && isBlocked) statusHtml = `<span class="attendance-blocked">🚫 Blocked</span>`;
+            else if (status === 'absent') statusHtml = `<span class="attendance-absent">❌ Absent (Not Blocked)</span>`;
+            const otp = otpData.otp || '—';
+            html += `
+                <div class="attendance-card glass rounded-xl p-4 shadow-sm border border-gray-100 flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                        <span class="font-bold text-gray-800">${uData.name}</span>
+                        <span class="text-xs text-gray-500">(${uname})</span><br>
+                        <span class="text-xs">OTP: <strong class="otp-display text-sm">${otp}</strong></span>
+                    </div>
+                    <div class="text-sm">${statusHtml}</div>
+                    <div class="flex items-center gap-2 flex-wrap">
+                        ${att.status === 'absent' && isBlocked ? `<button onclick="unblockAgent('${uname}','${date}')" class="btn-action unblock"><i data-lucide="unlock"></i> Unblock</button>` : ''}
+                        ${att.status === 'absent' && !isBlocked ? `<button onclick="blockAgent('${uname}','${date}')" class="btn-action delete"><i data-lucide="lock"></i> Block</button>` : ''}
+                        ${!att.status || att.status === 'Not Marked' ? `<button onclick="markPresentManually('${uname}','${date}')" class="btn-action approve"><i data-lucide="check"></i> Mark Present</button>` : ''}
+                    </div>
+                </div>
+            `;
+        }
+        html += `</div>`;
+        container.innerHTML = html;
+        lucide.createIcons();
+    } catch (e) {
+        console.error(e);
+        container.innerHTML = `<div class="empty-state"><i data-lucide="alert-circle"></i><p class="text-sm text-red-500">Error loading</p></div>`;
+        showToast('Error loading attendance', 'error');
+    }
+}
+
+async function markPresentManually(username, date) {
+    const confirm = await Swal.fire({
+        title: `Mark ${username} Present?`,
+        text: `Mark attendance for ${username} on ${date}?`,
+        icon: 'question',
+        showCancelButton: true,
+        confirmButtonColor: '#059669',
+        cancelButtonColor: '#64748b',
+        confirmButtonText: 'Yes',
+        cancelButtonText: 'Cancel'
+    });
+    if (!confirm.isConfirmed) return;
+    try {
+        await db.ref('attendance/' + username + '/' + date).set({
+            status: 'present',
+            timestamp: Date.now(),
+            blocked: false,
+            salary_counted: true
+        });
+        showToast('✅ Marked present', 'success');
+        loadAttendance();
+        loadDashboard();
+    } catch (e) {
+        showToast('Error', 'error');
+        console.error(e);
+    }
+}
+
+async function unblockAgent(username, date) {
+    const result = await Swal.fire({
+        title: `Unblock ${username}?`,
+        text: 'Do you want to count salary for this day? If NO, the day salary will be deducted.',
+        icon: 'question',
+        showDenyButton: true,
+        showCancelButton: true,
+        confirmButtonText: 'Yes, Count Salary',
+        denyButtonText: 'No, Don\'t Count',
+        cancelButtonText: 'Cancel',
+        confirmButtonColor: '#059669',
+        denyButtonColor: '#dc2626'
+    });
+    if (result.isDismissed) return;
+    const countSalary = result.isConfirmed;
+    try {
+        await db.ref('users/' + username + '/is_blocked').set(false);
+        await db.ref('attendance/' + username + '/' + date).update({
+            blocked: false,
+            salary_counted: countSalary
+        });
+        if (!countSalary) {
+            showToast(`✅ Unblocked. Salary counted: No`, 'success');
+        } else {
+            showToast(`✅ Unblocked. Salary will be counted.`, 'success');
+        }
+        loadAttendance();
+        loadDashboard();
+    } catch (e) {
+        showToast('Error unblocking', 'error');
+        console.error(e);
+    }
+}
+
+async function blockAgent(username, date) {
+    const confirm = await Swal.fire({
+        title: 'Block Agent?',
+        text: `Block ${username} for ${date}?`,
+        icon: 'warning',
+        showCancelButton: true,
+        confirmButtonColor: '#dc2626',
+        cancelButtonColor: '#64748b',
+        confirmButtonText: 'Block',
+        cancelButtonText: 'Cancel'
+    });
+    if (!confirm.isConfirmed) return;
+    try {
+        await db.ref('users/' + username + '/is_blocked').set(true);
+        await db.ref('attendance/' + username + '/' + date).update({
+            status: 'absent',
+            blocked: true,
+            reason: 'Manually blocked by admin'
+        });
+        showToast('🔒 Agent blocked', 'success');
+        loadAttendance();
+        loadDashboard();
+    } catch (e) {
+        showToast('Error blocking', 'error');
+        console.error(e);
+    }
+}
+
+// ==========================================
+// SALARY / EARNINGS CALCULATION (NEW)
+// ==========================================
+async function loadSalaryData() {
+    const monthInput = document.getElementById('salaryMonth');
+    if (!monthInput.value) {
+        const today = new Date();
+        const val = today.getFullYear() + '-' + String(today.getMonth() + 1).padStart(2, '0');
+        monthInput.value = val;
+    }
+    const [year, month] = monthInput.value.split('-').map(Number);
+    const container = document.getElementById('salaryContainer');
+    container.innerHTML = `<div class="text-center py-4"><span class="spinner-sm"></span> Calculating...</div>`;
+    try {
+        const usersSnap = await db.ref('users').once('value');
+        const users = usersSnap.val() || {};
+        if (Object.keys(users).length === 0) {
+            container.innerHTML = `<div class="empty-state"><i data-lucide="inbox"></i><p class="text-sm font-medium">No agents</p></div>`;
+            return;
+        }
+        const daysInMonth = new Date(year, month, 0).getDate();
+        let html = '';
+        let grandTotal = 0;
+
+        for (const [uname, uData] of Object.entries(users)) {
+            const salary = uData.salary || 0;
+            const pickupInc = uData.pickup_incentive || 0;
+            const rejectInc = uData.reject_incentive || 0;
+            const perDaySalary = salary / 30;
+
+            let totalBaseSalary = 0;
+            let totalPickupIncentive = 0;
+            let totalRejectIncentive = 0;
+            let detailsHtml = '';
+
+            for (let d = 1; d <= daysInMonth; d++) {
+                const dateStr = `${year}-${String(month).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+                const attSnap = await db.ref('attendance/' + uname + '/' + dateStr).once('value');
+                const att = attSnap.val() || {};
+                const isPresent = att.status === 'present';
+                const salaryCounted = att.salary_counted !== false;
+
+                let daySalary = 0;
+                if (isPresent && salaryCounted) daySalary = perDaySalary;
+                else if (att.status === 'absent' && att.blocked && !salaryCounted) daySalary = 0;
+                else if (isPresent) daySalary = perDaySalary;
+                else daySalary = 0;
+
+                totalBaseSalary += daySalary;
+
+                // Incentives for this day
+                const dayOrdersSnap = await db.ref('pickups').orderByChild('agent').equalTo(uname).once('value');
+                const dayOrders = dayOrdersSnap.val() || {};
+                let dayPickupInc = 0, dayRejectInc = 0;
+                for (const [oid, ord] of Object.entries(dayOrders)) {
+                    if (!ord.timestamp) continue;
+                    const ordDate = new Date(ord.timestamp).toISOString().split('T')[0];
+                    if (ordDate === dateStr) {
+                        if (ord.status === 'pickup' && ord.sold === true) dayPickupInc += pickupInc;
+                        if (ord.status === 'rejected' && ord.incentive_approved === true) dayRejectInc += rejectInc;
+                    }
+                }
+                totalPickupIncentive += dayPickupInc;
+                totalRejectIncentive += dayRejectInc;
+
+                if (isPresent || att.status === 'absent') {
+                    const statusIcon = isPresent ? '✅' : (att.blocked ? '🔒' : '❌');
+                    detailsHtml += `<span class="text-xs mx-0.5" title="${dateStr}">${statusIcon}</span>`;
+                }
+            }
+
+            const total = totalBaseSalary + totalPickupIncentive + totalRejectIncentive;
+            grandTotal += total;
+
+            html += `
+                <div class="glass rounded-2xl p-5 shadow-sm border border-gray-100 salary-summary-card">
+                    <div class="flex flex-wrap items-center justify-between gap-2">
+                        <div>
+                            <span class="font-bold text-gray-800">${uData.name}</span>
+                            <span class="text-sm text-gray-500">(${uname})</span>
+                        </div>
+                        <div class="text-sm font-bold text-indigo-600">₹${Math.round(total)}</div>
+                    </div>
+                    <div class="grid grid-cols-2 sm:grid-cols-3 gap-2 mt-2 text-sm">
+                        <div class="bg-gray-50 p-2 rounded">
+                            <span class="text-gray-500">Base Salary</span><br>
+                            <span class="font-bold">₹${Math.round(totalBaseSalary)}</span>
+                        </div>
+                        <div class="bg-green-50 p-2 rounded">
+                            <span class="text-gray-500">Pickup Inc.</span><br>
+                            <span class="font-bold text-green-700">₹${Math.round(totalPickupIncentive)}</span>
+                        </div>
+                        <div class="bg-amber-50 p-2 rounded">
+                            <span class="text-gray-500">Reject Inc.</span><br>
+                            <span class="font-bold text-amber-700">₹${Math.round(totalRejectIncentive)}</span>
+                        </div>
+                    </div>
+                    <div class="mt-2 text-xs text-gray-400">Attendance: ${detailsHtml}</div>
+                </div>
+            `;
+        }
+        html += `<div class="text-right font-bold text-xl mt-4">Grand Total: ₹${Math.round(grandTotal)}</div>`;
+        container.innerHTML = html;
+        lucide.createIcons();
+    } catch (e) {
+        console.error(e);
+        container.innerHTML = `<div class="empty-state"><i data-lucide="alert-circle"></i><p class="text-sm text-red-500">Error calculating salary</p></div>`;
+        showToast('Error', 'error');
+    }
+}
+
+async function recalculateAllSalary() {
+    showToast('🔄 Recalculating... (This may take a moment)', 'info');
+    await loadSalaryData();
 }
 
 // ==========================================
@@ -1637,6 +2028,12 @@ document.addEventListener('DOMContentLoaded', () => {
     loadSales();
     loadAgents();
 
+    // Set default date for attendance and salary
+    const today = new Date().toISOString().split('T')[0];
+    document.getElementById('attendanceDate').value = today;
+    const month = today.substring(0, 7);
+    document.getElementById('salaryMonth').value = month;
+
     setInterval(() => {
         if (currentPageView === 'dashboard') loadDashboard();
         else if (currentPageView === 'orders') { loadOrders(); loadAgentsForFilter(); }
@@ -1644,6 +2041,8 @@ document.addEventListener('DOMContentLoaded', () => {
         else if (currentPageView === 'rejected') loadRejectedAdmin();
         else if (currentPageView === 'inventory') loadInventory();
         else if (currentPageView === 'sales') loadSales();
+        else if (currentPageView === 'attendance') loadAttendance();
+        else if (currentPageView === 'salary') loadSalaryData();
         else if (currentPageView === 'agents') loadAgents();
     }, 60000);
 
