@@ -6,11 +6,16 @@
     <meta name="theme-color" content="#0f172a" />
     <title>Admin · Flipkart</title>
 
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-app.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-database.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
-    <script src="https://unpkg.com/lucide@latest"></script>
+    <script src="https://cdn.tailwindcss.com">
+    </script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-app.js">
+    </script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-database.js">
+    </script>
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11">
+    </script>
+    <script src="https://unpkg.com/lucide@latest">
+    </script>
 
     <style>
         * {
@@ -103,12 +108,22 @@
             background: #d1fae5;
             color: #065f46;
         }
+        .badge-status.admin {
+            background: #ede9fe;
+            color: #5b21b6;
+        }
         .fade-in {
             animation: fadeIn 0.35s ease;
         }
         @keyframes fadeIn {
-            from { opacity: 0; transform: translateY(8px); }
-            to { opacity: 1; transform: translateY(0); }
+            from {
+                opacity: 0;
+                transform: translateY(8px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
         }
         .modal-overlay {
             backdrop-filter: blur(6px);
@@ -251,6 +266,13 @@
         .btn-action.hold:hover {
             background: #c7d2fe;
         }
+        .btn-action.unhold {
+            background: #fef3c7;
+            color: #d97706;
+        }
+        .btn-action.unhold:hover {
+            background: #fde68a;
+        }
         .btn-action.unblock {
             background: #fef3c7;
             color: #d97706;
@@ -265,6 +287,13 @@
         .btn-action.primary:hover {
             background: #4338ca;
         }
+        .btn-action.promote {
+            background: #ede9fe;
+            color: #5b21b6;
+        }
+        .btn-action.promote:hover {
+            background: #ddd6fe;
+        }
         .spinner-sm {
             border: 2px solid #e2e8f0;
             border-top: 2px solid #4f46e5;
@@ -275,8 +304,12 @@
             display: inline-block;
         }
         @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
+            0% {
+                transform: rotate(0deg);
+            }
+            100% {
+                transform: rotate(360deg);
+            }
         }
         .sidebar-overlay {
             display: none;
@@ -527,9 +560,15 @@
             animation: pulseRing 2s cubic-bezier(0.215, 0.61, 0.355, 1) infinite;
         }
         @keyframes pulseRing {
-            0% { box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.7); }
-            70% { box-shadow: 0 0 0 10px rgba(34, 197, 94, 0); }
-            100% { box-shadow: 0 0 0 0 rgba(34, 197, 94, 0); }
+            0% {
+                box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.7);
+            }
+            70% {
+                box-shadow: 0 0 0 10px rgba(34, 197, 94, 0);
+            }
+            100% {
+                box-shadow: 0 0 0 0 rgba(34, 197, 94, 0);
+            }
         }
         .profit-green {
             color: #059669;
@@ -560,6 +599,21 @@
             background: #fff;
         }
         .agent-form input:focus {
+            border-color: #4f46e5;
+            box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.1);
+        }
+        .agent-form select {
+            width: 100%;
+            padding: 10px 14px;
+            border: 2px solid #e2e8f0;
+            border-radius: 10px;
+            font-size: 15px;
+            outline: none;
+            transition: border 0.2s;
+            background: #fff;
+            appearance: auto;
+        }
+        .agent-form select:focus {
             border-color: #4f46e5;
             box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.1);
         }
@@ -610,7 +664,6 @@
         .activity-modal .activity-item:last-child {
             border-bottom: none;
         }
-        /* NEW styles for attendance and salary */
         .attendance-present {
             color: #059669;
             font-weight: 700;
@@ -637,6 +690,63 @@
             font-weight: 700;
             letter-spacing: 4px;
             color: #4f46e5;
+        }
+        .attendance-name-click {
+            cursor: pointer;
+            transition: color 0.2s;
+        }
+        .attendance-name-click:hover {
+            color: #4f46e5;
+            text-decoration: underline;
+        }
+        .reject-modal .reject-item {
+            border-bottom: 1px solid #f1f5f9;
+            padding: 10px 0;
+        }
+        .reject-modal .reject-item:last-child {
+            border-bottom: none;
+        }
+        .inline-flex {
+            display: inline-flex;
+        }
+        .admin-tag {
+            background: #ede9fe;
+            color: #5b21b6;
+            font-size: 9px;
+            font-weight: 700;
+            padding: 1px 8px;
+            border-radius: 10px;
+            margin-left: 4px;
+        }
+        .role-selector {
+            display: flex;
+            gap: 12px;
+            align-items: center;
+            padding: 8px 0;
+        }
+        .role-selector label {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+            color: #1e293b;
+        }
+        .role-selector input[type="radio"] {
+            width: 16px;
+            height: 16px;
+            accent-color: #4f46e5;
+            cursor: pointer;
+        }
+        .admin-fields-hidden {
+            display: none !important;
+        }
+        .promote-btn-wrap {
+            display: inline-flex;
+            gap: 4px;
+            align-items: center;
+            flex-wrap: wrap;
         }
     </style>
 </head>
@@ -687,12 +797,10 @@
                     <i data-lucide="trending-up"></i> Sales
                     <span id="salesBadge" class="ml-auto text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full">0</span>
                 </div>
-                <!-- NEW: Attendance -->
                 <div class="sidebar-link" data-page="attendance" onclick="navigate('attendance')">
                     <i data-lucide="clipboard-check"></i> Attendance
                     <span id="attendanceBadge" class="ml-auto text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full">0</span>
                 </div>
-                <!-- NEW: Salary/Earnings -->
                 <div class="sidebar-link" data-page="salary" onclick="navigate('salary')">
                     <i data-lucide="indian-rupee"></i> Salary/Earnings
                 </div>
@@ -745,7 +853,7 @@
                     </div>
                 </div>
 
-                <!-- Stats Grid - Row 1 -->
+                <!-- Stats Grid -->
                 <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4 mb-6">
                     <div class="stat-card glass rounded-2xl p-4 shadow-sm">
                         <div class="flex items-center gap-3">
@@ -792,8 +900,6 @@
                         </div>
                     </div>
                 </div>
-
-                <!-- Stats Grid - Row 2 -->
                 <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4 mb-6">
                     <div class="stat-card glass rounded-2xl p-4 shadow-sm">
                         <div class="flex items-center gap-3">
@@ -840,8 +946,6 @@
                         </div>
                     </div>
                 </div>
-
-                <!-- Stats Grid - Row 3 (Total Stock Value + NEW stats) -->
                 <div class="grid grid-cols-1 sm:grid-cols-4 gap-3 sm:gap-4 mb-6">
                     <div class="stat-card glass rounded-2xl p-4 shadow-sm">
                         <div class="flex items-center gap-3">
@@ -885,15 +989,10 @@
                             <i data-lucide="activity" class="w-4 h-4 text-indigo-600"></i>
                             Recent Activity
                         </h3>
-                        <button onclick="navigate('orders')" class="text-xs text-indigo-600 font-semibold hover:underline">
-                            View all →
-                        </button>
+                        <button onclick="navigate('orders')" class="text-xs text-indigo-600 font-semibold hover:underline">View all →</button>
                     </div>
                     <div id="recentList" class="space-y-2 max-h-[340px] overflow-y-auto no-scrollbar">
-                        <div class="empty-state">
-                            <i data-lucide="inbox"></i>
-                            <p class="text-sm font-medium">No activity yet</p>
-                        </div>
+                        <div class="empty-state"><i data-lucide="inbox"></i><p class="text-sm font-medium">No activity yet</p></div>
                     </div>
                 </div>
             </div>
@@ -906,16 +1005,10 @@
                         <p class="text-sm text-gray-500">Complete history of all pickups</p>
                     </div>
                     <div class="flex items-center gap-2">
-                        <button onclick="exportCSV()" class="btn-action export">
-                            <i data-lucide="download"></i> Export CSV
-                        </button>
-                        <button onclick="refreshOrders()" class="btn-action view">
-                            <i data-lucide="refresh-cw"></i>
-                        </button>
+                        <button onclick="exportCSV()" class="btn-action export"><i data-lucide="download"></i> Export CSV</button>
+                        <button onclick="refreshOrders()" class="btn-action view"><i data-lucide="refresh-cw"></i></button>
                     </div>
                 </div>
-
-                <!-- Filters -->
                 <div class="glass rounded-2xl p-4 shadow-sm border border-gray-100 mb-4">
                     <div class="flex flex-wrap items-center gap-2">
                         <span class="text-xs font-bold text-gray-500 mr-1">Filter:</span>
@@ -923,7 +1016,6 @@
                         <button class="filter-chip" data-filter="pickup" onclick="setOrderFilter('pickup')">Pickup</button>
                         <button class="filter-chip" data-filter="rejected" onclick="setOrderFilter('rejected')">Rejected</button>
                         <button class="filter-chip" data-filter="reschedule" onclick="setOrderFilter('reschedule')">Pending</button>
-                        <!-- NEW: Hold filter -->
                         <button class="filter-chip" data-filter="on_hold" onclick="setOrderFilter('on_hold')">Hold</button>
                     </div>
                     <div class="flex flex-wrap items-center gap-2 mt-3">
@@ -931,7 +1023,6 @@
                         <button onclick="applyOrderSearch()" class="px-4 py-2 bg-indigo-600 text-white rounded-xl text-sm font-semibold hover:bg-indigo-700 transition">Search</button>
                         <button onclick="clearOrderSearch()" class="px-4 py-2 bg-gray-100 text-gray-600 rounded-xl text-sm font-semibold hover:bg-gray-200 transition">Clear</button>
                     </div>
-                    <!-- Date range filters -->
                     <div class="flex flex-wrap items-center gap-2 mt-3 border-t border-gray-200 pt-3">
                         <span class="text-xs font-bold text-gray-500 mr-1">Date Range:</span>
                         <input type="date" id="orderDateFrom" class="px-4 py-2 border border-gray-200 rounded-xl text-sm outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100" />
@@ -940,7 +1031,6 @@
                         <button onclick="applyOrderDateFilter()" class="px-4 py-2 bg-indigo-600 text-white rounded-xl text-sm font-semibold hover:bg-indigo-700 transition">Apply</button>
                         <button onclick="clearOrderDateFilter()" class="px-4 py-2 bg-gray-100 text-gray-600 rounded-xl text-sm font-semibold hover:bg-gray-200 transition">Clear Dates</button>
                     </div>
-                    <!-- Agent Filter -->
                     <div class="flex flex-wrap items-center gap-2 mt-3 border-t border-gray-200 pt-3">
                         <span class="text-xs font-bold text-gray-500 mr-1">Agent:</span>
                         <select id="orderAgentFilter" class="px-4 py-2 border border-gray-200 rounded-xl text-sm outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100">
@@ -950,8 +1040,6 @@
                         <button onclick="clearOrderAgentFilter()" class="px-4 py-2 bg-gray-100 text-gray-600 rounded-xl text-sm font-semibold hover:bg-gray-200 transition">Clear</button>
                     </div>
                 </div>
-
-                <!-- Table -->
                 <div class="glass rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
                     <div class="table-wrap">
                         <table class="w-full text-sm">
@@ -991,18 +1079,11 @@
                         <h2 class="text-2xl font-bold text-gray-800">Pending Orders</h2>
                         <p class="text-sm text-gray-500">Orders that are rescheduled or on hold</p>
                     </div>
-                    <button onclick="refreshPending()" class="btn-action view">
-                        <i data-lucide="refresh-cw"></i> Refresh
-                    </button>
+                    <button onclick="refreshPending()" class="btn-action view"><i data-lucide="refresh-cw"></i> Refresh</button>
                 </div>
-
                 <div class="glass rounded-2xl shadow-sm border border-gray-100 p-4">
                     <div id="pendingListAdmin" class="space-y-3 max-h-[600px] overflow-y-auto no-scrollbar">
-                        <div class="empty-state">
-                            <i data-lucide="inbox"></i>
-                            <p class="text-sm font-medium">No pending orders</p>
-                            <p class="text-xs text-gray-400">Orders will appear here when rescheduled</p>
-                        </div>
+                        <div class="empty-state"><i data-lucide="inbox"></i><p class="text-sm font-medium">No pending orders</p></div>
                     </div>
                 </div>
             </div>
@@ -1014,11 +1095,8 @@
                         <h2 class="text-2xl font-bold text-gray-800">Rejected Orders</h2>
                         <p class="text-sm text-gray-500">Orders that were not purchased</p>
                     </div>
-                    <button onclick="refreshRejected()" class="btn-action view">
-                        <i data-lucide="refresh-cw"></i> Refresh
-                    </button>
+                    <button onclick="refreshRejected()" class="btn-action view"><i data-lucide="refresh-cw"></i> Refresh</button>
                 </div>
-
                 <div class="glass rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
                     <div class="table-wrap">
                         <table class="w-full text-sm">
@@ -1050,12 +1128,9 @@
                     </div>
                     <div class="flex items-center gap-2">
                         <span class="text-sm font-semibold text-gray-600" id="inventoryCount">0 units</span>
-                        <button onclick="refreshInventory()" class="btn-action view">
-                            <i data-lucide="refresh-cw"></i>
-                        </button>
+                        <button onclick="refreshInventory()" class="btn-action view"><i data-lucide="refresh-cw"></i></button>
                     </div>
                 </div>
-
                 <div class="glass rounded-2xl p-4 shadow-sm border border-gray-100 mb-4">
                     <div class="flex flex-wrap items-center gap-2">
                         <input type="text" id="inventorySearch" placeholder="Search by Order ID or Model..." class="flex-1 min-w-[160px] px-4 py-2 border border-gray-200 rounded-xl text-sm outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100" />
@@ -1063,7 +1138,6 @@
                         <button onclick="clearInventorySearch()" class="px-4 py-2 bg-gray-100 text-gray-600 rounded-xl text-sm font-semibold hover:bg-gray-200 transition">Clear</button>
                     </div>
                 </div>
-
                 <div class="glass rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
                     <div class="table-wrap">
                         <table class="w-full text-sm">
@@ -1094,16 +1168,10 @@
                         <p class="text-sm text-gray-500">Complete sales history & profit tracking</p>
                     </div>
                     <div class="flex items-center gap-2">
-                        <button onclick="exportSalesCSV()" class="btn-action export">
-                            <i data-lucide="download"></i> Export CSV
-                        </button>
-                        <button onclick="refreshSales()" class="btn-action view">
-                            <i data-lucide="refresh-cw"></i>
-                        </button>
+                        <button onclick="exportSalesCSV()" class="btn-action export"><i data-lucide="download"></i> Export CSV</button>
+                        <button onclick="refreshSales()" class="btn-action view"><i data-lucide="refresh-cw"></i></button>
                     </div>
                 </div>
-
-                <!-- Sales Summary -->
                 <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
                     <div class="glass rounded-xl p-3 shadow-sm border border-gray-100 text-center">
                         <p class="text-xs text-gray-500">Total Sales</p>
@@ -1122,8 +1190,6 @@
                         <p class="text-lg font-bold text-blue-600" id="salesAvgProfit">₹0</p>
                     </div>
                 </div>
-
-                <!-- Filters -->
                 <div class="glass rounded-2xl p-4 shadow-sm border border-gray-100 mb-4">
                     <div class="flex flex-wrap items-center gap-2">
                         <input type="text" id="salesSearch" placeholder="Search by Order ID or Buyer..." class="flex-1 min-w-[160px] px-4 py-2 border border-gray-200 rounded-xl text-sm outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100" />
@@ -1133,7 +1199,6 @@
                         <button onclick="clearSalesFilters()" class="px-4 py-2 bg-gray-100 text-gray-600 rounded-xl text-sm font-semibold hover:bg-gray-200 transition">Clear</button>
                     </div>
                 </div>
-
                 <div class="glass rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
                     <div class="table-wrap">
                         <table class="w-full text-sm">
@@ -1159,21 +1224,17 @@
                 </div>
             </div>
 
-            <!-- ===== ATTENDANCE (NEW) ===== -->
+            <!-- ===== ATTENDANCE ===== -->
             <div id="page-attendance" class="page-content fade-in" style="display:none;">
                 <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
                     <div>
                         <h2 class="text-2xl font-bold text-gray-800">Attendance</h2>
-                        <p class="text-sm text-gray-500">Daily agent attendance & OTP</p>
+                        <p class="text-sm text-gray-500">Daily agent attendance & OTP — <span class="text-indigo-600 font-semibold">Click agent name to view & approve rejects</span></p>
                     </div>
                     <div class="flex items-center gap-2 flex-wrap">
                         <input type="date" id="attendanceDate" class="px-4 py-2 border border-gray-200 rounded-xl text-sm outline-none focus:border-indigo-400" />
-                        <button onclick="loadAttendance()" class="btn-action view">
-                            <i data-lucide="refresh-cw"></i> Load
-                        </button>
-                        <button onclick="generateOTPs()" class="btn-action primary">
-                            <i data-lucide="key"></i> Generate OTPs
-                        </button>
+                        <button onclick="loadAttendance()" class="btn-action view"><i data-lucide="refresh-cw"></i> Load</button>
+                        <button onclick="generateOTPs()" class="btn-action primary"><i data-lucide="key"></i> Generate OTPs</button>
                     </div>
                 </div>
                 <div class="glass rounded-2xl p-5 shadow-sm border border-gray-100">
@@ -1183,21 +1244,17 @@
                 </div>
             </div>
 
-            <!-- ===== SALARY / EARNINGS (NEW) ===== -->
+            <!-- ===== SALARY / EARNINGS ===== -->
             <div id="page-salary" class="page-content fade-in" style="display:none;">
                 <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
                     <div>
                         <h2 class="text-2xl font-bold text-gray-800">Salary & Earnings</h2>
-                        <p class="text-sm text-gray-500">Per agent breakdown</p>
+                        <p class="text-sm text-gray-500">Per agent breakdown — <span class="text-green-600 font-semibold">Fast & optimized</span></p>
                     </div>
                     <div class="flex items-center gap-2 flex-wrap">
                         <input type="month" id="salaryMonth" class="px-4 py-2 border border-gray-200 rounded-xl text-sm outline-none focus:border-indigo-400" />
-                        <button onclick="loadSalaryData()" class="btn-action view">
-                            <i data-lucide="refresh-cw"></i> Load
-                        </button>
-                        <button onclick="recalculateAllSalary()" class="btn-action edit">
-                            <i data-lucide="calculator"></i> Recalculate
-                        </button>
+                        <button onclick="loadSalaryData()" class="btn-action view"><i data-lucide="refresh-cw"></i> Load</button>
+                        <button onclick="recalculateAllSalary()" class="btn-action edit"><i data-lucide="calculator"></i> Recalculate</button>
                     </div>
                 </div>
                 <div id="salaryContainer" class="space-y-4">
@@ -1212,16 +1269,14 @@
                         <h2 class="text-2xl font-bold text-gray-800">Agent Management</h2>
                         <p class="text-sm text-gray-500">Register and manage pickup agents</p>
                     </div>
-                    <button onclick="loadAgents()" class="btn-action view">
-                        <i data-lucide="refresh-cw"></i> Refresh
-                    </button>
+                    <button onclick="loadAgents()" class="btn-action view"><i data-lucide="refresh-cw"></i> Refresh</button>
                 </div>
 
                 <!-- Registration Form -->
                 <div class="glass rounded-2xl p-5 shadow-sm border border-gray-100 mb-6">
                     <h3 class="font-bold text-gray-800 mb-4 flex items-center gap-2">
                         <i data-lucide="user-plus" class="w-5 h-5 text-indigo-600"></i>
-                        Register New Agent
+                        Register New User
                     </h3>
                     <form id="agentForm" class="agent-form grid grid-cols-1 sm:grid-cols-2 gap-4">
                         <div class="field-group">
@@ -1248,24 +1303,34 @@
                             <label>Alternate Number</label>
                             <input type="tel" id="regAlternate" placeholder="Alternate number (optional)" />
                         </div>
-                        <!-- NEW FIELDS -->
-                        <div class="field-group">
-                            <label>Monthly Salary (₹) <span class="text-red-500">*</span></label>
-                            <input type="number" id="regSalary" placeholder="e.g., 15000" required />
+                        <!-- Role Selector -->
+                        <div class="field-group sm:col-span-2">
+                            <label>Role <span class="text-red-500">*</span></label>
+                            <div class="role-selector">
+                                <label><input type="radio" name="regRole" value="agent" checked onchange="toggleAdminFields()" /> Agent</label>
+                                <label><input type="radio" name="regRole" value="admin" onchange="toggleAdminFields()" /> Admin</label>
+                            </div>
                         </div>
-                        <div class="field-group">
-                            <label>Pickup Incentive (₹) <span class="text-red-500">*</span></label>
-                            <input type="number" id="regPickupIncentive" placeholder="e.g., 50" required />
-                        </div>
-                        <div class="field-group">
-                            <label>Reject Incentive (₹) <span class="text-red-500">*</span></label>
-                            <input type="number" id="regRejectIncentive" placeholder="e.g., 20" required />
+                        <!-- Agent-only fields (hidden for admin) -->
+                        <div id="agentFields" class="sm:col-span-2 grid grid-cols-1 sm:grid-cols-3 gap-4">
+                            <div class="field-group">
+                                <label>Monthly Salary (₹) <span class="text-red-500">*</span></label>
+                                <input type="number" id="regSalary" placeholder="e.g., 15000" required />
+                            </div>
+                            <div class="field-group">
+                                <label>Pickup Incentive (₹) <span class="text-red-500">*</span></label>
+                                <input type="number" id="regPickupIncentive" placeholder="e.g., 50" required />
+                            </div>
+                            <div class="field-group">
+                                <label>Reject Incentive (₹) <span class="text-red-500">*</span></label>
+                                <input type="number" id="regRejectIncentive" placeholder="e.g., 20" required />
+                            </div>
                         </div>
                         <div class="sm:col-span-2">
                             <div id="agentError" class="agent-error"></div>
                             <div id="agentSuccess" class="agent-success"></div>
                             <button type="submit" class="btn-register" onclick="registerAgent(event)">
-                                <i data-lucide="user-plus" class="w-4 h-4 inline mr-2"></i> Register Agent
+                                <i data-lucide="user-plus" class="w-4 h-4 inline mr-2"></i> Register
                             </button>
                         </div>
                     </form>
@@ -1280,7 +1345,7 @@
                                     <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">#</th>
                                     <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">Name</th>
                                     <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">Username</th>
-                                    <!-- NEW COLUMNS -->
+                                    <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase hidden sm:table-cell">Role</th>
                                     <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase hidden sm:table-cell">Salary</th>
                                     <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase hidden md:table-cell">Pickup Inc</th>
                                     <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase hidden lg:table-cell">Reject Inc</th>
@@ -1290,12 +1355,12 @@
                                 </tr>
                             </thead>
                             <tbody id="agentsTableBody">
-                                <tr><td colspan="9"><div class="empty-state"><i data-lucide="inbox"></i><p class="text-sm font-medium">No agents registered</p></div></td></tr>
+                                <tr><td colspan="10"><div class="empty-state"><i data-lucide="inbox"></i><p class="text-sm font-medium">No users registered</p></div></td></tr>
                             </tbody>
                         </table>
                     </div>
                     <div class="flex items-center justify-between px-4 py-3 border-t border-gray-100 text-xs text-gray-500">
-                        <span id="agentsCount">0 agents</span>
+                        <span id="agentsCount">0 users</span>
                     </div>
                 </div>
             </div>
@@ -1307,51 +1372,22 @@
     <div id="sellModal" class="fixed inset-0 z-50 modal-overlay flex items-center justify-center p-4" style="display:none;">
         <div class="bg-white rounded-3xl w-full max-w-md shadow-2xl slide-up sell-modal max-h-[95vh] overflow-y-auto">
             <div class="sticky top-0 bg-white z-10 p-5 border-b border-gray-100 flex items-center justify-between rounded-t-3xl">
-                <h3 class="font-bold text-lg flex items-center gap-2">
-                    <i data-lucide="badge-dollar-sign" class="w-5 h-5 text-green-600"></i>
-                    Sell Phone
-                </h3>
-                <button onclick="closeSellModal()" class="p-2 hover:bg-gray-100 rounded-full transition">
-                    <i data-lucide="x" class="w-5 h-5 text-gray-500"></i>
-                </button>
+                <h3 class="font-bold text-lg flex items-center gap-2"><i data-lucide="badge-dollar-sign" class="w-5 h-5 text-green-600"></i> Sell Phone</h3>
+                <button onclick="closeSellModal()" class="p-2 hover:bg-gray-100 rounded-full transition"><i data-lucide="x" class="w-5 h-5 text-gray-500"></i></button>
             </div>
             <div class="p-5 space-y-4">
-                <div class="field-group">
-                    <label>Order ID</label>
-                    <input type="text" id="sellOrderId" readonly />
-                </div>
-                <div class="field-group">
-                    <label>Phone Model</label>
-                    <input type="text" id="sellModel" readonly />
-                </div>
-                <div class="field-group">
-                    <label>Purchase Price (₹)</label>
-                    <input type="text" id="sellPurchasePrice" readonly />
-                </div>
-                <div class="field-group">
-                    <label>Sale Price (₹) <span class="text-red-500">*</span></label>
-                    <input type="number" id="sellSalePrice" placeholder="Enter sale price" step="1" min="0" />
-                    <div class="hint">Profit will be calculated automatically</div>
-                </div>
-                <div class="field-group">
-                    <label>Buyer Name <span class="text-red-500">*</span></label>
-                    <input type="text" id="sellBuyerName" placeholder="Enter buyer name" />
-                </div>
-                <div class="field-group">
-                    <label>Buyer Contact <span class="text-gray-400">(optional)</span></label>
-                    <input type="text" id="sellBuyerContact" placeholder="Phone number" />
-                </div>
-                <div class="field-group">
-                    <label>Sale Date</label>
-                    <input type="date" id="sellSaleDate" />
-                </div>
+                <div class="field-group"><label>Order ID</label><input type="text" id="sellOrderId" readonly /></div>
+                <div class="field-group"><label>Phone Model</label><input type="text" id="sellModel" readonly /></div>
+                <div class="field-group"><label>Purchase Price (₹)</label><input type="text" id="sellPurchasePrice" readonly /></div>
+                <div class="field-group"><label>Sale Price (₹) <span class="text-red-500">*</span></label><input type="number" id="sellSalePrice" placeholder="Enter sale price" step="1" min="0" /><div class="hint">Profit will be calculated automatically</div></div>
+                <div class="field-group"><label>Buyer Name <span class="text-red-500">*</span></label><input type="text" id="sellBuyerName" placeholder="Enter buyer name" /></div>
+                <div class="field-group"><label>Buyer Contact <span class="text-gray-400">(optional)</span></label><input type="text" id="sellBuyerContact" placeholder="Phone number" /></div>
+                <div class="field-group"><label>Sale Date</label><input type="date" id="sellSaleDate" /></div>
                 <div id="sellProfitPreview" class="profit-preview neutral">Enter sale price to see profit</div>
             </div>
             <div class="sticky bottom-0 bg-white p-5 border-t border-gray-100 flex gap-2 rounded-b-3xl">
                 <button onclick="closeSellModal()" class="flex-1 py-3 rounded-xl bg-gray-100 text-gray-700 font-semibold hover:bg-gray-200 transition">Cancel</button>
-                <button onclick="confirmSell()" class="flex-1 py-3 rounded-xl bg-green-600 text-white font-semibold hover:bg-green-700 transition flex items-center justify-center gap-2">
-                    <i data-lucide="check-circle" class="w-4 h-4"></i> Confirm Sale
-                </button>
+                <button onclick="confirmSell()" class="flex-1 py-3 rounded-xl bg-green-600 text-white font-semibold hover:bg-green-700 transition flex items-center justify-center gap-2"><i data-lucide="check-circle" class="w-4 h-4"></i> Confirm Sale</button>
             </div>
         </div>
     </div>
@@ -1360,37 +1396,20 @@
     <div id="detailModal" class="fixed inset-0 z-50 modal-overlay flex items-center justify-center p-4" style="display:none;">
         <div class="bg-white rounded-3xl w-full max-w-2xl max-h-[95vh] overflow-y-auto shadow-2xl animate-[fadeIn_0.25s_ease]">
             <div class="sticky top-0 bg-white z-10 flex items-center justify-between p-5 border-b border-gray-100">
-                <h3 class="font-bold text-lg flex items-center gap-2">
-                    <i data-lucide="file-text" class="w-5 h-5 text-indigo-600"></i>
-                    <span id="detailModalTitle">Order Details</span>
-                </h3>
-                <button onclick="closeDetail()" class="p-2 hover:bg-gray-100 rounded-full transition">
-                    <i data-lucide="x" class="w-5 h-5 text-gray-500"></i>
-                </button>
+                <h3 class="font-bold text-lg flex items-center gap-2"><i data-lucide="file-text" class="w-5 h-5 text-indigo-600"></i> <span id="detailModalTitle">Order Details</span></h3>
+                <button onclick="closeDetail()" class="p-2 hover:bg-gray-100 rounded-full transition"><i data-lucide="x" class="w-5 h-5 text-gray-500"></i></button>
             </div>
-            <div class="p-5 space-y-4" id="detailContent">
-                <div class="text-center py-8 text-gray-400">
-                    <span class="spinner-sm"></span> Loading...
-                </div>
-            </div>
+            <div class="p-5 space-y-4" id="detailContent"><div class="text-center py-8 text-gray-400"><span class="spinner-sm"></span> Loading...</div></div>
             <div class="sticky bottom-0 bg-white border-t border-gray-100 p-4 flex flex-wrap gap-2 justify-end" id="detailActions">
                 <button onclick="closeDetail()" class="px-5 py-2.5 rounded-xl bg-gray-100 text-gray-700 font-semibold hover:bg-gray-200 transition">Close</button>
-                <button id="detailEditBtn" onclick="toggleEditMode()" class="px-5 py-2.5 rounded-xl bg-amber-100 text-amber-700 font-semibold hover:bg-amber-200 transition flex items-center gap-2">
-                    <i data-lucide="pencil" class="w-4 h-4"></i> Edit
-                </button>
-                <!-- NEW: Hold Button -->
-                <button id="detailHoldBtn" onclick="holdOrderFromDetail()" class="px-5 py-2.5 rounded-xl bg-blue-100 text-blue-700 font-semibold hover:bg-blue-200 transition flex items-center gap-2">
-                    <i data-lucide="pause-circle" class="w-4 h-4"></i> Hold
-                </button>
-                <button id="detailDeleteBtn" onclick="deleteOrderFromDetail()" class="px-5 py-2.5 rounded-xl bg-red-500 text-white font-semibold hover:bg-red-600 transition flex items-center gap-2">
-                    <i data-lucide="trash-2" class="w-4 h-4"></i> Delete
-                </button>
+                <button id="detailEditBtn" onclick="toggleEditMode()" class="px-5 py-2.5 rounded-xl bg-amber-100 text-amber-700 font-semibold hover:bg-amber-200 transition flex items-center gap-2"><i data-lucide="pencil" class="w-4 h-4"></i> Edit</button>
+                <button id="detailHoldBtn" onclick="holdOrderFromDetail()" class="px-5 py-2.5 rounded-xl bg-blue-100 text-blue-700 font-semibold hover:bg-blue-200 transition flex items-center gap-2"><i data-lucide="pause-circle" class="w-4 h-4"></i> Hold</button>
+                <button id="detailUnholdBtn" onclick="unholdOrderFromDetail()" class="px-5 py-2.5 rounded-xl bg-amber-100 text-amber-700 font-semibold hover:bg-amber-200 transition flex items-center gap-2" style="display:none;"><i data-lucide="play-circle" class="w-4 h-4"></i> Unhold</button>
+                <button id="detailDeleteBtn" onclick="deleteOrderFromDetail()" class="px-5 py-2.5 rounded-xl bg-red-500 text-white font-semibold hover:bg-red-600 transition flex items-center gap-2"><i data-lucide="trash-2" class="w-4 h-4"></i> Delete</button>
             </div>
             <div id="detailSaveActions" style="display:none;" class="sticky bottom-0 bg-white border-t border-gray-100 p-4 flex gap-2 justify-end">
                 <button onclick="cancelEdit()" class="px-5 py-2.5 rounded-xl bg-gray-100 text-gray-700 font-semibold hover:bg-gray-200 transition">Cancel</button>
-                <button onclick="saveEdit()" class="px-5 py-2.5 rounded-xl bg-indigo-600 text-white font-semibold hover:bg-indigo-700 transition flex items-center gap-2">
-                    <i data-lucide="save" class="w-4 h-4"></i> Save Changes
-                </button>
+                <button onclick="saveEdit()" class="px-5 py-2.5 rounded-xl bg-indigo-600 text-white font-semibold hover:bg-indigo-700 transition flex items-center gap-2"><i data-lucide="save" class="w-4 h-4"></i> Save Changes</button>
             </div>
         </div>
     </div>
@@ -1399,26 +1418,28 @@
     <div id="activityModal" class="fixed inset-0 z-50 modal-overlay flex items-center justify-center p-4" style="display:none;">
         <div class="bg-white rounded-3xl w-full max-w-3xl max-h-[90vh] overflow-y-auto shadow-2xl animate-[fadeIn_0.25s_ease] activity-modal">
             <div class="sticky top-0 bg-white z-10 flex items-center justify-between p-5 border-b border-gray-100 rounded-t-3xl">
-                <h3 class="font-bold text-lg flex items-center gap-2">
-                    <i data-lucide="activity" class="w-5 h-5 text-indigo-600"></i>
-                    <span id="activityModalTitle">Agent Activity</span>
-                </h3>
-                <button onclick="closeActivityModal()" class="p-2 hover:bg-gray-100 rounded-full transition">
-                    <i data-lucide="x" class="w-5 h-5 text-gray-500"></i>
-                </button>
+                <h3 class="font-bold text-lg flex items-center gap-2"><i data-lucide="activity" class="w-5 h-5 text-indigo-600"></i> <span id="activityModalTitle">Agent Activity</span></h3>
+                <button onclick="closeActivityModal()" class="p-2 hover:bg-gray-100 rounded-full transition"><i data-lucide="x" class="w-5 h-5 text-gray-500"></i></button>
             </div>
-            <div class="p-5" id="activityContent">
-                <div class="text-center py-8 text-gray-400">
-                    <span class="spinner-sm"></span> Loading...
-                </div>
-            </div>
-            <div class="sticky bottom-0 bg-white p-4 border-t border-gray-100 rounded-b-3xl">
-                <button onclick="closeActivityModal()" class="w-full py-2.5 rounded-xl bg-gray-100 text-gray-700 font-semibold hover:bg-gray-200 transition">Close</button>
-            </div>
+            <div class="p-5" id="activityContent"><div class="text-center py-8 text-gray-400"><span class="spinner-sm"></span> Loading...</div></div>
+            <div class="sticky bottom-0 bg-white p-4 border-t border-gray-100 rounded-b-3xl"><button onclick="closeActivityModal()" class="w-full py-2.5 rounded-xl bg-gray-100 text-gray-700 font-semibold hover:bg-gray-200 transition">Close</button></div>
         </div>
     </div>
 
-    <script src="script.js"></script>
+    <!-- ========== REJECT APPROVAL MODAL ========== -->
+    <div id="rejectModal" class="fixed inset-0 z-50 modal-overlay flex items-center justify-center p-4" style="display:none;">
+        <div class="bg-white rounded-3xl w-full max-w-3xl max-h-[90vh] overflow-y-auto shadow-2xl animate-[fadeIn_0.25s_ease] reject-modal">
+            <div class="sticky top-0 bg-white z-10 flex items-center justify-between p-5 border-b border-gray-100 rounded-t-3xl">
+                <h3 class="font-bold text-lg flex items-center gap-2"><i data-lucide="x-circle" class="w-5 h-5 text-red-600"></i> <span id="rejectModalTitle">Rejected Orders</span></h3>
+                <button onclick="closeRejectModal()" class="p-2 hover:bg-gray-100 rounded-full transition"><i data-lucide="x" class="w-5 h-5 text-gray-500"></i></button>
+            </div>
+            <div class="p-5" id="rejectContent"><div class="text-center py-8 text-gray-400"><span class="spinner-sm"></span> Loading...</div></div>
+            <div class="sticky bottom-0 bg-white p-4 border-t border-gray-100 rounded-b-3xl"><button onclick="closeRejectModal()" class="w-full py-2.5 rounded-xl bg-gray-100 text-gray-700 font-semibold hover:bg-gray-200 transition">Close</button></div>
+        </div>
+    </div>
+
+    <script src="script.js">
+    </script>
 
 </body>
 </html>
