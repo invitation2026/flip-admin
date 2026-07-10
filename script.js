@@ -37,6 +37,9 @@ let sellOrderData = null;
 let agentsList = [];
 let passwordVisible = {};
 
+// Salary mode: 'today' or 'monthly'
+let currentSalaryMode = 'today';
+
 // ==========================================
 // DOM REFS
 // ==========================================
@@ -74,12 +77,16 @@ function navigate(page) {
     else if (page === 'inventory') loadInventory();
     else if (page === 'sales') loadSales();
     else if (page === 'attendance') loadAttendance();
-    else if (page === 'salary') loadSalaryData();
+    else if (page === 'salary') { 
+        // Set default mode to today when navigating to salary page
+        setSalaryMode(currentSalaryMode || 'today');
+        loadSalaryData();
+    }
     else if (page === 'agents') loadAgents();
 }
 
 // ==========================================
-// DASHBOARD (only count agents)
+// DASHBOARD
 // ==========================================
 async function loadDashboard() {
     try {
@@ -115,7 +122,6 @@ async function loadDashboard() {
         });
 
         const pendingCount = Object.keys(pending).length;
-        // Only count agents (role = 'agent' or undefined/legacy)
         let totalAgents = 0;
         let presentToday = 0;
         const today = new Date().toISOString().split('T')[0];
@@ -916,7 +922,6 @@ async function loadAttendance() {
             else if (status === 'absent' && isBlocked) statusHtml = `<span class="attendance-blocked">🚫 Blocked</span>`;
             else if (status === 'absent') statusHtml = `<span class="attendance-absent">❌ Absent (Not Blocked)</span>`;
             const otp = otpData.otp || '—';
-            // Click on agent name to view history
             html += `<div class="attendance-card glass rounded-xl p-4 shadow-sm border border-gray-100 flex flex-wrap items-center justify-between gap-2">
                 <div><span class="font-bold text-gray-800 cursor-pointer hover:text-indigo-600" onclick="viewAttendanceHistory('${uname}')">${uData.name}</span> <span class="text-xs text-gray-500">(${uname})</span><br><span class="text-xs">OTP: <strong class="otp-display text-sm">${otp}</strong></span></div>
                 <div class="text-sm">${statusHtml}</div>
@@ -934,10 +939,9 @@ async function loadAttendance() {
 }
 
 // ==========================================
-// VIEW ATTENDANCE HISTORY (NEW)
+// VIEW ATTENDANCE HISTORY
 // ==========================================
 async function viewAttendanceHistory(username) {
-    // Get current month from salary page or default to current month
     const monthInput = document.getElementById('salaryMonth');
     let monthVal = monthInput ? monthInput.value : '';
     if (!monthVal) {
@@ -949,16 +953,13 @@ async function viewAttendanceHistory(username) {
     const daysInMonth = new Date(year, month, 0).getDate();
 
     try {
-        // Fetch user data
         const userSnap = await db.ref('users/' + username).once('value');
         const userData = userSnap.val();
         if (!userData) { showToast('User not found', 'error'); return; }
 
-        // Fetch attendance for this user for the month
         const attSnap = await db.ref('attendance/' + username).once('value');
         const allAtt = attSnap.val() || {};
 
-        // Build table rows
         let rows = '';
         let presentCount = 0, absentCount = 0;
         for (let d = 1; d <= daysInMonth; d++) {
@@ -978,7 +979,6 @@ async function viewAttendanceHistory(username) {
             } else {
                 statusDisplay = '—';
             }
-            // Check marked_by field
             const markedBy = att.marked_by || '—';
             const markedDisplay = markedBy === 'admin' ? 'Admin' : (markedBy === 'otp' ? 'OTP' : '—');
             rows += `<tr class="border-b border-gray-100">
@@ -1029,9 +1029,6 @@ async function viewAttendanceHistory(username) {
     }
 }
 
-// ==========================================
-// MARK PRESENT (admin sets marked_by)
-// ==========================================
 async function markPresentManually(username, date) {
     const confirm = await Swal.fire({ title: `Mark ${username} Present?`, text: `Mark attendance for ${username} on ${date}?`, icon: 'question', showCancelButton: true, confirmButtonColor: '#059669', cancelButtonColor: '#64748b', confirmButtonText: 'Yes', cancelButtonText: 'Cancel' });
     if (!confirm.isConfirmed) return;
@@ -1041,7 +1038,7 @@ async function markPresentManually(username, date) {
             timestamp: Date.now(),
             blocked: false,
             salary_counted: true,
-            marked_by: 'admin'   // mark as admin
+            marked_by: 'admin'
         });
         showToast('✅ Marked present (by admin)', 'success');
         loadAttendance();
@@ -1069,7 +1066,7 @@ async function unblockAgent(username, date) {
         await db.ref('attendance/' + username + '/' + date).update({
             blocked: false,
             salary_counted: countSalary,
-            marked_by: 'admin'   // admin action
+            marked_by: 'admin'
         });
         if (!countSalary) {
             showToast(`✅ Unblocked. Salary counted: No`, 'success');
@@ -1099,16 +1096,29 @@ async function blockAgent(username, date) {
 }
 
 // ==========================================
-// SALARY / EARNINGS (skip admins)
+// SALARY / EARNINGS (Today + Monthly modes)
 // ==========================================
-async function loadSalaryData() {
-    const monthInput = document.getElementById('salaryMonth');
-    if (!monthInput.value) {
-        const today = new Date();
-        const val = today.getFullYear() + '-' + String(today.getMonth() + 1).padStart(2, '0');
-        monthInput.value = val;
+function setSalaryMode(mode) {
+    currentSalaryMode = mode;
+    // Update toggle buttons
+    document.getElementById('salaryModeToday').classList.toggle('active', mode === 'today');
+    document.getElementById('salaryModeMonthly').classList.toggle('active', mode === 'monthly');
+    // Show/hide month picker
+    document.getElementById('salaryMonthWrapper').style.display = mode === 'monthly' ? 'inline-block' : 'none';
+    // Update label
+    const label = document.getElementById('salaryModeLabel');
+    if (mode === 'today') {
+        label.textContent = "Today's Earnings";
+    } else {
+        const monthVal = document.getElementById('salaryMonth').value || 'current month';
+        label.textContent = `Earnings for ${monthVal}`;
     }
-    const [year, month] = monthInput.value.split('-').map(Number);
+    // Load data
+    loadSalaryData();
+}
+
+async function loadSalaryData() {
+    const mode = currentSalaryMode || 'today';
     const container = document.getElementById('salaryContainer');
     container.innerHTML = `<div class="text-center py-4"><span class="spinner-sm"></span> Calculating...</div>`;
 
@@ -1120,7 +1130,6 @@ async function loadSalaryData() {
         ]);
 
         const users = usersSnap.val() || {};
-        // Filter only agents
         const agents = Object.fromEntries(Object.entries(users).filter(([_, u]) => (u.role || 'agent') === 'agent'));
         const pickups = pickupsSnap.val() || {};
         const allAttendance = attendanceSnap.val() || {};
@@ -1130,10 +1139,31 @@ async function loadSalaryData() {
             return;
         }
 
-        const daysInMonth = new Date(year, month, 0).getDate();
-        const monthStr = String(month).padStart(2, '0');
-        let html = '';
-        let grandTotal = 0;
+        const today = new Date().toISOString().split('T')[0];
+        let year, month, monthStr, daysInMonth;
+        let dateFilterFn;
+
+        if (mode === 'today') {
+            // Today mode: use today's date
+            year = parseInt(today.split('-')[0]);
+            month = parseInt(today.split('-')[1]);
+            monthStr = String(month).padStart(2, '0');
+            daysInMonth = 1; // only today
+            dateFilterFn = (ordDate) => ordDate === today;
+        } else {
+            // Monthly mode: use selected month
+            const monthInput = document.getElementById('salaryMonth');
+            if (!monthInput.value) {
+                const d = new Date();
+                monthInput.value = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+            }
+            const [y, m] = monthInput.value.split('-').map(Number);
+            year = y;
+            month = m;
+            monthStr = String(month).padStart(2, '0');
+            daysInMonth = new Date(year, month, 0).getDate();
+            dateFilterFn = (ordDate) => ordDate.startsWith(`${year}-${monthStr}`);
+        }
 
         // Group pickups by agent and date for quick lookup
         const pickupsByAgentDate = {};
@@ -1142,7 +1172,7 @@ async function loadSalaryData() {
         for (const [oid, ord] of Object.entries(pickups)) {
             if (!ord.timestamp) continue;
             const ordDate = new Date(ord.timestamp).toISOString().split('T')[0];
-            if (!ordDate.startsWith(`${year}-${monthStr}`)) continue;
+            if (!dateFilterFn(ordDate)) continue;
             const agent = ord.agent || 'unknown';
             if (!agents[agent]) continue;
             const key = agent + '|' + ordDate;
@@ -1152,6 +1182,9 @@ async function loadSalaryData() {
                 allRejectedOrders.push({ id: oid, ...ord });
             }
         }
+
+        let html = '';
+        let grandTotal = 0;
 
         for (const [uname, uData] of Object.entries(agents)) {
             const salary = uData.salary || 0;
@@ -1167,8 +1200,9 @@ async function loadSalaryData() {
 
             const userAttendance = allAttendance[uname] || {};
 
-            for (let d = 1; d <= daysInMonth; d++) {
-                const dateStr = `${year}-${monthStr}-${String(d).padStart(2, '0')}`;
+            const loopDays = mode === 'today' ? [new Date().getDate()] : Array.from({ length: daysInMonth }, (_, i) => i + 1);
+            for (const d of loopDays) {
+                const dateStr = mode === 'today' ? today : `${year}-${monthStr}-${String(d).padStart(2, '0')}`;
                 const att = userAttendance[dateStr] || {};
                 const isPresent = att.status === 'present';
                 const salaryCounted = att.salary_counted !== false;
@@ -1244,11 +1278,10 @@ async function loadSalaryData() {
             </div>`;
         }
 
-        // Show all pending rejects at bottom (only those for agents)
-        const allPendingRejects = allRejectedOrders.filter(ord => ord.incentive_approved !== true);
+        // Show all pending rejects for this view
         const uniqueAllPending = [];
         const seenAll = new Set();
-        for (const pr of allPendingRejects) {
+        for (const pr of allRejectedOrders) {
             if (!seenAll.has(pr.id)) {
                 seenAll.add(pr.id);
                 uniqueAllPending.push(pr);
@@ -1343,6 +1376,9 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('salaryMonth').value = today.getFullYear() + '-' + String(today.getMonth() + 1).padStart(2, '0');
     document.querySelector('input[name="regRole"][value="agent"]').checked = true;
     toggleAdminFields();
+
+    // Set default salary mode: Today
+    setSalaryMode('today');
 
     setInterval(() => {
         if (currentPageView === 'dashboard') loadDashboard();

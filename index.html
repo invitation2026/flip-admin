@@ -748,6 +748,31 @@
             align-items: center;
             flex-wrap: wrap;
         }
+        /* Salary mode toggle */
+        .salary-toggle-btn {
+            padding: 6px 16px;
+            border: 1px solid #d1d5db;
+            background: #fff;
+            color: #374151;
+            font-weight: 600;
+            font-size: 13px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .salary-toggle-btn.active {
+            background: #4f46e5;
+            color: #fff;
+            border-color: #4f46e5;
+        }
+        .salary-toggle-btn:first-child {
+            border-radius: 8px 0 0 8px;
+        }
+        .salary-toggle-btn:last-child {
+            border-radius: 0 8px 8px 0;
+        }
+        .salary-toggle-btn:hover:not(.active) {
+            background: #f3f4f6;
+        }
     </style>
 </head>
 <body>
@@ -1244,21 +1269,29 @@
                 </div>
             </div>
 
-            <!-- ===== SALARY / EARNINGS ===== -->
+            <!-- ===== SALARY / EARNINGS (Fixed) ===== -->
             <div id="page-salary" class="page-content fade-in" style="display:none;">
                 <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
                     <div>
                         <h2 class="text-2xl font-bold text-gray-800">Salary & Earnings</h2>
-                        <p class="text-sm text-gray-500">Per agent breakdown — <span class="text-green-600 font-semibold">Fast & optimized</span></p>
+                        <p class="text-sm text-gray-500" id="salaryModeLabel">Today's Earnings</p>
                     </div>
                     <div class="flex items-center gap-2 flex-wrap">
-                        <input type="month" id="salaryMonth" class="px-4 py-2 border border-gray-200 rounded-xl text-sm outline-none focus:border-indigo-400" />
-                        <button onclick="loadSalaryData()" class="btn-action view"><i data-lucide="refresh-cw"></i> Load</button>
+                        <!-- Toggle: Today / Monthly -->
+                        <div class="flex rounded-lg overflow-hidden border border-gray-300">
+                            <button id="salaryModeToday" class="salary-toggle-btn active" onclick="setSalaryMode('today')">Today</button>
+                            <button id="salaryModeMonthly" class="salary-toggle-btn" onclick="setSalaryMode('monthly')">Monthly</button>
+                        </div>
+                        <!-- Month picker (hidden in Today mode) -->
+                        <div id="salaryMonthWrapper" style="display:none;">
+                            <input type="month" id="salaryMonth" class="px-4 py-2 border border-gray-200 rounded-xl text-sm outline-none focus:border-indigo-400" />
+                        </div>
+                        <button onclick="loadSalaryData()" id="salaryLoadBtn" class="btn-action view"><i data-lucide="refresh-cw"></i> Load</button>
                         <button onclick="recalculateAllSalary()" class="btn-action edit"><i data-lucide="calculator"></i> Recalculate</button>
                     </div>
                 </div>
                 <div id="salaryContainer" class="space-y-4">
-                    <div class="empty-state"><i data-lucide="inbox"></i><p class="text-sm font-medium">Select a month and click Load</p></div>
+                    <div class="empty-state"><i data-lucide="inbox"></i><p class="text-sm font-medium">Select a view and click Load</p></div>
                 </div>
             </div>
 
