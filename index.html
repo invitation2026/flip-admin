@@ -748,7 +748,6 @@
             align-items: center;
             flex-wrap: wrap;
         }
-        /* Salary mode toggle */
         .salary-toggle-btn {
             padding: 6px 16px;
             border: 1px solid #d1d5db;
@@ -772,6 +771,109 @@
         }
         .salary-toggle-btn:hover:not(.active) {
             background: #f3f4f6;
+        }
+        .deposit-form .field-group {
+            margin-bottom: 14px;
+        }
+        .deposit-form label {
+            font-size: 13px;
+            font-weight: 600;
+            color: #1e293b;
+            display: block;
+            margin-bottom: 3px;
+        }
+        .deposit-form input,
+        .deposit-form textarea {
+            width: 100%;
+            padding: 10px 14px;
+            border: 2px solid #e2e8f0;
+            border-radius: 10px;
+            font-size: 15px;
+            outline: none;
+            transition: border 0.2s;
+            background: #fff;
+            font-family: inherit;
+        }
+        .deposit-form input:focus,
+        .deposit-form textarea:focus {
+            border-color: #4f46e5;
+            box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.1);
+        }
+        .deposit-form textarea {
+            resize: vertical;
+            min-height: 60px;
+        }
+        .deposit-form .btn-submit {
+            background: linear-gradient(135deg, #059669, #10b981);
+            color: #fff;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 12px;
+            font-weight: 700;
+            font-size: 16px;
+            cursor: pointer;
+            transition: 0.2s;
+            width: 100%;
+        }
+        .deposit-form .btn-submit:active {
+            transform: scale(0.96);
+        }
+        .deposit-form .btn-submit:hover {
+            opacity: 0.9;
+        }
+        .deposit-stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
+            gap: 10px;
+            margin-bottom: 16px;
+        }
+        .deposit-stats .stat-box {
+            background: #f8fafc;
+            padding: 12px 14px;
+            border-radius: 10px;
+            text-align: center;
+            border: 1px solid #e2e8f0;
+        }
+        .deposit-stats .stat-box .num {
+            font-size: 22px;
+            font-weight: 700;
+        }
+        .deposit-stats .stat-box .num.green {
+            color: #059669;
+        }
+        .deposit-stats .stat-box .num.blue {
+            color: #4f46e5;
+        }
+        .deposit-stats .stat-box .num.amber {
+            color: #d97706;
+        }
+        .deposit-stats .stat-box .num.red {
+            color: #dc2626;
+        }
+        .deposit-stats .stat-box .num.purple {
+            color: #7c3aed;
+        }
+        .deposit-stats .stat-box .label {
+            font-size: 10px;
+            color: #94a3b8;
+            text-transform: uppercase;
+            font-weight: 600;
+        }
+        .commission-badge {
+            font-size: 10px;
+            font-weight: 600;
+            padding: 2px 8px;
+            border-radius: 10px;
+            background: #fef3c7;
+            color: #92400e;
+        }
+        .commission-col {
+            font-size: 12px;
+            font-weight: 600;
+            color: #4f46e5;
+        }
+        .commission-col.zero {
+            color: #94a3b8;
         }
     </style>
 </head>
@@ -821,6 +923,10 @@
                 <div class="sidebar-link" data-page="sales" onclick="navigate('sales')">
                     <i data-lucide="trending-up"></i> Sales
                     <span id="salesBadge" class="ml-auto text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full">0</span>
+                </div>
+                <div class="sidebar-link" data-page="deposits" onclick="navigate('deposits')">
+                    <i data-lucide="banknote"></i> Deposits
+                    <span id="depositsBadge" class="ml-auto text-xs bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full">0</span>
                 </div>
                 <div class="sidebar-link" data-page="attendance" onclick="navigate('attendance')">
                     <i data-lucide="clipboard-check"></i> Attendance
@@ -955,7 +1061,7 @@
                             </div>
                             <div>
                                 <p class="text-2xl font-bold text-gray-800" id="statRevenue">₹0</p>
-                                <p class="text-xs text-gray-500 font-medium">Revenue</p>
+                                <p class="text-xs text-gray-500 font-medium">Revenue (After Commission)</p>
                             </div>
                         </div>
                     </div>
@@ -971,7 +1077,7 @@
                         </div>
                     </div>
                 </div>
-                <div class="grid grid-cols-1 sm:grid-cols-4 gap-3 sm:gap-4 mb-6">
+                <div class="grid grid-cols-1 sm:grid-cols-5 gap-3 sm:gap-4 mb-6">
                     <div class="stat-card glass rounded-2xl p-4 shadow-sm">
                         <div class="flex items-center gap-3">
                             <div class="w-10 h-10 bg-indigo-100 rounded-xl flex items-center justify-center">
@@ -979,7 +1085,7 @@
                             </div>
                             <div>
                                 <p class="text-2xl font-bold text-gray-800" id="statStockValue">₹0</p>
-                                <p class="text-xs text-gray-500 font-medium">Total Stock Value</p>
+                                <p class="text-xs text-gray-500 font-medium">Stock Value</p>
                             </div>
                         </div>
                     </div>
@@ -1002,6 +1108,17 @@
                             <div>
                                 <p class="text-2xl font-bold text-gray-800" id="statPresentToday">0</p>
                                 <p class="text-xs text-gray-500 font-medium">Present Today</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="stat-card glass rounded-2xl p-4 shadow-sm">
+                        <div class="flex items-center gap-3">
+                            <div class="w-10 h-10 bg-red-100 rounded-xl flex items-center justify-center">
+                                <i data-lucide="indian-rupee" class="w-5 h-5 text-red-600"></i>
+                            </div>
+                            <div>
+                                <p class="text-2xl font-bold text-gray-800" id="statCommission">₹0</p>
+                                <p class="text-xs text-gray-500 font-medium">Total Commission</p>
                             </div>
                         </div>
                     </div>
@@ -1144,12 +1261,12 @@
                 </div>
             </div>
 
-            <!-- ===== INVENTORY ===== -->
+            <!-- ===== INVENTORY (with Commission column) ===== -->
             <div id="page-inventory" class="page-content fade-in" style="display:none;">
                 <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
                     <div>
                         <h2 class="text-2xl font-bold text-gray-800">Inventory</h2>
-                        <p class="text-sm text-gray-500">All phones available for sale</p>
+                        <p class="text-sm text-gray-500">All phones available for sale — Commission shown based on purchase price</p>
                     </div>
                     <div class="flex items-center gap-2">
                         <span class="text-sm font-semibold text-gray-600" id="inventoryCount">0 units</span>
@@ -1173,12 +1290,13 @@
                                     <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">Model</th>
                                     <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase hidden md:table-cell">IMEI</th>
                                     <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">Purchase Price</th>
+                                    <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">Commission</th>
                                     <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase hidden lg:table-cell">Customer</th>
                                     <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">Actions</th>
                                 </tr>
                             </thead>
                             <tbody id="inventoryTableBody">
-                                <tr><td colspan="7"><div class="empty-state"><i data-lucide="inbox"></i><p class="text-sm font-medium">No inventory</p></div></td></tr>
+                                <tr><td colspan="8"><div class="empty-state"><i data-lucide="inbox"></i><p class="text-sm font-medium">No inventory</p></div></td></tr>
                             </tbody>
                         </table>
                     </div>
@@ -1203,7 +1321,7 @@
                         <p class="text-lg font-bold text-gray-800" id="salesTotalCount">0</p>
                     </div>
                     <div class="glass rounded-xl p-3 shadow-sm border border-gray-100 text-center">
-                        <p class="text-xs text-gray-500">Revenue</p>
+                        <p class="text-xs text-gray-500">Revenue (Net)</p>
                         <p class="text-lg font-bold text-gray-800" id="salesTotalRevenue">₹0</p>
                     </div>
                     <div class="glass rounded-xl p-3 shadow-sm border border-gray-100 text-center">
@@ -1235,6 +1353,7 @@
                                     <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase hidden md:table-cell">IMEI</th>
                                     <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">Purchase</th>
                                     <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">Sale Price</th>
+                                    <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">Commission</th>
                                     <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">Profit</th>
                                     <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase hidden lg:table-cell">Buyer</th>
                                     <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">Sale Date</th>
@@ -1242,9 +1361,114 @@
                                 </tr>
                             </thead>
                             <tbody id="salesTableBody">
-                                <tr><td colspan="10"><div class="empty-state"><i data-lucide="inbox"></i><p class="text-sm font-medium">No sales yet</p></div></td></tr>
+                                <tr><td colspan="11"><div class="empty-state"><i data-lucide="inbox"></i><p class="text-sm font-medium">No sales yet</p></div></td></tr>
                             </tbody>
                         </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ===== DEPOSITS ===== -->
+            <div id="page-deposits" class="page-content fade-in" style="display:none;">
+                <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+                    <div>
+                        <h2 class="text-2xl font-bold text-gray-800">Deposits</h2>
+                        <p class="text-sm text-gray-500">Track your deposits & commission</p>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <button onclick="exportDepositsCSV()" class="btn-action export"><i data-lucide="download"></i> Export CSV</button>
+                        <button onclick="refreshDeposits()" class="btn-action view"><i data-lucide="refresh-cw"></i></button>
+                    </div>
+                </div>
+
+                <!-- Statistics -->
+                <div class="deposit-stats" id="depositStats">
+                    <div class="stat-box">
+                        <div class="num green" id="depositTotal">₹0</div>
+                        <div class="label">Total Deposits</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="num blue" id="depositStockValue">₹0</div>
+                        <div class="label">Stock Value</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="num amber" id="depositBalance">₹0</div>
+                        <div class="label">Balance</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="num red" id="depositCommission">₹0</div>
+                        <div class="label">Total Commission</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="num" id="depositCount">0</div>
+                        <div class="label">Total Entries</div>
+                    </div>
+                </div>
+
+                <!-- Add Deposit Form -->
+                <div class="glass rounded-2xl p-5 shadow-sm border border-gray-100 mb-6">
+                    <h3 class="font-bold text-gray-800 mb-4 flex items-center gap-2">
+                        <i data-lucide="plus-circle" class="w-5 h-5 text-emerald-600"></i>
+                        Add Deposit
+                    </h3>
+                    <form id="depositForm" class="deposit-form grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div class="field-group">
+                            <label>Amount (₹) <span class="text-red-500">*</span></label>
+                            <input type="number" id="depositAmount" placeholder="Enter amount" step="1" min="1" required />
+                        </div>
+                        <div class="field-group">
+                            <label>Date</label>
+                            <input type="date" id="depositDate" />
+                        </div>
+                        <div class="field-group sm:col-span-2">
+                            <label>Description</label>
+                            <textarea id="depositDescription" placeholder="What is this deposit for? (optional)" rows="2"></textarea>
+                        </div>
+                        <div class="sm:col-span-2">
+                            <button type="submit" class="btn-submit" onclick="submitDeposit(event)">
+                                <i data-lucide="plus" class="w-4 h-4 inline mr-2"></i> Add Deposit
+                            </button>
+                        </div>
+                    </form>
+                </div>
+
+                <!-- Deposit History -->
+                <div class="glass rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+                    <div class="p-4 border-b border-gray-100">
+                        <div class="flex flex-wrap items-center gap-2">
+                            <span class="text-xs font-bold text-gray-500 mr-1">Filter:</span>
+                            <button class="filter-chip active" data-filter="all" onclick="setDepositFilter('all')">All</button>
+                            <input type="date" id="depositDateFrom" class="px-4 py-2 border border-gray-200 rounded-xl text-sm outline-none focus:border-indigo-400" />
+                            <span class="text-xs text-gray-400">to</span>
+                            <input type="date" id="depositDateTo" class="px-4 py-2 border border-gray-200 rounded-xl text-sm outline-none focus:border-indigo-400" />
+                            <button onclick="applyDepositDateFilter()" class="px-4 py-2 bg-indigo-600 text-white rounded-xl text-sm font-semibold hover:bg-indigo-700 transition">Apply</button>
+                            <button onclick="clearDepositDateFilter()" class="px-4 py-2 bg-gray-100 text-gray-600 rounded-xl text-sm font-semibold hover:bg-gray-200 transition">Clear</button>
+                        </div>
+                    </div>
+                    <div class="table-wrap">
+                        <table class="w-full text-sm">
+                            <thead>
+                                <tr class="bg-gray-50 border-b border-gray-100">
+                                    <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">#</th>
+                                    <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">Amount</th>
+                                    <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">Description</th>
+                                    <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase hidden sm:table-cell">Date</th>
+                                    <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase hidden md:table-cell">Added On</th>
+                                    <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="depositsTableBody">
+                                <tr><td colspan="6"><div class="empty-state"><i data-lucide="inbox"></i><p class="text-sm font-medium">No deposits yet</p></div></td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    <div class="flex items-center justify-between px-4 py-3 border-t border-gray-100 text-xs text-gray-500">
+                        <span id="depositCountDisplay">0 entries</span>
+                        <div class="flex items-center gap-2">
+                            <button onclick="prevDepositPage()" class="px-3 py-1 rounded-lg bg-gray-100 hover:bg-gray-200 transition disabled:opacity-40" id="prevDepositPageBtn">← Prev</button>
+                            <span id="depositPageInfo">1 / 1</span>
+                            <button onclick="nextDepositPage()" class="px-3 py-1 rounded-lg bg-gray-100 hover:bg-gray-200 transition disabled:opacity-40" id="nextDepositPageBtn">Next →</button>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -1269,7 +1493,7 @@
                 </div>
             </div>
 
-            <!-- ===== SALARY / EARNINGS (Fixed) ===== -->
+            <!-- ===== SALARY / EARNINGS ===== -->
             <div id="page-salary" class="page-content fade-in" style="display:none;">
                 <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
                     <div>
@@ -1277,12 +1501,10 @@
                         <p class="text-sm text-gray-500" id="salaryModeLabel">Today's Earnings</p>
                     </div>
                     <div class="flex items-center gap-2 flex-wrap">
-                        <!-- Toggle: Today / Monthly -->
                         <div class="flex rounded-lg overflow-hidden border border-gray-300">
                             <button id="salaryModeToday" class="salary-toggle-btn active" onclick="setSalaryMode('today')">Today</button>
                             <button id="salaryModeMonthly" class="salary-toggle-btn" onclick="setSalaryMode('monthly')">Monthly</button>
                         </div>
-                        <!-- Month picker (hidden in Today mode) -->
                         <div id="salaryMonthWrapper" style="display:none;">
                             <input type="month" id="salaryMonth" class="px-4 py-2 border border-gray-200 rounded-xl text-sm outline-none focus:border-indigo-400" />
                         </div>
@@ -1336,7 +1558,6 @@
                             <label>Alternate Number</label>
                             <input type="tel" id="regAlternate" placeholder="Alternate number (optional)" />
                         </div>
-                        <!-- Role Selector -->
                         <div class="field-group sm:col-span-2">
                             <label>Role <span class="text-red-500">*</span></label>
                             <div class="role-selector">
@@ -1344,7 +1565,6 @@
                                 <label><input type="radio" name="regRole" value="admin" onchange="toggleAdminFields()" /> Admin</label>
                             </div>
                         </div>
-                        <!-- Agent-only fields (hidden for admin) -->
                         <div id="agentFields" class="sm:col-span-2 grid grid-cols-1 sm:grid-cols-3 gap-4">
                             <div class="field-group">
                                 <label>Monthly Salary (₹) <span class="text-red-500">*</span></label>
@@ -1416,7 +1636,7 @@
                 <div class="field-group"><label>Buyer Name <span class="text-red-500">*</span></label><input type="text" id="sellBuyerName" placeholder="Enter buyer name" /></div>
                 <div class="field-group"><label>Buyer Contact <span class="text-gray-400">(optional)</span></label><input type="text" id="sellBuyerContact" placeholder="Phone number" /></div>
                 <div class="field-group"><label>Sale Date</label><input type="date" id="sellSaleDate" /></div>
-                <div id="sellProfitPreview" class="profit-preview neutral">Enter sale price to see profit</div>
+                <div id="sellProfitPreview" class="profit-preview neutral">Enter sale price to see profit (commission deducted)</div>
             </div>
             <div class="sticky bottom-0 bg-white p-5 border-t border-gray-100 flex gap-2 rounded-b-3xl">
                 <button onclick="closeSellModal()" class="flex-1 py-3 rounded-xl bg-gray-100 text-gray-700 font-semibold hover:bg-gray-200 transition">Cancel</button>
@@ -1471,8 +1691,8 @@
         </div>
     </div>
 
-    <script src="script.js">
-    </script>
+    <!-- ========== EXTERNAL SCRIPT (separate file) ========== -->
+    <script src="script.js"></script>
 
 </body>
 </html>

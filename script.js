@@ -15,6 +15,29 @@ firebase.initializeApp(firebaseConfig);
 const db = firebase.database();
 
 // ==========================================
+// COMMISSION BRACKETS
+// ==========================================
+const COMMISSION_BRACKETS = [
+    { min: 0, max: 10000, type: 'percentage', value: 10 },
+    { min: 10001, max: 31000, type: 'fixed', value: 1500 },
+    { min: 31001, max: Infinity, type: 'fixed', value: 2500 }
+];
+
+function calculateCommission(salePrice) {
+    if (!salePrice || salePrice <= 0) return 0;
+    for (const bracket of COMMISSION_BRACKETS) {
+        if (salePrice >= bracket.min && salePrice <= bracket.max) {
+            if (bracket.type === 'percentage') {
+                return Math.round((salePrice * bracket.value) / 100);
+            } else {
+                return bracket.value;
+            }
+        }
+    }
+    return 0;
+}
+
+// ==========================================
 // STATE
 // ==========================================
 let allOrders = [];
@@ -37,7 +60,13 @@ let sellOrderData = null;
 let agentsList = [];
 let passwordVisible = {};
 
-// Salary mode: 'today' or 'monthly'
+// Deposit state
+let allDeposits = [];
+let filteredDeposits = [];
+let depositCurrentPage = 1;
+const depositPageSize = 15;
+
+// Salary mode
 let currentSalaryMode = 'today';
 
 // ==========================================
@@ -76,9 +105,9 @@ function navigate(page) {
     else if (page === 'rejected') loadRejectedAdmin();
     else if (page === 'inventory') loadInventory();
     else if (page === 'sales') loadSales();
+    else if (page === 'deposits') { loadDeposits(); }
     else if (page === 'attendance') loadAttendance();
-    else if (page === 'salary') { 
-        // Set default mode to today when navigating to salary page
+    else if (page === 'salary') {
         setSalaryMode(currentSalaryMode || 'today');
         loadSalaryData();
     }
@@ -90,18 +119,20 @@ function navigate(page) {
 // ==========================================
 async function loadDashboard() {
     try {
-        const [pickupSnap, pendingSnap, usersSnap] = await Promise.all([
+        const [pickupSnap, pendingSnap, usersSnap, depositSnap] = await Promise.all([
             db.ref('pickups').once('value'),
             db.ref('pending').once('value'),
-            db.ref('users').once('value')
+            db.ref('users').once('value'),
+            db.ref('deposits').once('value')
         ]);
 
         const pickups = pickupSnap.val() || {};
         const pending = pendingSnap.val() || {};
         const users = usersSnap.val() || {};
+        const deposits = depositSnap.val() || {};
 
         let total = 0, pickupCount = 0, rejectedCount = 0, rescheduleCount = 0;
-        let soldCount = 0, unsoldCount = 0, revenue = 0, profit = 0;
+        let soldCount = 0, unsoldCount = 0, revenue = 0, profit = 0, totalCommission = 0;
         let totalStockValue = 0;
 
         Object.values(pickups).forEach(item => {
@@ -110,8 +141,11 @@ async function loadDashboard() {
                 pickupCount++;
                 if (item.sold) {
                     soldCount++;
-                    revenue += item.salePrice || 0;
-                    const itemProfit = item.profit !== undefined ? item.profit : ((item.salePrice || 0) - (item.value || 0));
+                    const commission = item.commission || calculateCommission(item.salePrice || 0);
+                    const netRevenue = (item.salePrice || 0) - commission;
+                    revenue += netRevenue;
+                    totalCommission += commission;
+                    const itemProfit = item.profit !== undefined ? item.profit : (netRevenue - (item.value || 0));
                     profit += itemProfit;
                 } else {
                     unsoldCount++;
@@ -135,17 +169,23 @@ async function loadDashboard() {
             }
         }
 
+        let depositTotalAmount = 0;
+        Object.values(deposits).forEach(d => {
+            depositTotalAmount += d.amount || 0;
+        });
+
         document.getElementById('statTotal').textContent = total;
         document.getElementById('statPickup').textContent = pickupCount;
         document.getElementById('statRejected').textContent = rejectedCount;
         document.getElementById('statPending').textContent = pendingCount;
         document.getElementById('statInventory').textContent = unsoldCount;
         document.getElementById('statSold').textContent = soldCount;
-        document.getElementById('statRevenue').textContent = '₹' + revenue;
-        document.getElementById('statProfit').textContent = '₹' + profit;
+        document.getElementById('statRevenue').textContent = '₹' + Math.round(revenue);
+        document.getElementById('statProfit').textContent = '₹' + Math.round(profit);
         document.getElementById('statStockValue').textContent = '₹' + totalStockValue;
         document.getElementById('statAgents').textContent = totalAgents;
         document.getElementById('statPresentToday').textContent = presentToday;
+        document.getElementById('statCommission').textContent = '₹' + Math.round(totalCommission);
 
         document.getElementById('orderCountBadge').textContent = total;
         document.getElementById('pendingBadge').textContent = pendingCount;
@@ -154,6 +194,7 @@ async function loadDashboard() {
         document.getElementById('salesBadge').textContent = soldCount;
         document.getElementById('agentsBadge').textContent = totalAgents;
         document.getElementById('attendanceBadge').textContent = presentToday + '/' + totalAgents;
+        document.getElementById('depositsBadge').textContent = Object.keys(deposits).length;
 
         const recent = Object.entries(pickups).sort((a, b) => (b[1].timestamp || 0) - (a[1].timestamp || 0)).slice(0, 10);
         const container = document.getElementById('recentList');
@@ -340,7 +381,7 @@ async function approveReject(orderId) {
 }
 
 // ==========================================
-// INVENTORY
+// INVENTORY (with Commission column)
 // ==========================================
 async function loadInventory() {
     try {
@@ -349,8 +390,12 @@ async function loadInventory() {
         inventoryList = Object.entries(data).filter(([_, item]) => item.status === 'pickup' && !item.sold).map(([id, item]) => ({ id, ...item }));
         inventoryList.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
         applyInventorySearch();
-    } catch (e) { console.error('Inventory error:', e); showToast('Error loading inventory', 'error'); }
+    } catch (e) {
+        console.error('Inventory error:', e);
+        showToast('Error loading inventory', 'error');
+    }
 }
+
 function applyInventorySearch() {
     const searchVal = document.getElementById('inventorySearch').value.trim().toLowerCase();
     let filtered = inventoryList;
@@ -359,21 +404,26 @@ function applyInventorySearch() {
     renderInventoryTable();
     document.getElementById('inventoryCount').textContent = filteredInventory.length + ' units';
 }
+
 function clearInventorySearch() { document.getElementById('inventorySearch').value = ''; applyInventorySearch(); }
+
 function renderInventoryTable() {
     const tbody = document.getElementById('inventoryTableBody');
-    if (filteredInventory.length === 0) { tbody.innerHTML = `<tr><td colspan="7"><div class="empty-state"><i data-lucide="inbox"></i><p class="text-sm font-medium">No inventory available</p></div></td></tr>`; lucide.createIcons(); return; }
+    if (filteredInventory.length === 0) { tbody.innerHTML = `<tr><td colspan="8"><div class="empty-state"><i data-lucide="inbox"></i><p class="text-sm font-medium">No inventory available</p></div></td></tr>`; lucide.createIcons(); return; }
     let html = '';
     filteredInventory.forEach((item, idx) => {
-        html += `<tr class="order-row border-b border-gray-50"><td class="py-3 px-4 text-gray-400 font-mono text-xs">${idx+1}</td><td class="py-3 px-4 font-mono font-bold text-gray-800 text-sm">${item.orderId || item.id}</td><td class="py-3 px-4 text-gray-600 text-sm">${item.phoneModel || '—'}</td><td class="py-3 px-4 hidden md:table-cell font-mono text-xs text-gray-500">${item.imei || '—'}</td><td class="py-3 px-4 font-bold text-gray-700">₹${item.value || 0}</td><td class="py-3 px-4 hidden lg:table-cell text-gray-600 text-sm">${item.customerName || '—'}</td><td class="py-3 px-4"><button onclick="openSellModal('${item.id}')" class="btn-action sell"><i data-lucide="badge-dollar-sign"></i> Sell</button><button onclick="viewOrder('${item.id}')" class="btn-action view"><i data-lucide="eye"></i></button></td></tr>`;
+        // Calculate commission based on purchase price (item.value)
+        const commission = calculateCommission(item.value || 0);
+        html += `<tr class="order-row border-b border-gray-50"><td class="py-3 px-4 text-gray-400 font-mono text-xs">${idx+1}</td><td class="py-3 px-4 font-mono font-bold text-gray-800 text-sm">${item.orderId || item.id}</td><td class="py-3 px-4 text-gray-600 text-sm">${item.phoneModel || '—'}</td><td class="py-3 px-4 hidden md:table-cell font-mono text-xs text-gray-500">${item.imei || '—'}</td><td class="py-3 px-4 font-bold text-gray-700">₹${item.value || 0}</td><td class="py-3 px-4"><span class="commission-col">₹${commission}</span></td><td class="py-3 px-4 hidden lg:table-cell text-gray-600 text-sm">${item.customerName || '—'}</td><td class="py-3 px-4"><button onclick="openSellModal('${item.id}')" class="btn-action sell"><i data-lucide="badge-dollar-sign"></i> Sell</button><button onclick="viewOrder('${item.id}')" class="btn-action view"><i data-lucide="eye"></i></button></td></tr>`;
     });
     tbody.innerHTML = html;
     lucide.createIcons();
 }
+
 function refreshInventory() { loadInventory(); showToast('🔄 Inventory refreshed', 'info'); }
 
 // ==========================================
-// SELL MODAL
+// SELL MODAL (with Commission)
 // ==========================================
 function openSellModal(orderId) {
     const order = inventoryList.find(item => item.id === orderId);
@@ -388,55 +438,127 @@ function openSellModal(orderId) {
     const today = new Date().toISOString().split('T')[0];
     document.getElementById('sellSaleDate').value = today;
     document.getElementById('sellProfitPreview').className = 'profit-preview neutral';
-    document.getElementById('sellProfitPreview').textContent = 'Enter sale price to see profit';
+    document.getElementById('sellProfitPreview').textContent = 'Enter sale price to see profit (commission deducted)';
     document.getElementById('sellModal').style.display = 'flex';
     lucide.createIcons();
-    document.getElementById('sellSalePrice').oninput = updateProfitPreview;
-    updateProfitPreview();
+    document.getElementById('sellSalePrice').oninput = updateProfitPreviewWithCommission;
+    updateProfitPreviewWithCommission();
     setTimeout(() => document.getElementById('sellSalePrice').focus(), 300);
 }
-function updateProfitPreview() {
+
+function updateProfitPreviewWithCommission() {
     const purchase = sellOrderData ? (sellOrderData.value || 0) : 0;
     const sale = parseFloat(document.getElementById('sellSalePrice').value) || 0;
-    const profit = sale - purchase;
+    const commission = calculateCommission(sale);
+    const netProfit = sale - purchase - commission;
     const preview = document.getElementById('sellProfitPreview');
-    if (sale > 0) { preview.textContent = `Profit: ₹${profit} (${profit >= 0 ? '✅' : '⚠️ Loss'})`; preview.className = profit >= 0 ? 'profit-preview positive' : 'profit-preview negative'; } else { preview.textContent = 'Enter sale price to see profit'; preview.className = 'profit-preview neutral'; }
+    if (sale > 0) {
+        preview.textContent = `Commission: ₹${commission} | Net Profit: ₹${netProfit} (${netProfit >= 0 ? '✅' : '⚠️ Loss'})`;
+        preview.className = netProfit >= 0 ? 'profit-preview positive' : 'profit-preview negative';
+    } else {
+        preview.textContent = 'Enter sale price to see profit (commission deducted)';
+        preview.className = 'profit-preview neutral';
+    }
 }
+
 function closeSellModal() { document.getElementById('sellModal').style.display = 'none'; sellOrderData = null; }
+
 async function confirmSell() {
     if (!sellOrderData) return;
+
     const salePrice = parseFloat(document.getElementById('sellSalePrice').value);
     const buyerName = document.getElementById('sellBuyerName').value.trim();
     const buyerContact = document.getElementById('sellBuyerContact').value.trim();
     const saleDate = document.getElementById('sellSaleDate').value;
+
     if (!salePrice || salePrice <= 0) { showToast('Valid sale price required', 'error'); return; }
     if (!buyerName) { showToast('Buyer name required', 'error'); return; }
+
     const purchasePrice = sellOrderData.value || 0;
-    const profit = salePrice - purchasePrice;
-    const confirm = await Swal.fire({ title: 'Confirm Sale', html: `<div class="text-left"><p><strong>Order:</strong> ${sellOrderData.orderId}</p><p><strong>Model:</strong> ${sellOrderData.phoneModel}</p><p><strong>Purchase:</strong> ₹${purchasePrice}</p><p><strong>Sale:</strong> ₹${salePrice}</p><p><strong>Profit:</strong> ₹${profit}</p><p><strong>Buyer:</strong> ${buyerName}</p></div>`, icon: 'question', showCancelButton: true, confirmButtonColor: '#059669', cancelButtonColor: '#64748b', confirmButtonText: 'Confirm', cancelButtonText: 'Cancel' });
+    const commission = calculateCommission(salePrice);
+    const netRevenue = salePrice - commission;
+    const profit = netRevenue - purchasePrice;
+
+    const confirm = await Swal.fire({
+        title: 'Confirm Sale',
+        html: `
+            <div class="text-left">
+                <p><strong>Order:</strong> ${sellOrderData.orderId}</p>
+                <p><strong>Model:</strong> ${sellOrderData.phoneModel}</p>
+                <p><strong>Purchase:</strong> ₹${purchasePrice}</p>
+                <p><strong>Sale Price:</strong> ₹${salePrice}</p>
+                <p><strong>Commission:</strong> ₹${commission} (${COMMISSION_BRACKETS.find(b => salePrice >= b.min && salePrice <= b.max)?.type === 'percentage' ? '10%' : 'Fixed'})</p>
+                <p><strong>Net Revenue:</strong> ₹${netRevenue}</p>
+                <p><strong>Net Profit:</strong> <span class="${profit >= 0 ? 'text-green-600' : 'text-red-600'} font-bold">₹${profit}</span></p>
+                <p><strong>Buyer:</strong> ${buyerName}</p>
+                <p><strong>Sale Date:</strong> ${saleDate}</p>
+            </div>
+        `,
+        icon: 'question',
+        showCancelButton: true,
+        confirmButtonColor: '#059669',
+        cancelButtonColor: '#64748b',
+        confirmButtonText: '✅ Confirm Sale',
+        cancelButtonText: 'Cancel'
+    });
     if (!confirm.isConfirmed) return;
+
     try {
-        await db.ref('pickups/' + sellOrderData.id).update({ sold: true, salePrice, profit, buyerName, buyerContact: buyerContact || '', saleDate, saleTimestamp: new Date().toISOString() });
-        showToast(`✅ Sold! Profit: ₹${profit}`, 'success');
+        const updates = {
+            sold: true,
+            salePrice: salePrice,
+            commission: commission,
+            profit: profit,
+            buyerName: buyerName,
+            buyerContact: buyerContact || '',
+            saleDate: saleDate,
+            saleTimestamp: new Date().toISOString()
+        };
+        await db.ref('pickups/' + sellOrderData.id).update(updates);
+        showToast(`✅ Sold! Net Profit: ₹${profit} (Commission: ₹${commission})`, 'success');
+
         closeSellModal();
-        await loadInventory(); await loadSales(); loadDashboard();
+        await loadInventory();
+        await loadSales();
+        loadDashboard();
+        document.getElementById('inventoryBadge').textContent = inventoryList.length;
+        document.getElementById('salesBadge').textContent = salesList.length;
         if (currentPageView === 'sales') applySalesFilters();
-    } catch (e) { console.error('Sale error:', e); showToast('Error saving sale', 'error'); }
+    } catch (e) {
+        console.error('Sale error:', e);
+        showToast('Error saving sale', 'error');
+    }
 }
 
 // ==========================================
-// SALES
+// SALES (with Commission)
 // ==========================================
 async function loadSales() {
     try {
         const snap = await db.ref('pickups').once('value');
         const data = snap.val() || {};
-        salesList = Object.entries(data).filter(([_, item]) => item.sold === true).map(([id, item]) => { if (item.profit === undefined && item.salePrice !== undefined && item.value !== undefined) { item.profit = item.salePrice - item.value; } return { id, ...item }; });
+        salesList = Object.entries(data)
+            .filter(([_, item]) => item.sold === true)
+            .map(([id, item]) => {
+                if (item.profit === undefined && item.salePrice !== undefined && item.value !== undefined) {
+                    const commission = item.commission || calculateCommission(item.salePrice || 0);
+                    item.profit = (item.salePrice - commission) - item.value;
+                    item.commission = commission;
+                }
+                if (item.commission === undefined && item.salePrice) {
+                    item.commission = calculateCommission(item.salePrice);
+                }
+                return { id, ...item };
+            });
         salesList.sort((a, b) => (b.saleTimestamp || b.timestamp || 0) - (a.saleTimestamp || a.timestamp || 0));
         applySalesFilters();
         document.getElementById('salesBadge').textContent = salesList.length;
-    } catch (e) { console.error('Sales error:', e); showToast('Error loading sales', 'error'); }
+    } catch (e) {
+        console.error('Sales error:', e);
+        showToast('Error loading sales', 'error');
+    }
 }
+
 function applySalesFilters() {
     const search = document.getElementById('salesSearch').value.trim().toLowerCase();
     const dateFrom = document.getElementById('salesDateFrom').value;
@@ -450,35 +572,78 @@ function applySalesFilters() {
     updateSalesSummary();
 }
 function clearSalesFilters() { document.getElementById('salesSearch').value = ''; document.getElementById('salesDateFrom').value = ''; document.getElementById('salesDateTo').value = ''; applySalesFilters(); }
+
 function updateSalesSummary() {
     const total = filteredSales.length;
-    let revenue = 0, profit = 0;
-    filteredSales.forEach(item => { revenue += item.salePrice || 0; const p = item.profit !== undefined ? item.profit : (item.salePrice - item.value); profit += p || 0; });
+    let revenue = 0, profit = 0, commission = 0;
+    filteredSales.forEach(item => {
+        const c = item.commission || calculateCommission(item.salePrice || 0);
+        commission += c;
+        revenue += (item.salePrice || 0) - c;
+        const p = item.profit !== undefined ? item.profit : (item.salePrice - c - item.value);
+        profit += p || 0;
+    });
     document.getElementById('salesTotalCount').textContent = total;
-    document.getElementById('salesTotalRevenue').textContent = '₹' + revenue;
-    document.getElementById('salesTotalProfit').textContent = '₹' + profit;
+    document.getElementById('salesTotalRevenue').textContent = '₹' + Math.round(revenue);
+    document.getElementById('salesTotalProfit').textContent = '₹' + Math.round(profit);
     document.getElementById('salesAvgProfit').textContent = total > 0 ? '₹' + Math.round(profit / total) : '₹0';
 }
+
 function renderSalesTable() {
     const tbody = document.getElementById('salesTableBody');
-    if (filteredSales.length === 0) { tbody.innerHTML = `<tr><td colspan="10"><div class="empty-state"><i data-lucide="inbox"></i><p class="text-sm font-medium">No sales found</p></div></td></tr>`; lucide.createIcons(); return; }
+    if (filteredSales.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="11"><div class="empty-state"><i data-lucide="inbox"></i><p class="text-sm font-medium">No sales found</p></div></td></tr>`;
+        lucide.createIcons();
+        return;
+    }
+
     let html = '';
     filteredSales.forEach((item, idx) => {
-        const profit = item.profit !== undefined ? item.profit : (item.salePrice - item.value);
+        const profit = item.profit !== undefined ? item.profit : (item.salePrice - (item.commission || calculateCommission(item.salePrice || 0)) - item.value);
         const profitNum = profit || 0;
         const profitClass = profitNum >= 0 ? 'profit-green' : 'profit-red';
         const saleDate = item.saleDate || item.timestampIST || '—';
         const agent = item.agent || '—';
-        html += `<tr class="order-row border-b border-gray-50"><td class="py-3 px-4 text-gray-400 font-mono text-xs">${idx+1}</td><td class="py-3 px-4 font-mono font-bold text-gray-800 text-sm">${item.orderId || item.id}</td><td class="py-3 px-4 text-gray-600 text-sm">${item.phoneModel || '—'}</td><td class="py-3 px-4 hidden md:table-cell font-mono text-xs text-gray-500">${item.imei || '—'}</td><td class="py-3 px-4 text-gray-600">₹${item.value || 0}</td><td class="py-3 px-4 font-bold text-gray-800">₹${item.salePrice || 0}</td><td class="py-3 px-4 font-bold ${profitClass}">₹${profitNum}</td><td class="py-3 px-4 hidden lg:table-cell text-gray-600 text-sm">${item.buyerName || '—'}</td><td class="py-3 px-4 text-xs text-gray-500">${saleDate} (${agent})</td><td class="py-3 px-4"><button onclick="viewOrder('${item.id}')" class="btn-action view"><i data-lucide="eye"></i></button></td></tr>`;
+        const commission = item.commission !== undefined ? item.commission : calculateCommission(item.salePrice || 0);
+        html += `<tr class="order-row border-b border-gray-50">
+            <td class="py-3 px-4 text-gray-400 font-mono text-xs">${idx+1}</td>
+            <td class="py-3 px-4 font-mono font-bold text-gray-800 text-sm">${item.orderId || item.id}</td>
+            <td class="py-3 px-4 text-gray-600 text-sm">${item.phoneModel || '—'}</td>
+            <td class="py-3 px-4 hidden md:table-cell font-mono text-xs text-gray-500">${item.imei || '—'}</td>
+            <td class="py-3 px-4 text-gray-600">₹${item.value || 0}</td>
+            <td class="py-3 px-4 font-bold text-gray-800">₹${item.salePrice || 0}</td>
+            <td class="py-3 px-4"><span class="commission-badge">₹${commission}</span></td>
+            <td class="py-3 px-4 font-bold ${profitClass}">₹${profitNum}</td>
+            <td class="py-3 px-4 hidden lg:table-cell text-gray-600 text-sm">${item.buyerName || '—'}</td>
+            <td class="py-3 px-4 text-xs text-gray-500">${saleDate} (${agent})</td>
+            <td class="py-3 px-4"><button onclick="viewOrder('${item.id}')" class="btn-action view"><i data-lucide="eye"></i></button></td>
+        </tr>`;
     });
     tbody.innerHTML = html;
     lucide.createIcons();
 }
 function refreshSales() { loadSales(); showToast('🔄 Sales refreshed', 'info'); }
+
 function exportSalesCSV() {
     if (filteredSales.length === 0) { showToast('No data', 'error'); return; }
-    const headers = ['Order ID', 'Model', 'IMEI', 'Purchase Price', 'Sale Price', 'Profit', 'Buyer', 'Buyer Contact', 'Sale Date', 'Agent'];
-    const rows = filteredSales.map(item => { const profit = item.profit !== undefined ? item.profit : (item.salePrice - item.value); return [item.orderId || item.id || '', item.phoneModel || '', item.imei || '', item.value || 0, item.salePrice || 0, profit || 0, item.buyerName || '', item.buyerContact || '', item.saleDate || '', item.agent || '']; });
+    const headers = ['Order ID', 'Model', 'IMEI', 'Purchase Price', 'Sale Price', 'Commission', 'Net Profit', 'Buyer', 'Buyer Contact', 'Sale Date', 'Agent'];
+    const rows = filteredSales.map(item => {
+        const c = item.commission || calculateCommission(item.salePrice || 0);
+        const p = item.profit !== undefined ? item.profit : (item.salePrice - c - item.value);
+        return [
+            item.orderId || item.id || '',
+            item.phoneModel || '',
+            item.imei || '',
+            item.value || 0,
+            item.salePrice || 0,
+            c,
+            p || 0,
+            item.buyerName || '',
+            item.buyerContact || '',
+            item.saleDate || '',
+            item.agent || ''
+        ];
+    });
     let csv = '\uFEFF' + headers.join(',') + '\n';
     rows.forEach(row => { csv += row.map(val => `"${String(val).replace(/"/g, '""')}"`).join(',') + '\n'; });
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' }); const link = document.createElement('a'); link.href = URL.createObjectURL(blob); link.download = `sales_report_${new Date().toISOString().slice(0,10)}.csv`; document.body.appendChild(link); link.click(); document.body.removeChild(link); URL.revokeObjectURL(link.href); showToast('📥 Sales CSV exported', 'success');
@@ -506,7 +671,11 @@ function viewOrder(orderId) {
     db.ref('pickups/' + orderId).once('value').then(snap => {
         const item = snap.val();
         if (!item) { content.innerHTML = `<div class="empty-state"><i data-lucide="alert-circle"></i><p class="text-sm font-medium">Order not found</p></div>`; return; }
-        if (item.sold && item.profit === undefined && item.salePrice !== undefined && item.value !== undefined) { item.profit = item.salePrice - item.value; }
+        if (item.sold && item.profit === undefined && item.salePrice !== undefined && item.value !== undefined) {
+            const commission = item.commission || calculateCommission(item.salePrice || 0);
+            item.profit = (item.salePrice - commission) - item.value;
+            item.commission = commission;
+        }
         editData = { ...item, id: orderId };
         renderDetailView(item);
         if (item.status === 'on_hold') {
@@ -526,9 +695,25 @@ function renderDetailView(item) {
     let statusClass = statusLabel === 'pickup' ? (item.sold ? 'sold' : 'pickup') : statusLabel === 'rejected' ? 'rejected' : statusLabel === 'on_hold' ? 'on_hold' : 'reschedule';
     let displayName = statusLabel === 'pickup' ? (item.sold ? 'Sold' : 'Pickup') : statusLabel === 'rejected' ? 'Rejected' : statusLabel === 'on_hold' ? 'Hold' : 'Pending';
     let profitDisplay = '—', profitClass = '';
-    if (item.sold) { const profit = item.profit !== undefined ? item.profit : (item.salePrice - item.value); profitDisplay = '₹' + (profit || 0); profitClass = (profit || 0) >= 0 ? 'green' : 'red'; }
+    let commissionDisplay = '—';
+    if (item.sold) {
+        const commission = item.commission !== undefined ? item.commission : calculateCommission(item.salePrice || 0);
+        commissionDisplay = '₹' + commission;
+        const netProfit = item.profit !== undefined ? item.profit : (item.salePrice - commission - item.value);
+        profitDisplay = '₹' + (netProfit || 0);
+        profitClass = (netProfit || 0) >= 0 ? 'green' : 'red';
+    }
     let saleHtml = '';
-    if (item.sold) { saleHtml = `<div class="detail-item"><div class="label">Sale Price</div><div class="value green">₹${item.salePrice || 0}</div></div><div class="detail-item"><div class="label">Profit</div><div class="value ${profitClass}">${profitDisplay}</div></div><div class="detail-item"><div class="label">Buyer</div><div class="value">${item.buyerName || '—'}</div></div><div class="detail-item"><div class="label">Buyer Contact</div><div class="value">${item.buyerContact || '—'}</div></div><div class="detail-item"><div class="label">Sale Date</div><div class="value">${item.saleDate || '—'}</div></div>`; }
+    if (item.sold) {
+        saleHtml = `
+            <div class="detail-item"><div class="label">Sale Price</div><div class="value green">₹${item.salePrice || 0}</div></div>
+            <div class="detail-item"><div class="label">Commission</div><div class="value amber">${commissionDisplay}</div></div>
+            <div class="detail-item"><div class="label">Net Profit</div><div class="value ${profitClass}">${profitDisplay}</div></div>
+            <div class="detail-item"><div class="label">Buyer</div><div class="value">${item.buyerName || '—'}</div></div>
+            <div class="detail-item"><div class="label">Buyer Contact</div><div class="value">${item.buyerContact || '—'}</div></div>
+            <div class="detail-item"><div class="label">Sale Date</div><div class="value">${item.saleDate || '—'}</div></div>
+        `;
+    }
     let holdHtml = '';
     if (item.status === 'on_hold') { holdHtml = `<div class="detail-item"><div class="label">Hold Reason</div><div class="value text-red-600">${item.hold_reason || '—'}</div></div>`; }
     let html = `<div class="flex items-center gap-3 mb-4"><span class="badge-status ${statusClass} text-sm px-4 py-1.5">${displayName}</span><span class="font-mono font-bold text-gray-800 text-sm">${item.orderId || item.id}</span>${item.agent ? `<span class="text-xs text-gray-400">(Agent: ${item.agent})</span>` : ''}</div><div class="detail-grid"><div class="detail-item"><div class="label">Phone Model</div><div class="value" id="dv-model">${item.phoneModel || '—'}</div></div><div class="detail-item"><div class="label">IMEI</div><div class="value font-mono text-xs" id="dv-imei">${item.imei || '—'}</div></div>${item.imei2 ? `<div class="detail-item"><div class="label">IMEI 2</div><div class="value font-mono text-xs" id="dv-imei2">${item.imei2}</div></div>` : ''}<div class="detail-item"><div class="label">Purchase Price</div><div class="value font-bold" id="dv-value">${item.value !== undefined && item.value !== null ? '₹' + item.value : '—'}</div></div><div class="detail-item"><div class="label">Customer Name</div><div class="value" id="dv-customer">${item.customerName || '—'}</div></div><div class="detail-item"><div class="label">Reason</div><div class="value" id="dv-reason">${item.reason || '—'}</div></div><div class="detail-item"><div class="label">Status</div><div class="value" id="dv-status">${displayName}</div></div><div class="detail-item"><div class="label">Time (IST)</div><div class="value text-xs" id="dv-time">${item.timestampIST || item.timestamp || '—'}</div></div>${holdHtml}${saleHtml}</div>`;
@@ -599,7 +784,7 @@ function toggleEditMode() {
     const item = editData;
     let datetimeVal = '';
     if (item.timestamp) { const d = new Date(item.timestamp); if (!isNaN(d)) { const year = d.getFullYear(); const month = String(d.getMonth()+1).padStart(2,'0'); const day = String(d.getDate()).padStart(2,'0'); const hours = String(d.getHours()).padStart(2,'0'); const mins = String(d.getMinutes()).padStart(2,'0'); datetimeVal = `${year}-${month}-${day}T${hours}:${mins}`; } }
-    let html = `<div class="space-y-4"><div><label class="edit-label">Order ID</label><input type="text" id="edit-orderId" value="${item.orderId || item.id || ''}" class="edit-field" readonly style="background:#f1f5f9;cursor:not-allowed;"></div><div><label class="edit-label">Status</label><select id="edit-status" class="status-select"><option value="pickup" ${item.status === 'pickup' ? 'selected' : ''}>Pickup</option><option value="rejected" ${item.status === 'rejected' ? 'selected' : ''}>Rejected</option><option value="reschedule" ${item.status === 'reschedule' ? 'selected' : ''}>Pending</option><option value="on_hold" ${item.status === 'on_hold' ? 'selected' : ''}>Hold</option></select></div><div><label class="edit-label">Phone Model</label><input type="text" id="edit-model" value="${item.phoneModel || ''}" class="edit-field"></div><div><label class="edit-label">IMEI</label><input type="text" id="edit-imei" value="${item.imei || ''}" class="edit-field font-mono"></div><div><label class="edit-label">IMEI 2</label><input type="text" id="edit-imei2" value="${item.imei2 || ''}" class="edit-field font-mono"></div><div><label class="edit-label">Purchase Price (₹)</label><input type="number" id="edit-value" value="${item.value !== undefined && item.value !== null ? item.value : ''}" class="edit-field"></div><div><label class="edit-label">Customer Name</label><input type="text" id="edit-customer" value="${item.customerName || ''}" class="edit-field"></div><div><label class="edit-label">Reason</label><input type="text" id="edit-reason" value="${item.reason || ''}" class="edit-field"></div><div><label class="edit-label">Date & Time (IST)</label><input type="datetime-local" id="edit-datetime" value="${datetimeVal}" class="edit-field"></div>${item.sold ? `<div class="border-t pt-3"><p class="font-bold">Sale Details</p><div><label class="edit-label">Sale Price</label><input type="number" id="edit-salePrice" value="${item.salePrice || ''}" class="edit-field"></div><div><label class="edit-label">Buyer</label><input type="text" id="edit-buyer" value="${item.buyerName || ''}" class="edit-field"></div><div><label class="edit-label">Buyer Contact</label><input type="text" id="edit-buyerContact" value="${item.buyerContact || ''}" class="edit-field"></div><div><label class="edit-label">Sale Date</label><input type="date" id="edit-saleDate" value="${item.saleDate || ''}" class="edit-field"></div></div>` : ''}</div>`;
+    let html = `<div class="space-y-4"><div><label class="edit-label">Order ID</label><input type="text" id="edit-orderId" value="${item.orderId || item.id || ''}" class="edit-field" readonly style="background:#f1f5f9;cursor:not-allowed;"></div><div><label class="edit-label">Status</label><select id="edit-status" class="status-select"><option value="pickup" ${item.status === 'pickup' ? 'selected' : ''}>Pickup</option><option value="rejected" ${item.status === 'rejected' ? 'selected' : ''}>Rejected</option><option value="reschedule" ${item.status === 'reschedule' ? 'selected' : ''}>Pending</option><option value="on_hold" ${item.status === 'on_hold' ? 'selected' : ''}>Hold</option></select></div><div><label class="edit-label">Phone Model</label><input type="text" id="edit-model" value="${item.phoneModel || ''}" class="edit-field"></div><div><label class="edit-label">IMEI</label><input type="text" id="edit-imei" value="${item.imei || ''}" class="edit-field font-mono"></div><div><label class="edit-label">IMEI 2</label><input type="text" id="edit-imei2" value="${item.imei2 || ''}" class="edit-field font-mono"></div><div><label class="edit-label">Purchase Price (₹)</label><input type="number" id="edit-value" value="${item.value !== undefined && item.value !== null ? item.value : ''}" class="edit-field"></div><div><label class="edit-label">Customer Name</label><input type="text" id="edit-customer" value="${item.customerName || ''}" class="edit-field"></div><div><label class="edit-label">Reason</label><input type="text" id="edit-reason" value="${item.reason || ''}" class="edit-field"></div><div><label class="edit-label">Date & Time (IST)</label><input type="datetime-local" id="edit-datetime" value="${datetimeVal}" class="edit-field"></div>${item.sold ? `<div class="border-t pt-3"><p class="font-bold">Sale Details</p><div><label class="edit-label">Sale Price</label><input type="number" id="edit-salePrice" value="${item.salePrice || ''}" class="edit-field"></div><div><label class="edit-label">Commission</label><input type="number" id="edit-commission" value="${item.commission || ''}" class="edit-field" readonly style="background:#f1f5f9;"></div><div><label class="edit-label">Buyer</label><input type="text" id="edit-buyer" value="${item.buyerName || ''}" class="edit-field"></div><div><label class="edit-label">Buyer Contact</label><input type="text" id="edit-buyerContact" value="${item.buyerContact || ''}" class="edit-field"></div><div><label class="edit-label">Sale Date</label><input type="date" id="edit-saleDate" value="${item.saleDate || ''}" class="edit-field"></div></div>` : ''}</div>`;
     content.innerHTML = html;
     lucide.createIcons();
 }
@@ -624,7 +809,16 @@ async function saveEdit() {
     if (!orderId) { showToast('Order ID required', 'error'); return; }
     let updated = { orderId, status, phoneModel: model, imei, imei2: imei2 || undefined, value, customerName: customer || 'N/A', reason: reason || '', timestamp: editData.timestamp, timestampIST: editData.timestampIST || '' };
     if (datetimeVal) { const d = new Date(datetimeVal); if (!isNaN(d)) { updated.timestamp = d.toISOString(); const istOffset = 5.5 * 60 * 60 * 1000; const istTime = new Date(d.getTime() + istOffset); const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']; const dd = String(istTime.getUTCDate()).padStart(2,'0'); const mmm = months[istTime.getUTCMonth()]; const yyyy = istTime.getUTCFullYear(); let hours = istTime.getUTCHours(); const minutes = String(istTime.getUTCMinutes()).padStart(2,'0'); const seconds = String(istTime.getUTCSeconds()).padStart(2,'0'); const ampm = hours >= 12 ? 'PM' : 'AM'; hours = hours % 12 || 12; const hh = String(hours).padStart(2,'0'); updated.timestampIST = `${dd}-${mmm}-${yyyy}, ${hh}:${minutes}:${seconds} ${ampm} IST`; } } else { updated.timestamp = editData.timestamp; updated.timestampIST = editData.timestampIST; }
-    if (editData.sold) { updated.sold = true; updated.salePrice = salePrice; updated.buyerName = buyer; updated.buyerContact = buyerContact; updated.saleDate = saleDate; updated.profit = salePrice - value; }
+    if (editData.sold) {
+        const commission = calculateCommission(salePrice);
+        updated.sold = true;
+        updated.salePrice = salePrice;
+        updated.commission = commission;
+        updated.buyerName = buyer;
+        updated.buyerContact = buyerContact;
+        updated.saleDate = saleDate;
+        updated.profit = (salePrice - commission) - value;
+    }
     const confirm = await Swal.fire({ title: 'Save Changes?', icon: 'question', showCancelButton: true, confirmButtonColor: '#4f46e5', cancelButtonColor: '#64748b', confirmButtonText: 'Yes', cancelButtonText: 'Cancel' });
     if (!confirm.isConfirmed) return;
     try { await db.ref('pickups/' + detailOrderId).update(updated); showToast('✅ Updated', 'success'); loadOrders(); loadDashboard(); loadPendingAdmin(); loadRejectedAdmin(); loadInventory(); loadSales(); isEditMode = false; await db.ref('pickups/' + detailOrderId).once('value').then(snap => { const item = snap.val(); if (item) { renderDetailView(item); document.getElementById('detailActions').style.display = 'flex'; document.getElementById('detailSaveActions').style.display = 'none'; document.getElementById('detailModalTitle').textContent = 'Order Details'; document.getElementById('detailEditBtn').textContent = '✏️ Edit'; document.getElementById('detailEditBtn').onclick = toggleEditMode; editData = { ...item, id: detailOrderId }; } }); } catch (e) { console.error(e); showToast('Error updating', 'error'); }
@@ -651,6 +845,239 @@ function exportCSV() {
     let csv = '\uFEFF' + headers.join(',') + '\n';
     rows.forEach(row => { csv += row.map(val => `"${String(val).replace(/"/g, '""')}"`).join(',') + '\n'; });
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' }); const link = document.createElement('a'); link.href = URL.createObjectURL(blob); link.download = `flipkart_orders_${new Date().toISOString().slice(0,10)}.csv`; document.body.appendChild(link); link.click(); document.body.removeChild(link); URL.revokeObjectURL(link.href); showToast('📥 Exported', 'success');
+}
+
+// ==========================================
+// DEPOSITS
+// ==========================================
+async function loadDeposits() {
+    try {
+        const snap = await db.ref('deposits').once('value');
+        const data = snap.val() || {};
+        allDeposits = Object.entries(data).map(([id, item]) => ({ id, ...item }));
+        allDeposits.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+        applyDepositFilters();
+        updateDepositStats();
+    } catch (e) {
+        console.error('Load deposits error:', e);
+        showToast('Error loading deposits', 'error');
+    }
+}
+
+function applyDepositFilters() {
+    let filtered = [...allDeposits];
+    const dateFrom = document.getElementById('depositDateFrom').value;
+    const dateTo = document.getElementById('depositDateTo').value;
+    if (dateFrom) {
+        filtered = filtered.filter(item => {
+            if (!item.date) return false;
+            return item.date >= dateFrom;
+        });
+    }
+    if (dateTo) {
+        filtered = filtered.filter(item => {
+            if (!item.date) return false;
+            return item.date <= dateTo;
+        });
+    }
+    filteredDeposits = filtered;
+    depositCurrentPage = 1;
+    renderDepositsTable();
+}
+
+function applyDepositDateFilter() {
+    applyDepositFilters();
+}
+
+function clearDepositDateFilter() {
+    document.getElementById('depositDateFrom').value = '';
+    document.getElementById('depositDateTo').value = '';
+    applyDepositFilters();
+    showToast('Date filters cleared', 'info');
+}
+
+async function updateDepositStats() {
+    let total = 0;
+    allDeposits.forEach(d => { total += d.amount || 0; });
+    document.getElementById('depositTotal').textContent = '₹' + total;
+    document.getElementById('depositCount').textContent = allDeposits.length;
+    document.getElementById('depositCountDisplay').textContent = allDeposits.length + ' entries';
+    document.getElementById('depositsBadge').textContent = allDeposits.length;
+
+    // Calculate stock value from inventory
+    let stockValue = 0;
+    const snap = await db.ref('pickups').once('value');
+    const data = snap.val() || {};
+    Object.values(data).forEach(item => {
+        if (item.status === 'pickup' && !item.sold) {
+            stockValue += item.value || 0;
+        }
+    });
+    document.getElementById('depositStockValue').textContent = '₹' + stockValue;
+    const balance = total - stockValue;
+    document.getElementById('depositBalance').textContent = '₹' + balance;
+
+    // Calculate total commission
+    let totalCommission = 0;
+    Object.values(data).forEach(item => {
+        if (item.sold) {
+            totalCommission += item.commission || calculateCommission(item.salePrice || 0);
+        }
+    });
+    document.getElementById('depositCommission').textContent = '₹' + totalCommission;
+}
+
+function renderDepositsTable() {
+    const tbody = document.getElementById('depositsTableBody');
+    const total = filteredDeposits.length;
+    const totalPages = Math.ceil(total / depositPageSize) || 1;
+    if (depositCurrentPage > totalPages) depositCurrentPage = totalPages;
+    const start = (depositCurrentPage - 1) * depositPageSize;
+    const end = Math.min(start + depositPageSize, total);
+    const pageItems = filteredDeposits.slice(start, end);
+
+    document.getElementById('depositCountDisplay').textContent = total + ' entries';
+    document.getElementById('depositPageInfo').textContent = `${depositCurrentPage} / ${totalPages}`;
+    document.getElementById('prevDepositPageBtn').disabled = depositCurrentPage <= 1;
+    document.getElementById('nextDepositPageBtn').disabled = depositCurrentPage >= totalPages;
+
+    if (pageItems.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="6"><div class="empty-state"><i data-lucide="inbox"></i><p class="text-sm font-medium">No deposits found</p></div></td></tr>`;
+        lucide.createIcons();
+        return;
+    }
+
+    let html = '';
+    pageItems.forEach((item, idx) => {
+        const num = start + idx + 1;
+        const amount = item.amount || 0;
+        const description = item.description || '—';
+        const date = item.date || '—';
+        const addedOn = item.timestamp ? new Date(item.timestamp).toLocaleString() : '—';
+
+        html += `<tr class="order-row border-b border-gray-50">
+            <td class="py-3 px-4 text-gray-400 font-mono text-xs">${num}</td>
+            <td class="py-3 px-4 font-bold text-green-600">₹${amount}</td>
+            <td class="py-3 px-4 text-gray-600 text-sm">${description}</td>
+            <td class="py-3 px-4 hidden sm:table-cell text-xs text-gray-500">${date}</td>
+            <td class="py-3 px-4 hidden md:table-cell text-xs text-gray-400">${addedOn}</td>
+            <td class="py-3 px-4">
+                <button onclick="deleteDeposit('${item.id}')" class="btn-action delete" title="Delete"><i data-lucide="trash-2"></i></button>
+            </td>
+        </tr>`;
+    });
+    tbody.innerHTML = html;
+    lucide.createIcons();
+}
+
+function prevDepositPage() {
+    if (depositCurrentPage > 1) { depositCurrentPage--; renderDepositsTable(); }
+}
+function nextDepositPage() {
+    const totalPages = Math.ceil(filteredDeposits.length / depositPageSize);
+    if (depositCurrentPage < totalPages) { depositCurrentPage++; renderDepositsTable(); }
+}
+
+function submitDeposit(e) {
+    e.preventDefault();
+    const amount = parseFloat(document.getElementById('depositAmount').value);
+    const date = document.getElementById('depositDate').value || new Date().toISOString().split('T')[0];
+    const description = document.getElementById('depositDescription').value.trim();
+
+    if (!amount || amount <= 0) {
+        showToast('Please enter a valid amount', 'error');
+        return;
+    }
+
+    const depositData = {
+        amount,
+        date,
+        description: description || '',
+        timestamp: Date.now()
+    };
+
+    Swal.fire({
+        title: 'Add Deposit?',
+        text: `Amount: ₹${amount} | Date: ${date}`,
+        icon: 'question',
+        showCancelButton: true,
+        confirmButtonColor: '#059669',
+        cancelButtonColor: '#64748b',
+        confirmButtonText: 'Yes, Add',
+        cancelButtonText: 'Cancel'
+    }).then(async (result) => {
+        if (!result.isConfirmed) return;
+        try {
+            const newRef = db.ref('deposits').push();
+            await newRef.set(depositData);
+            showToast('✅ Deposit added successfully!', 'success');
+            document.getElementById('depositAmount').value = '';
+            document.getElementById('depositDescription').value = '';
+            document.getElementById('depositDate').value = new Date().toISOString().split('T')[0];
+            loadDeposits();
+            loadDashboard();
+        } catch (e) {
+            console.error('Add deposit error:', e);
+            showToast('Error adding deposit', 'error');
+        }
+    });
+}
+
+async function deleteDeposit(depositId) {
+    const confirm = await Swal.fire({
+        title: 'Delete Deposit?',
+        text: 'This action cannot be undone.',
+        icon: 'warning',
+        showCancelButton: true,
+        confirmButtonColor: '#dc2626',
+        cancelButtonColor: '#64748b',
+        confirmButtonText: 'Delete',
+        cancelButtonText: 'Cancel'
+    });
+    if (!confirm.isConfirmed) return;
+    try {
+        await db.ref('deposits/' + depositId).remove();
+        showToast('🗑️ Deposit deleted', 'success');
+        loadDeposits();
+        loadDashboard();
+    } catch (e) {
+        showToast('Error deleting deposit', 'error');
+        console.error(e);
+    }
+}
+
+function exportDepositsCSV() {
+    if (filteredDeposits.length === 0) {
+        showToast('No deposits to export', 'error');
+        return;
+    }
+    const headers = ['Amount', 'Description', 'Date', 'Added On'];
+    const rows = filteredDeposits.map(item => {
+        return [
+            item.amount || 0,
+            item.description || '—',
+            item.date || '—',
+            item.timestamp ? new Date(item.timestamp).toLocaleString() : '—'
+        ];
+    });
+    let csv = '\uFEFF' + headers.join(',') + '\n';
+    rows.forEach(row => {
+        csv += row.map(val => `"${String(val).replace(/"/g, '""')}"`).join(',') + '\n';
+    });
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = `deposits_${new Date().toISOString().slice(0,10)}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(link.href);
+    showToast('📥 Deposits CSV exported', 'success');
+}
+
+function refreshDeposits() {
+    loadDeposits();
+    showToast('🔄 Deposits refreshed', 'info');
 }
 
 // ==========================================
@@ -938,9 +1365,6 @@ async function loadAttendance() {
     } catch (e) { console.error(e); container.innerHTML = `<div class="empty-state"><i data-lucide="alert-circle"></i><p class="text-sm text-red-500">Error loading</p></div>`; showToast('Error loading attendance', 'error'); }
 }
 
-// ==========================================
-// VIEW ATTENDANCE HISTORY
-// ==========================================
 async function viewAttendanceHistory(username) {
     const monthInput = document.getElementById('salaryMonth');
     let monthVal = monthInput ? monthInput.value : '';
@@ -1100,12 +1524,9 @@ async function blockAgent(username, date) {
 // ==========================================
 function setSalaryMode(mode) {
     currentSalaryMode = mode;
-    // Update toggle buttons
     document.getElementById('salaryModeToday').classList.toggle('active', mode === 'today');
     document.getElementById('salaryModeMonthly').classList.toggle('active', mode === 'monthly');
-    // Show/hide month picker
     document.getElementById('salaryMonthWrapper').style.display = mode === 'monthly' ? 'inline-block' : 'none';
-    // Update label
     const label = document.getElementById('salaryModeLabel');
     if (mode === 'today') {
         label.textContent = "Today's Earnings";
@@ -1113,7 +1534,6 @@ function setSalaryMode(mode) {
         const monthVal = document.getElementById('salaryMonth').value || 'current month';
         label.textContent = `Earnings for ${monthVal}`;
     }
-    // Load data
     loadSalaryData();
 }
 
@@ -1144,14 +1564,12 @@ async function loadSalaryData() {
         let dateFilterFn;
 
         if (mode === 'today') {
-            // Today mode: use today's date
             year = parseInt(today.split('-')[0]);
             month = parseInt(today.split('-')[1]);
             monthStr = String(month).padStart(2, '0');
-            daysInMonth = 1; // only today
+            daysInMonth = 1;
             dateFilterFn = (ordDate) => ordDate === today;
         } else {
-            // Monthly mode: use selected month
             const monthInput = document.getElementById('salaryMonth');
             if (!monthInput.value) {
                 const d = new Date();
@@ -1165,7 +1583,6 @@ async function loadSalaryData() {
             dateFilterFn = (ordDate) => ordDate.startsWith(`${year}-${monthStr}`);
         }
 
-        // Group pickups by agent and date for quick lookup
         const pickupsByAgentDate = {};
         const allRejectedOrders = [];
 
@@ -1236,7 +1653,6 @@ async function loadSalaryData() {
                 }
             }
 
-            // Remove duplicates from pendingRejects
             const uniquePending = [];
             const seen = new Set();
             for (const pr of pendingRejects) {
@@ -1278,7 +1694,6 @@ async function loadSalaryData() {
             </div>`;
         }
 
-        // Show all pending rejects for this view
         const uniqueAllPending = [];
         const seenAll = new Set();
         for (const pr of allRejectedOrders) {
@@ -1315,7 +1730,6 @@ async function loadSalaryData() {
     }
 }
 
-// Approve reject from Salary page
 async function approveRejectFromSalary(orderId) {
     const confirm = await Swal.fire({
         title: 'Approve Rejection?',
@@ -1356,7 +1770,7 @@ function refreshAll() {
     if (isRefreshing) return;
     isRefreshing = true;
     showToast('🔄 Refreshing...', 'info');
-    Promise.all([loadDashboard(), loadOrders(), loadPendingAdmin(), loadRejectedAdmin(), loadInventory(), loadSales(), loadAgents()]).then(() => { isRefreshing = false; showToast('✅ Refreshed', 'success'); }).catch(() => { isRefreshing = false; showToast('⚠️ Error', 'error'); });
+    Promise.all([loadDashboard(), loadOrders(), loadPendingAdmin(), loadRejectedAdmin(), loadInventory(), loadSales(), loadDeposits(), loadAgents()]).then(() => { isRefreshing = false; showToast('✅ Refreshed', 'success'); }).catch(() => { isRefreshing = false; showToast('⚠️ Error', 'error'); });
 }
 
 // ==========================================
@@ -1370,14 +1784,13 @@ setInterval(updateClock, 1000); updateClock();
 // ==========================================
 document.addEventListener('DOMContentLoaded', () => {
     lucide.createIcons();
-    loadDashboard(); loadOrders(); loadPendingAdmin(); loadRejectedAdmin(); loadInventory(); loadSales(); loadAgents();
+    loadDashboard(); loadOrders(); loadPendingAdmin(); loadRejectedAdmin(); loadInventory(); loadSales(); loadDeposits(); loadAgents();
     document.getElementById('attendanceDate').value = new Date().toISOString().split('T')[0];
     const today = new Date();
     document.getElementById('salaryMonth').value = today.getFullYear() + '-' + String(today.getMonth() + 1).padStart(2, '0');
+    document.getElementById('depositDate').value = today.toISOString().split('T')[0];
     document.querySelector('input[name="regRole"][value="agent"]').checked = true;
     toggleAdminFields();
-
-    // Set default salary mode: Today
     setSalaryMode('today');
 
     setInterval(() => {
@@ -1387,6 +1800,7 @@ document.addEventListener('DOMContentLoaded', () => {
         else if (currentPageView === 'rejected') loadRejectedAdmin();
         else if (currentPageView === 'inventory') loadInventory();
         else if (currentPageView === 'sales') loadSales();
+        else if (currentPageView === 'deposits') loadDeposits();
         else if (currentPageView === 'attendance') loadAttendance();
         else if (currentPageView === 'salary') loadSalaryData();
         else if (currentPageView === 'agents') loadAgents();
