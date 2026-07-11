@@ -115,7 +115,7 @@ function navigate(page) {
 }
 
 // ==========================================
-// DASHBOARD
+// DASHBOARD – hold orders are completely skipped
 // ==========================================
 async function loadDashboard() {
     try {
@@ -136,7 +136,10 @@ async function loadDashboard() {
         let totalStockValue = 0;
 
         Object.values(pickups).forEach(item => {
-            total++;
+            total++; // total orders includes hold
+            // Hold orders are completely excluded from all financial/inventory stats
+            if (item.status === 'on_hold') return; // skip hold entirely
+
             if (item.status === 'pickup') {
                 pickupCount++;
                 if (item.sold) {
@@ -151,8 +154,11 @@ async function loadDashboard() {
                     unsoldCount++;
                     totalStockValue += (item.value || 0);
                 }
-            } else if (item.status === 'rejected') rejectedCount++;
-            else if (item.status === 'reschedule' || item.status === 'on_hold') rescheduleCount++;
+            } else if (item.status === 'rejected') {
+                rejectedCount++;
+            } else if (item.status === 'reschedule') {
+                rescheduleCount++;
+            }
         });
 
         const pendingCount = Object.keys(pending).length;
@@ -292,6 +298,11 @@ function renderOrdersTable() {
         const statusLabel = item.status || 'unknown';
         let statusClass = statusLabel === 'pickup' ? (item.sold ? 'sold' : 'pickup') : statusLabel === 'rejected' ? 'rejected' : statusLabel === 'on_hold' ? 'on_hold' : 'reschedule';
         let displayName = statusLabel === 'pickup' ? (item.sold ? 'Sold' : 'Pickup') : statusLabel === 'rejected' ? 'Rejected' : statusLabel === 'on_hold' ? 'Hold' : 'Pending';
+        // Show previous status if on hold
+        if (statusLabel === 'on_hold' && item.previous_status) {
+            const prevDisplay = item.previous_status === 'pickup' ? (item.sold ? 'Sold' : 'Pickup') : item.previous_status;
+            displayName = `Hold (was ${prevDisplay})`;
+        }
         const model = item.phoneModel || '—';
         const imei = item.imei || '—';
         const value = item.value !== undefined && item.value !== null ? '₹' + item.value : '—';
@@ -381,7 +392,7 @@ async function approveReject(orderId) {
 }
 
 // ==========================================
-// INVENTORY (with Commission column)
+// INVENTORY (with Commission column) – hold orders excluded
 // ==========================================
 async function loadInventory() {
     try {
@@ -412,7 +423,6 @@ function renderInventoryTable() {
     if (filteredInventory.length === 0) { tbody.innerHTML = `<tr><td colspan="8"><div class="empty-state"><i data-lucide="inbox"></i><p class="text-sm font-medium">No inventory available</p></div></td></tr>`; lucide.createIcons(); return; }
     let html = '';
     filteredInventory.forEach((item, idx) => {
-        // Calculate commission based on purchase price (item.value)
         const commission = calculateCommission(item.value || 0);
         html += `<tr class="order-row border-b border-gray-50"><td class="py-3 px-4 text-gray-400 font-mono text-xs">${idx+1}</td><td class="py-3 px-4 font-mono font-bold text-gray-800 text-sm">${item.orderId || item.id}</td><td class="py-3 px-4 text-gray-600 text-sm">${item.phoneModel || '—'}</td><td class="py-3 px-4 hidden md:table-cell font-mono text-xs text-gray-500">${item.imei || '—'}</td><td class="py-3 px-4 font-bold text-gray-700">₹${item.value || 0}</td><td class="py-3 px-4"><span class="commission-col">₹${commission}</span></td><td class="py-3 px-4 hidden lg:table-cell text-gray-600 text-sm">${item.customerName || '—'}</td><td class="py-3 px-4"><button onclick="openSellModal('${item.id}')" class="btn-action sell"><i data-lucide="badge-dollar-sign"></i> Sell</button><button onclick="viewOrder('${item.id}')" class="btn-action view"><i data-lucide="eye"></i></button></td></tr>`;
     });
@@ -531,14 +541,14 @@ async function confirmSell() {
 }
 
 // ==========================================
-// SALES (with Commission)
+// SALES (with Commission) – exclude hold orders
 // ==========================================
 async function loadSales() {
     try {
         const snap = await db.ref('pickups').once('value');
         const data = snap.val() || {};
         salesList = Object.entries(data)
-            .filter(([_, item]) => item.sold === true)
+            .filter(([_, item]) => item.sold === true && item.status !== 'on_hold') // exclude hold
             .map(([id, item]) => {
                 if (item.profit === undefined && item.salePrice !== undefined && item.value !== undefined) {
                     const commission = item.commission || calculateCommission(item.salePrice || 0);
@@ -694,6 +704,10 @@ function renderDetailView(item) {
     const statusLabel = item.status || 'unknown';
     let statusClass = statusLabel === 'pickup' ? (item.sold ? 'sold' : 'pickup') : statusLabel === 'rejected' ? 'rejected' : statusLabel === 'on_hold' ? 'on_hold' : 'reschedule';
     let displayName = statusLabel === 'pickup' ? (item.sold ? 'Sold' : 'Pickup') : statusLabel === 'rejected' ? 'Rejected' : statusLabel === 'on_hold' ? 'Hold' : 'Pending';
+    if (statusLabel === 'on_hold' && item.previous_status) {
+        const prevDisplay = item.previous_status === 'pickup' ? (item.sold ? 'Sold' : 'Pickup') : item.previous_status;
+        displayName = `Hold (was ${prevDisplay})`;
+    }
     let profitDisplay = '—', profitClass = '';
     let commissionDisplay = '—';
     if (item.sold) {
@@ -715,7 +729,10 @@ function renderDetailView(item) {
         `;
     }
     let holdHtml = '';
-    if (item.status === 'on_hold') { holdHtml = `<div class="detail-item"><div class="label">Hold Reason</div><div class="value text-red-600">${item.hold_reason || '—'}</div></div>`; }
+    if (item.status === 'on_hold') {
+        holdHtml = `<div class="detail-item"><div class="label">Hold Reason</div><div class="value text-red-600">${item.hold_reason || '—'}</div></div>
+                     <div class="detail-item"><div class="label">Previous Status</div><div class="value">${item.previous_status || '—'}</div></div>`;
+    }
     let html = `<div class="flex items-center gap-3 mb-4"><span class="badge-status ${statusClass} text-sm px-4 py-1.5">${displayName}</span><span class="font-mono font-bold text-gray-800 text-sm">${item.orderId || item.id}</span>${item.agent ? `<span class="text-xs text-gray-400">(Agent: ${item.agent})</span>` : ''}</div><div class="detail-grid"><div class="detail-item"><div class="label">Phone Model</div><div class="value" id="dv-model">${item.phoneModel || '—'}</div></div><div class="detail-item"><div class="label">IMEI</div><div class="value font-mono text-xs" id="dv-imei">${item.imei || '—'}</div></div>${item.imei2 ? `<div class="detail-item"><div class="label">IMEI 2</div><div class="value font-mono text-xs" id="dv-imei2">${item.imei2}</div></div>` : ''}<div class="detail-item"><div class="label">Purchase Price</div><div class="value font-bold" id="dv-value">${item.value !== undefined && item.value !== null ? '₹' + item.value : '—'}</div></div><div class="detail-item"><div class="label">Customer Name</div><div class="value" id="dv-customer">${item.customerName || '—'}</div></div><div class="detail-item"><div class="label">Reason</div><div class="value" id="dv-reason">${item.reason || '—'}</div></div><div class="detail-item"><div class="label">Status</div><div class="value" id="dv-status">${displayName}</div></div><div class="detail-item"><div class="label">Time (IST)</div><div class="value text-xs" id="dv-time">${item.timestampIST || item.timestamp || '—'}</div></div>${holdHtml}${saleHtml}</div>`;
     content.innerHTML = html;
     lucide.createIcons();
@@ -723,7 +740,7 @@ function renderDetailView(item) {
 }
 
 // ==========================================
-// HOLD ORDER
+// HOLD ORDER (store previous status)
 // ==========================================
 async function holdOrderFromDetail() {
     if (!detailOrderId) return;
@@ -740,21 +757,29 @@ async function holdOrderFromDetail() {
     });
     if (!isConfirmed || !reason) return;
     try {
-        await db.ref('pickups/' + detailOrderId).update({ status: 'on_hold', hold_reason: reason });
+        const snap = await db.ref('pickups/' + detailOrderId).once('value');
+        const order = snap.val();
+        if (!order) { showToast('Order not found', 'error'); return; }
+        const previousStatus = order.status || 'pickup';
+        await db.ref('pickups/' + detailOrderId).update({
+            status: 'on_hold',
+            hold_reason: reason,
+            previous_status: previousStatus
+        });
         showToast('⏸️ Order put on hold', 'success');
         closeDetail();
-        loadOrders(); loadPendingAdmin(); loadDashboard();
+        loadOrders(); loadPendingAdmin(); loadDashboard(); loadInventory(); loadSales();
     } catch (e) { showToast('Error holding order', 'error'); console.error(e); }
 }
 
 // ==========================================
-// UNHOLD ORDER
+// UNHOLD ORDER (revert to previous status)
 // ==========================================
 async function unholdOrderFromDetail() {
     if (!detailOrderId) return;
     const confirm = await Swal.fire({
         title: 'Unhold Order?',
-        text: 'This will set the order status back to Pickup and the agent will be eligible for pickup incentive.',
+        text: 'This will set the order status back to its previous state and the agent will be eligible for incentives.',
         icon: 'question',
         showCancelButton: true,
         confirmButtonColor: '#059669',
@@ -764,10 +789,18 @@ async function unholdOrderFromDetail() {
     });
     if (!confirm.isConfirmed) return;
     try {
-        await db.ref('pickups/' + detailOrderId).update({ status: 'pickup', hold_reason: null });
-        showToast('▶️ Order unheld. Pickup incentive will be counted.', 'success');
+        const snap = await db.ref('pickups/' + detailOrderId).once('value');
+        const order = snap.val();
+        if (!order) { showToast('Order not found', 'error'); return; }
+        const previousStatus = order.previous_status || 'pickup';
+        await db.ref('pickups/' + detailOrderId).update({
+            status: previousStatus,
+            hold_reason: null,
+            previous_status: null
+        });
+        showToast(`▶️ Order unheld. Reverted to ${previousStatus}`, 'success');
         closeDetail();
-        loadOrders(); loadPendingAdmin(); loadDashboard();
+        loadOrders(); loadPendingAdmin(); loadDashboard(); loadInventory(); loadSales();
     } catch (e) { showToast('Error unholding order', 'error'); console.error(e); }
 }
 
@@ -819,6 +852,15 @@ async function saveEdit() {
         updated.saleDate = saleDate;
         updated.profit = (salePrice - commission) - value;
     }
+    // If status is changed to on_hold, store previous status
+    if (status === 'on_hold' && editData.status !== 'on_hold') {
+        updated.previous_status = editData.status;
+        updated.hold_reason = reason || 'Manually held';
+    } else if (status !== 'on_hold' && editData.status === 'on_hold') {
+        // If unholding via edit, remove hold fields
+        updated.previous_status = null;
+        updated.hold_reason = null;
+    }
     const confirm = await Swal.fire({ title: 'Save Changes?', icon: 'question', showCancelButton: true, confirmButtonColor: '#4f46e5', cancelButtonColor: '#64748b', confirmButtonText: 'Yes', cancelButtonText: 'Cancel' });
     if (!confirm.isConfirmed) return;
     try { await db.ref('pickups/' + detailOrderId).update(updated); showToast('✅ Updated', 'success'); loadOrders(); loadDashboard(); loadPendingAdmin(); loadRejectedAdmin(); loadInventory(); loadSales(); isEditMode = false; await db.ref('pickups/' + detailOrderId).once('value').then(snap => { const item = snap.val(); if (item) { renderDetailView(item); document.getElementById('detailActions').style.display = 'flex'; document.getElementById('detailSaveActions').style.display = 'none'; document.getElementById('detailModalTitle').textContent = 'Order Details'; document.getElementById('detailEditBtn').textContent = '✏️ Edit'; document.getElementById('detailEditBtn').onclick = toggleEditMode; editData = { ...item, id: detailOrderId }; } }); } catch (e) { console.error(e); showToast('Error updating', 'error'); }
@@ -848,7 +890,7 @@ function exportCSV() {
 }
 
 // ==========================================
-// DEPOSITS
+// DEPOSITS – commission total excludes hold orders
 // ==========================================
 async function loadDeposits() {
     try {
@@ -904,7 +946,7 @@ async function updateDepositStats() {
     document.getElementById('depositCountDisplay').textContent = allDeposits.length + ' entries';
     document.getElementById('depositsBadge').textContent = allDeposits.length;
 
-    // Calculate stock value from inventory
+    // Calculate stock value from inventory (already excludes hold)
     let stockValue = 0;
     const snap = await db.ref('pickups').once('value');
     const data = snap.val() || {};
@@ -917,10 +959,10 @@ async function updateDepositStats() {
     const balance = total - stockValue;
     document.getElementById('depositBalance').textContent = '₹' + balance;
 
-    // Calculate total commission
+    // Calculate total commission – exclude hold orders
     let totalCommission = 0;
     Object.values(data).forEach(item => {
-        if (item.sold) {
+        if (item.sold && item.status !== 'on_hold') {
             totalCommission += item.commission || calculateCommission(item.salePrice || 0);
         }
     });
@@ -1520,7 +1562,7 @@ async function blockAgent(username, date) {
 }
 
 // ==========================================
-// SALARY / EARNINGS (Today + Monthly modes)
+// SALARY / EARNINGS – hold orders skipped
 // ==========================================
 function setSalaryMode(mode) {
     currentSalaryMode = mode;
@@ -1588,6 +1630,9 @@ async function loadSalaryData() {
 
         for (const [oid, ord] of Object.entries(pickups)) {
             if (!ord.timestamp) continue;
+            // Skip hold orders entirely
+            if (ord.status === 'on_hold') continue;
+
             const ordDate = new Date(ord.timestamp).toISOString().split('T')[0];
             if (!dateFilterFn(ordDate)) continue;
             const agent = ord.agent || 'unknown';
