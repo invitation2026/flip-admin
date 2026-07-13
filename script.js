@@ -15,20 +15,25 @@ firebase.initializeApp(firebaseConfig);
 const db = firebase.database();
 
 // ==========================================
-// COMMISSION BRACKETS
+// COMMISSION BRACKETS – based on PURCHASE PRICE only
 // ==========================================
 const COMMISSION_BRACKETS = [
-    { min: 0, max: 10000, type: 'percentage', value: 10 },
-    { min: 10001, max: 31000, type: 'fixed', value: 1500 },
-    { min: 31001, max: Infinity, type: 'fixed', value: 2500 }
+    { min: 0, max: 10000, type: 'percentage', value: 10 },   // 10%
+    { min: 10001, max: 31000, type: 'percentage', value: 8 }, // 8%
+    { min: 31001, max: Infinity, type: 'fixed', value: 2500 } // ₹2500 fixed
 ];
 
-function calculateCommission(salePrice) {
-    if (!salePrice || salePrice <= 0) return 0;
+/**
+ * Calculate commission based on the purchase price (value).
+ * @param {number} purchasePrice - the agreed value at pickup
+ * @returns {number} commission amount
+ */
+function calculateCommission(purchasePrice) {
+    if (!purchasePrice || purchasePrice <= 0) return 0;
     for (const bracket of COMMISSION_BRACKETS) {
-        if (salePrice >= bracket.min && salePrice <= bracket.max) {
+        if (purchasePrice >= bracket.min && purchasePrice <= bracket.max) {
             if (bracket.type === 'percentage') {
-                return Math.round((salePrice * bracket.value) / 100);
+                return Math.round((purchasePrice * bracket.value) / 100);
             } else {
                 return bracket.value;
             }
@@ -68,6 +73,10 @@ const depositPageSize = 15;
 
 // Salary mode
 let currentSalaryMode = 'today';
+
+// IMEI override state (optional, kept for compatibility)
+let imeiOverride = {};
+let imei2Override = {};
 
 // ==========================================
 // DOM REFS
@@ -115,7 +124,7 @@ function navigate(page) {
 }
 
 // ==========================================
-// DASHBOARD – hold orders are completely skipped
+// DASHBOARD – hold orders skipped, commission based on purchase price
 // ==========================================
 async function loadDashboard() {
     try {
@@ -136,18 +145,20 @@ async function loadDashboard() {
         let totalStockValue = 0;
 
         Object.values(pickups).forEach(item => {
-            total++; // total orders includes hold
-            // Hold orders are completely excluded from all financial/inventory stats
-            if (item.status === 'on_hold') return; // skip hold entirely
+            total++;
+            if (item.status === 'on_hold') return;
+
+            // Commission is based on purchase price and applies to all orders (including inventory)
+            const commission = item.commission !== undefined ? item.commission : calculateCommission(item.value || 0);
+            totalCommission += commission;
 
             if (item.status === 'pickup') {
                 pickupCount++;
                 if (item.sold) {
                     soldCount++;
-                    const commission = item.commission || calculateCommission(item.salePrice || 0);
+                    // Revenue after commission
                     const netRevenue = (item.salePrice || 0) - commission;
                     revenue += netRevenue;
-                    totalCommission += commission;
                     const itemProfit = item.profit !== undefined ? item.profit : (netRevenue - (item.value || 0));
                     profit += itemProfit;
                 } else {
@@ -191,7 +202,7 @@ async function loadDashboard() {
         document.getElementById('statStockValue').textContent = '₹' + totalStockValue;
         document.getElementById('statAgents').textContent = totalAgents;
         document.getElementById('statPresentToday').textContent = presentToday;
-        document.getElementById('statCommission').textContent = '₹' + Math.round(totalCommission);
+        document.getElementById('statCommission').textContent = '₹' + Math.round(totalCommission); // now includes all pickups
 
         document.getElementById('orderCountBadge').textContent = total;
         document.getElementById('pendingBadge').textContent = pendingCount;
@@ -298,7 +309,6 @@ function renderOrdersTable() {
         const statusLabel = item.status || 'unknown';
         let statusClass = statusLabel === 'pickup' ? (item.sold ? 'sold' : 'pickup') : statusLabel === 'rejected' ? 'rejected' : statusLabel === 'on_hold' ? 'on_hold' : 'reschedule';
         let displayName = statusLabel === 'pickup' ? (item.sold ? 'Sold' : 'Pickup') : statusLabel === 'rejected' ? 'Rejected' : statusLabel === 'on_hold' ? 'Hold' : 'Pending';
-        // Show previous status if on hold
         if (statusLabel === 'on_hold' && item.previous_status) {
             const prevDisplay = item.previous_status === 'pickup' ? (item.sold ? 'Sold' : 'Pickup') : item.previous_status;
             displayName = `Hold (was ${prevDisplay})`;
@@ -365,7 +375,9 @@ async function loadRejectedAdmin() {
                 const time = item.timestampIST || item.timestamp || '';
                 const agent = item.agent || '—';
                 const approved = item.incentive_approved === true;
-                html += `<tr class="order-row border-b border-gray-50"><td class="py-3 px-4 text-gray-400 font-mono text-xs">${idx+1}</td><td class="py-3 px-4 font-mono font-bold text-gray-800 text-sm">${item.orderId || item.id}</td><td class="py-3 px-4 text-gray-600 text-sm">${item.reason || '—'}</td><td class="py-3 px-4 hidden sm:table-cell text-gray-500 text-sm">${agent}</td><td class="py-3 px-4 hidden sm:table-cell text-xs text-gray-400">${time}</td><td class="py-3 px-4">${approved ? '<span class="badge-status approved">Approved</span>' : '<span class="badge-status reschedule">Pending</span>'}</td><td class="py-3 px-4"><div class="flex items-center gap-1.5">${!approved ? `<button onclick="approveReject('${item.id}')" class="btn-action approve"><i data-lucide="check-circle"></i> Approve</button>` : ''}<button onclick="viewOrder('${item.id}')" class="btn-action view"><i data-lucide="eye"></i></button></div></td></tr>`;
+                const statusLabel = approved ? 'Approved' : 'Pending';
+                const statusClass = approved ? 'approved' : 'reschedule';
+                html += `<tr class="order-row border-b border-gray-50"><td class="py-3 px-4 text-gray-400 font-mono text-xs">${idx+1}</td><td class="py-3 px-4 font-mono font-bold text-gray-800 text-sm">${item.orderId || item.id}</td><td class="py-3 px-4 text-gray-600 text-sm">${item.reason || '—'}</td><td class="py-3 px-4 hidden sm:table-cell text-gray-500 text-sm">${agent}</td><td class="py-3 px-4 hidden sm:table-cell text-xs text-gray-400">${time}</td><td class="py-3 px-4"><span class="badge-status ${statusClass}">${statusLabel}</span></td><td class="py-3 px-4"><div class="flex items-center gap-1.5">${!approved ? `<button onclick="toggleRejectApproval('${item.id}', true)" class="btn-action approve"><i data-lucide="check-circle"></i> Approve</button>` : `<button onclick="toggleRejectApproval('${item.id}', false)" class="btn-action delete"><i data-lucide="x-circle"></i> Reject</button>`}<button onclick="viewOrder('${item.id}')" class="btn-action view"><i data-lucide="eye"></i></button></div></td></tr>`;
             });
             tbody.innerHTML = html;
         }
@@ -375,24 +387,34 @@ async function loadRejectedAdmin() {
 }
 function refreshRejected() { loadRejectedAdmin(); showToast('🔄 Rejected refreshed', 'info'); }
 
-async function approveReject(orderId) {
-    const confirm = await Swal.fire({ title: 'Approve Rejection?', text: 'This will count the reject incentive for the agent.', icon: 'question', showCancelButton: true, confirmButtonColor: '#059669', cancelButtonColor: '#64748b', confirmButtonText: 'Yes, approve', cancelButtonText: 'Cancel' });
+async function toggleRejectApproval(orderId, approve) {
+    const action = approve ? 'Approve' : 'Reject';
+    const confirm = await Swal.fire({
+        title: `${action} Rejection?`,
+        text: approve ? 'This will count the reject incentive for the agent.' : 'This will remove the reject incentive from the agent\'s earnings.',
+        icon: 'question',
+        showCancelButton: true,
+        confirmButtonColor: approve ? '#059669' : '#dc2626',
+        cancelButtonColor: '#64748b',
+        confirmButtonText: `Yes, ${action}`,
+        cancelButtonText: 'Cancel'
+    });
     if (!confirm.isConfirmed) return;
     try {
         const snap = await db.ref('pickups/' + orderId).once('value');
         const item = snap.val();
         if (!item) { showToast('Order not found', 'error'); return; }
-        await db.ref('pickups/' + orderId + '/incentive_approved').set(true);
+        await db.ref('pickups/' + orderId + '/incentive_approved').set(approve);
         await db.ref('pickups/' + orderId + '/incentive_paid').set(false);
-        showToast('✅ Reject approved! Incentive will be counted.', 'success');
+        showToast(`✅ Reject ${action}ed!`, 'success');
         loadRejectedAdmin();
         loadDashboard();
         if (currentPageView === 'salary') loadSalaryData();
-    } catch (e) { showToast('Error approving reject', 'error'); console.error(e); }
+    } catch (e) { showToast(`Error ${action}ing reject`, 'error'); console.error(e); }
 }
 
 // ==========================================
-// INVENTORY (with Commission column) – hold orders excluded
+// INVENTORY – commission based on purchase price
 // ==========================================
 async function loadInventory() {
     try {
@@ -433,7 +455,7 @@ function renderInventoryTable() {
 function refreshInventory() { loadInventory(); showToast('🔄 Inventory refreshed', 'info'); }
 
 // ==========================================
-// SELL MODAL (with Commission)
+// SELL MODAL – commission based on purchase price
 // ==========================================
 function openSellModal(orderId) {
     const order = inventoryList.find(item => item.id === orderId);
@@ -442,13 +464,16 @@ function openSellModal(orderId) {
     document.getElementById('sellOrderId').value = order.orderId || order.id;
     document.getElementById('sellModel').value = order.phoneModel || '—';
     document.getElementById('sellPurchasePrice').value = '₹' + (order.value || 0);
+    const purchasePrice = order.value || 0;
+    const commission = calculateCommission(purchasePrice);
+    document.getElementById('sellCommissionDisplay').value = '₹' + commission;
     document.getElementById('sellSalePrice').value = '';
     document.getElementById('sellBuyerName').value = '';
     document.getElementById('sellBuyerContact').value = '';
     const today = new Date().toISOString().split('T')[0];
     document.getElementById('sellSaleDate').value = today;
     document.getElementById('sellProfitPreview').className = 'profit-preview neutral';
-    document.getElementById('sellProfitPreview').textContent = 'Enter sale price to see profit (commission deducted)';
+    document.getElementById('sellProfitPreview').textContent = 'Enter sale price to see profit (commission based on purchase price)';
     document.getElementById('sellModal').style.display = 'flex';
     lucide.createIcons();
     document.getElementById('sellSalePrice').oninput = updateProfitPreviewWithCommission;
@@ -459,14 +484,14 @@ function openSellModal(orderId) {
 function updateProfitPreviewWithCommission() {
     const purchase = sellOrderData ? (sellOrderData.value || 0) : 0;
     const sale = parseFloat(document.getElementById('sellSalePrice').value) || 0;
-    const commission = calculateCommission(sale);
+    const commission = calculateCommission(purchase);
     const netProfit = sale - purchase - commission;
     const preview = document.getElementById('sellProfitPreview');
     if (sale > 0) {
         preview.textContent = `Commission: ₹${commission} | Net Profit: ₹${netProfit} (${netProfit >= 0 ? '✅' : '⚠️ Loss'})`;
         preview.className = netProfit >= 0 ? 'profit-preview positive' : 'profit-preview negative';
     } else {
-        preview.textContent = 'Enter sale price to see profit (commission deducted)';
+        preview.textContent = 'Enter sale price to see profit (commission based on purchase price)';
         preview.className = 'profit-preview neutral';
     }
 }
@@ -485,7 +510,7 @@ async function confirmSell() {
     if (!buyerName) { showToast('Buyer name required', 'error'); return; }
 
     const purchasePrice = sellOrderData.value || 0;
-    const commission = calculateCommission(salePrice);
+    const commission = calculateCommission(purchasePrice);
     const netRevenue = salePrice - commission;
     const profit = netRevenue - purchasePrice;
 
@@ -497,7 +522,7 @@ async function confirmSell() {
                 <p><strong>Model:</strong> ${sellOrderData.phoneModel}</p>
                 <p><strong>Purchase:</strong> ₹${purchasePrice}</p>
                 <p><strong>Sale Price:</strong> ₹${salePrice}</p>
-                <p><strong>Commission:</strong> ₹${commission} (${COMMISSION_BRACKETS.find(b => salePrice >= b.min && salePrice <= b.max)?.type === 'percentage' ? '10%' : 'Fixed'})</p>
+                <p><strong>Commission (on Purchase):</strong> ₹${commission}</p>
                 <p><strong>Net Revenue:</strong> ₹${netRevenue}</p>
                 <p><strong>Net Profit:</strong> <span class="${profit >= 0 ? 'text-green-600' : 'text-red-600'} font-bold">₹${profit}</span></p>
                 <p><strong>Buyer:</strong> ${buyerName}</p>
@@ -541,24 +566,20 @@ async function confirmSell() {
 }
 
 // ==========================================
-// SALES (with Commission) – exclude hold orders
+// SALES – commission based on purchase price, hold excluded
 // ==========================================
 async function loadSales() {
     try {
         const snap = await db.ref('pickups').once('value');
         const data = snap.val() || {};
         salesList = Object.entries(data)
-            .filter(([_, item]) => item.sold === true && item.status !== 'on_hold') // exclude hold
+            .filter(([_, item]) => item.sold === true && item.status !== 'on_hold')
             .map(([id, item]) => {
-                if (item.profit === undefined && item.salePrice !== undefined && item.value !== undefined) {
-                    const commission = item.commission || calculateCommission(item.salePrice || 0);
-                    item.profit = (item.salePrice - commission) - item.value;
-                    item.commission = commission;
-                }
-                if (item.commission === undefined && item.salePrice) {
-                    item.commission = calculateCommission(item.salePrice);
-                }
-                return { id, ...item };
+                const purchase = item.value || 0;
+                const commission = item.commission !== undefined ? item.commission : calculateCommission(purchase);
+                const netRevenue = (item.salePrice || 0) - commission;
+                const profit = netRevenue - purchase;
+                return { id, ...item, commission, profit };
             });
         salesList.sort((a, b) => (b.saleTimestamp || b.timestamp || 0) - (a.saleTimestamp || a.timestamp || 0));
         applySalesFilters();
@@ -587,10 +608,11 @@ function updateSalesSummary() {
     const total = filteredSales.length;
     let revenue = 0, profit = 0, commission = 0;
     filteredSales.forEach(item => {
-        const c = item.commission || calculateCommission(item.salePrice || 0);
+        const purchase = item.value || 0;
+        const c = item.commission !== undefined ? item.commission : calculateCommission(purchase);
         commission += c;
         revenue += (item.salePrice || 0) - c;
-        const p = item.profit !== undefined ? item.profit : (item.salePrice - c - item.value);
+        const p = item.profit !== undefined ? item.profit : (item.salePrice - c - purchase);
         profit += p || 0;
     });
     document.getElementById('salesTotalCount').textContent = total;
@@ -609,18 +631,19 @@ function renderSalesTable() {
 
     let html = '';
     filteredSales.forEach((item, idx) => {
-        const profit = item.profit !== undefined ? item.profit : (item.salePrice - (item.commission || calculateCommission(item.salePrice || 0)) - item.value);
+        const purchase = item.value || 0;
+        const commission = item.commission !== undefined ? item.commission : calculateCommission(purchase);
+        const profit = item.profit !== undefined ? item.profit : (item.salePrice - commission - purchase);
         const profitNum = profit || 0;
         const profitClass = profitNum >= 0 ? 'profit-green' : 'profit-red';
         const saleDate = item.saleDate || item.timestampIST || '—';
         const agent = item.agent || '—';
-        const commission = item.commission !== undefined ? item.commission : calculateCommission(item.salePrice || 0);
         html += `<tr class="order-row border-b border-gray-50">
             <td class="py-3 px-4 text-gray-400 font-mono text-xs">${idx+1}</td>
             <td class="py-3 px-4 font-mono font-bold text-gray-800 text-sm">${item.orderId || item.id}</td>
             <td class="py-3 px-4 text-gray-600 text-sm">${item.phoneModel || '—'}</td>
             <td class="py-3 px-4 hidden md:table-cell font-mono text-xs text-gray-500">${item.imei || '—'}</td>
-            <td class="py-3 px-4 text-gray-600">₹${item.value || 0}</td>
+            <td class="py-3 px-4 text-gray-600">₹${purchase}</td>
             <td class="py-3 px-4 font-bold text-gray-800">₹${item.salePrice || 0}</td>
             <td class="py-3 px-4"><span class="commission-badge">₹${commission}</span></td>
             <td class="py-3 px-4 font-bold ${profitClass}">₹${profitNum}</td>
@@ -636,15 +659,16 @@ function refreshSales() { loadSales(); showToast('🔄 Sales refreshed', 'info')
 
 function exportSalesCSV() {
     if (filteredSales.length === 0) { showToast('No data', 'error'); return; }
-    const headers = ['Order ID', 'Model', 'IMEI', 'Purchase Price', 'Sale Price', 'Commission', 'Net Profit', 'Buyer', 'Buyer Contact', 'Sale Date', 'Agent'];
+    const headers = ['Order ID', 'Model', 'IMEI', 'Purchase Price', 'Sale Price', 'Commission (on Purchase)', 'Net Profit', 'Buyer', 'Buyer Contact', 'Sale Date', 'Agent'];
     const rows = filteredSales.map(item => {
-        const c = item.commission || calculateCommission(item.salePrice || 0);
-        const p = item.profit !== undefined ? item.profit : (item.salePrice - c - item.value);
+        const purchase = item.value || 0;
+        const c = item.commission !== undefined ? item.commission : calculateCommission(purchase);
+        const p = item.profit !== undefined ? item.profit : (item.salePrice - c - purchase);
         return [
             item.orderId || item.id || '',
             item.phoneModel || '',
             item.imei || '',
-            item.value || 0,
+            purchase,
             item.salePrice || 0,
             c,
             p || 0,
@@ -660,7 +684,7 @@ function exportSalesCSV() {
 }
 
 // ==========================================
-// VIEW ORDER DETAIL + HOLD / UNHOLD
+// VIEW ORDER DETAIL – commission on purchase price
 // ==========================================
 function viewOrder(orderId) {
     detailOrderId = orderId;
@@ -681,11 +705,14 @@ function viewOrder(orderId) {
     db.ref('pickups/' + orderId).once('value').then(snap => {
         const item = snap.val();
         if (!item) { content.innerHTML = `<div class="empty-state"><i data-lucide="alert-circle"></i><p class="text-sm font-medium">Order not found</p></div>`; return; }
-        if (item.sold && item.profit === undefined && item.salePrice !== undefined && item.value !== undefined) {
-            const commission = item.commission || calculateCommission(item.salePrice || 0);
-            item.profit = (item.salePrice - commission) - item.value;
-            item.commission = commission;
+        // Recalculate commission based on purchase price
+        const purchase = item.value || 0;
+        const commission = item.commission !== undefined ? item.commission : calculateCommission(purchase);
+        if (item.sold && item.profit === undefined) {
+            const netRevenue = (item.salePrice || 0) - commission;
+            item.profit = netRevenue - purchase;
         }
+        item.commission = commission;
         editData = { ...item, id: orderId };
         renderDetailView(item);
         if (item.status === 'on_hold') {
@@ -711,9 +738,9 @@ function renderDetailView(item) {
     let profitDisplay = '—', profitClass = '';
     let commissionDisplay = '—';
     if (item.sold) {
-        const commission = item.commission !== undefined ? item.commission : calculateCommission(item.salePrice || 0);
+        const commission = item.commission !== undefined ? item.commission : calculateCommission(item.value || 0);
         commissionDisplay = '₹' + commission;
-        const netProfit = item.profit !== undefined ? item.profit : (item.salePrice - commission - item.value);
+        const netProfit = item.profit !== undefined ? item.profit : (item.salePrice - commission - (item.value || 0));
         profitDisplay = '₹' + (netProfit || 0);
         profitClass = (netProfit || 0) >= 0 ? 'green' : 'red';
     }
@@ -721,7 +748,7 @@ function renderDetailView(item) {
     if (item.sold) {
         saleHtml = `
             <div class="detail-item"><div class="label">Sale Price</div><div class="value green">₹${item.salePrice || 0}</div></div>
-            <div class="detail-item"><div class="label">Commission</div><div class="value amber">${commissionDisplay}</div></div>
+            <div class="detail-item"><div class="label">Commission (on Purchase)</div><div class="value amber">${commissionDisplay}</div></div>
             <div class="detail-item"><div class="label">Net Profit</div><div class="value ${profitClass}">${profitDisplay}</div></div>
             <div class="detail-item"><div class="label">Buyer</div><div class="value">${item.buyerName || '—'}</div></div>
             <div class="detail-item"><div class="label">Buyer Contact</div><div class="value">${item.buyerContact || '—'}</div></div>
@@ -805,7 +832,7 @@ async function unholdOrderFromDetail() {
 }
 
 // ==========================================
-// EDIT MODE
+// EDIT MODE – commission recalculated from purchase price
 // ==========================================
 function toggleEditMode() {
     if (isEditMode) return;
@@ -817,10 +844,144 @@ function toggleEditMode() {
     const item = editData;
     let datetimeVal = '';
     if (item.timestamp) { const d = new Date(item.timestamp); if (!isNaN(d)) { const year = d.getFullYear(); const month = String(d.getMonth()+1).padStart(2,'0'); const day = String(d.getDate()).padStart(2,'0'); const hours = String(d.getHours()).padStart(2,'0'); const mins = String(d.getMinutes()).padStart(2,'0'); datetimeVal = `${year}-${month}-${day}T${hours}:${mins}`; } }
-    let html = `<div class="space-y-4"><div><label class="edit-label">Order ID</label><input type="text" id="edit-orderId" value="${item.orderId || item.id || ''}" class="edit-field" readonly style="background:#f1f5f9;cursor:not-allowed;"></div><div><label class="edit-label">Status</label><select id="edit-status" class="status-select"><option value="pickup" ${item.status === 'pickup' ? 'selected' : ''}>Pickup</option><option value="rejected" ${item.status === 'rejected' ? 'selected' : ''}>Rejected</option><option value="reschedule" ${item.status === 'reschedule' ? 'selected' : ''}>Pending</option><option value="on_hold" ${item.status === 'on_hold' ? 'selected' : ''}>Hold</option></select></div><div><label class="edit-label">Phone Model</label><input type="text" id="edit-model" value="${item.phoneModel || ''}" class="edit-field"></div><div><label class="edit-label">IMEI</label><input type="text" id="edit-imei" value="${item.imei || ''}" class="edit-field font-mono"></div><div><label class="edit-label">IMEI 2</label><input type="text" id="edit-imei2" value="${item.imei2 || ''}" class="edit-field font-mono"></div><div><label class="edit-label">Purchase Price (₹)</label><input type="number" id="edit-value" value="${item.value !== undefined && item.value !== null ? item.value : ''}" class="edit-field"></div><div><label class="edit-label">Customer Name</label><input type="text" id="edit-customer" value="${item.customerName || ''}" class="edit-field"></div><div><label class="edit-label">Reason</label><input type="text" id="edit-reason" value="${item.reason || ''}" class="edit-field"></div><div><label class="edit-label">Date & Time (IST)</label><input type="datetime-local" id="edit-datetime" value="${datetimeVal}" class="edit-field"></div>${item.sold ? `<div class="border-t pt-3"><p class="font-bold">Sale Details</p><div><label class="edit-label">Sale Price</label><input type="number" id="edit-salePrice" value="${item.salePrice || ''}" class="edit-field"></div><div><label class="edit-label">Commission</label><input type="number" id="edit-commission" value="${item.commission || ''}" class="edit-field" readonly style="background:#f1f5f9;"></div><div><label class="edit-label">Buyer</label><input type="text" id="edit-buyer" value="${item.buyerName || ''}" class="edit-field"></div><div><label class="edit-label">Buyer Contact</label><input type="text" id="edit-buyerContact" value="${item.buyerContact || ''}" class="edit-field"></div><div><label class="edit-label">Sale Date</label><input type="date" id="edit-saleDate" value="${item.saleDate || ''}" class="edit-field"></div></div>` : ''}</div>`;
+    
+    // IMEI override (optional) – keep as before
+    const imeiVal = item.imei || '';
+    const imei2Val = item.imei2 || '';
+    const imeiOver = imeiVal.length > 15;
+    const imei2Over = imei2Val.length > 15;
+    imeiOverride['edit'] = imeiOver;
+    imei2Override['edit'] = imei2Over;
+    
+    let html = `<div class="space-y-4">
+        <div><label class="edit-label">Order ID</label><input type="text" id="edit-orderId" value="${item.orderId || item.id || ''}" class="edit-field" readonly style="background:#f1f5f9;cursor:not-allowed;"></div>
+        <div><label class="edit-label">Status</label><select id="edit-status" class="status-select">
+            <option value="pickup" ${item.status === 'pickup' ? 'selected' : ''}>Pickup</option>
+            <option value="rejected" ${item.status === 'rejected' ? 'selected' : ''}>Rejected</option>
+            <option value="reschedule" ${item.status === 'reschedule' ? 'selected' : ''}>Pending</option>
+            <option value="on_hold" ${item.status === 'on_hold' ? 'selected' : ''}>Hold</option>
+        </select></div>
+        <div><label class="edit-label">Phone Model</label><input type="text" id="edit-model" value="${item.phoneModel || ''}" class="edit-field" placeholder="Optional"></div>
+        <div><label class="edit-label">IMEI</label><div class="imei-wrap"><input type="text" id="edit-imei" value="${item.imei || ''}" class="edit-field font-mono" maxlength="15" placeholder="15 digits max"><button id="imeiAllowBtn" class="imei-allow-btn ${imeiOver ? 'allowed' : ''}" onclick="toggleImeiLimit('edit-imei', 'imeiAllowBtn')">${imeiOver ? '✅ Unlimited' : 'Add more'}</button></div></div>
+        <div><label class="edit-label">IMEI 2</label><div class="imei-wrap"><input type="text" id="edit-imei2" value="${item.imei2 || ''}" class="edit-field font-mono" maxlength="15" placeholder="15 digits max"><button id="imei2AllowBtn" class="imei-allow-btn ${imei2Over ? 'allowed' : ''}" onclick="toggleImeiLimit('edit-imei2', 'imei2AllowBtn')">${imei2Over ? '✅ Unlimited' : 'Add more'}</button></div></div>
+        <div><label class="edit-label">Purchase Price (₹)</label><input type="number" id="edit-value" value="${item.value !== undefined && item.value !== null ? item.value : ''}" class="edit-field" placeholder="Optional"></div>
+        <div><label class="edit-label">Customer Name</label><input type="text" id="edit-customer" value="${item.customerName || ''}" class="edit-field" placeholder="Optional"></div>
+        <div><label class="edit-label">Reason</label><input type="text" id="edit-reason" value="${item.reason || ''}" class="edit-field" placeholder="Optional"></div>
+        <div><label class="edit-label">Date & Time (IST)</label><input type="datetime-local" id="edit-datetime" value="${datetimeVal}" class="edit-field"></div>`;
+        
+    if (item.sold) {
+        // Commission recalculated from purchase price on save
+        html += `<div class="border-t pt-3"><p class="font-bold">Sale Details</p>
+            <div><label class="edit-label">Sale Price</label><input type="number" id="edit-salePrice" value="${item.salePrice || ''}" class="edit-field" placeholder="Optional"></div>
+            <div><label class="edit-label">Commission (on Purchase)</label><input type="number" id="edit-commission" value="${item.commission || ''}" class="edit-field" readonly style="background:#f1f5f9;"></div>
+            <div><label class="edit-label">Buyer</label><input type="text" id="edit-buyer" value="${item.buyerName || ''}" class="edit-field" placeholder="Optional"></div>
+            <div><label class="edit-label">Buyer Contact</label><input type="text" id="edit-buyerContact" value="${item.buyerContact || ''}" class="edit-field" placeholder="Optional"></div>
+            <div><label class="edit-label">Sale Date</label><input type="date" id="edit-saleDate" value="${item.saleDate || ''}" class="edit-field"></div></div>`;
+    }
+    html += `</div>`;
     content.innerHTML = html;
     lucide.createIcons();
 }
+
+// IMEI limit toggle function (same as before)
+function toggleImeiLimit(inputId, btnId) {
+    const input = document.getElementById(inputId);
+    const btn = document.getElementById(btnId);
+    if (!input || !btn) return;
+    
+    const currentMax = input.maxLength;
+    if (currentMax === -1 || currentMax === 999) {
+        Swal.fire({
+            title: 'Limit IMEI to 15 digits?',
+            text: 'This will restrict the IMEI field to 15 digits. Current value will be trimmed if needed.',
+            icon: 'question',
+            showCancelButton: true,
+            confirmButtonColor: '#4f46e5',
+            cancelButtonColor: '#64748b',
+            confirmButtonText: 'Yes, limit',
+            cancelButtonText: 'Cancel'
+        }).then((result) => {
+            if (result.isConfirmed) {
+                input.maxLength = 15;
+                btn.textContent = 'Add more';
+                btn.classList.remove('allowed');
+                if (input.value.length > 15) {
+                    input.value = input.value.slice(0, 15);
+                }
+                showToast('IMEI limited to 15 digits', 'info');
+            }
+        });
+    } else {
+        Swal.fire({
+            title: 'Allow more than 15 digits?',
+            text: 'Are you sure you want to add more than 15 digits to this IMEI?',
+            icon: 'question',
+            showCancelButton: true,
+            confirmButtonColor: '#059669',
+            cancelButtonColor: '#64748b',
+            confirmButtonText: 'Yes, allow more',
+            cancelButtonText: 'Cancel'
+        }).then((result) => {
+            if (result.isConfirmed) {
+                input.maxLength = 999;
+                btn.textContent = '✅ Unlimited';
+                btn.classList.add('allowed');
+                showToast('IMEI limit removed. You can add more digits.', 'success');
+            }
+        });
+    }
+}
+
+function setupImeiValidation(inputId, btnId) {
+    const input = document.getElementById(inputId);
+    const btn = document.getElementById(btnId);
+    if (!input) return;
+    
+    input.addEventListener('input', function() {
+        if (input.maxLength === 15 && this.value.length > 15) {
+            Swal.fire({
+                title: 'More than 15 digits?',
+                text: 'You have entered more than 15 digits. Allow unlimited digits?',
+                icon: 'question',
+                showCancelButton: true,
+                confirmButtonColor: '#059669',
+                cancelButtonColor: '#64748b',
+                confirmButtonText: 'Yes, allow more',
+                cancelButtonText: 'No, keep 15'
+            }).then((result) => {
+                if (result.isConfirmed) {
+                    input.maxLength = 999;
+                    if (btn) {
+                        btn.textContent = '✅ Unlimited';
+                        btn.classList.add('allowed');
+                    }
+                    showToast('IMEI limit removed', 'success');
+                } else {
+                    this.value = this.value.slice(0, 15);
+                    showToast('Kept at 15 digits', 'info');
+                }
+            });
+        }
+    });
+    
+    input.addEventListener('paste', function(e) {
+        setTimeout(() => {
+            if (input.maxLength === 15 && this.value.length > 15) {
+                input.dispatchEvent(new Event('input'));
+            }
+        }, 50);
+    });
+}
+
+const originalToggleEdit = toggleEditMode;
+toggleEditMode = function() {
+    originalToggleEdit.call(this);
+    setTimeout(() => {
+        setupImeiValidation('edit-imei', 'imeiAllowBtn');
+        setupImeiValidation('edit-imei2', 'imei2AllowBtn');
+    }, 100);
+};
+
 function cancelEdit() {
     isEditMode = false;
     if (detailOrderId) { db.ref('pickups/' + detailOrderId).once('value').then(snap => { const item = snap.val(); if (item) { renderDetailView(item); document.getElementById('detailActions').style.display = 'flex'; document.getElementById('detailSaveActions').style.display = 'none'; document.getElementById('detailModalTitle').textContent = 'Order Details'; document.getElementById('detailEditBtn').textContent = '✏️ Edit'; document.getElementById('detailEditBtn').onclick = toggleEditMode; editData = { ...item, id: detailOrderId }; } }); }
@@ -840,24 +1001,22 @@ async function saveEdit() {
     const buyerContact = document.getElementById('edit-buyerContact')?.value.trim() || '';
     const saleDate = document.getElementById('edit-saleDate')?.value || '';
     if (!orderId) { showToast('Order ID required', 'error'); return; }
-    let updated = { orderId, status, phoneModel: model, imei, imei2: imei2 || undefined, value, customerName: customer || 'N/A', reason: reason || '', timestamp: editData.timestamp, timestampIST: editData.timestampIST || '' };
+    let updated = { orderId, status, phoneModel: model || '', imei: imei || '', imei2: imei2 || '', value: value || 0, customerName: customer || '', reason: reason || '', timestamp: editData.timestamp, timestampIST: editData.timestampIST || '' };
     if (datetimeVal) { const d = new Date(datetimeVal); if (!isNaN(d)) { updated.timestamp = d.toISOString(); const istOffset = 5.5 * 60 * 60 * 1000; const istTime = new Date(d.getTime() + istOffset); const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']; const dd = String(istTime.getUTCDate()).padStart(2,'0'); const mmm = months[istTime.getUTCMonth()]; const yyyy = istTime.getUTCFullYear(); let hours = istTime.getUTCHours(); const minutes = String(istTime.getUTCMinutes()).padStart(2,'0'); const seconds = String(istTime.getUTCSeconds()).padStart(2,'0'); const ampm = hours >= 12 ? 'PM' : 'AM'; hours = hours % 12 || 12; const hh = String(hours).padStart(2,'0'); updated.timestampIST = `${dd}-${mmm}-${yyyy}, ${hh}:${minutes}:${seconds} ${ampm} IST`; } } else { updated.timestamp = editData.timestamp; updated.timestampIST = editData.timestampIST; }
     if (editData.sold) {
-        const commission = calculateCommission(salePrice);
+        const commission = calculateCommission(value);
         updated.sold = true;
-        updated.salePrice = salePrice;
+        updated.salePrice = salePrice || 0;
         updated.commission = commission;
-        updated.buyerName = buyer;
-        updated.buyerContact = buyerContact;
-        updated.saleDate = saleDate;
+        updated.buyerName = buyer || '';
+        updated.buyerContact = buyerContact || '';
+        updated.saleDate = saleDate || '';
         updated.profit = (salePrice - commission) - value;
     }
-    // If status is changed to on_hold, store previous status
     if (status === 'on_hold' && editData.status !== 'on_hold') {
         updated.previous_status = editData.status;
         updated.hold_reason = reason || 'Manually held';
     } else if (status !== 'on_hold' && editData.status === 'on_hold') {
-        // If unholding via edit, remove hold fields
         updated.previous_status = null;
         updated.hold_reason = null;
     }
@@ -890,7 +1049,7 @@ function exportCSV() {
 }
 
 // ==========================================
-// DEPOSITS – commission total excludes hold orders
+// DEPOSITS – commission total excludes hold orders, based on purchase price
 // ==========================================
 async function loadDeposits() {
     try {
@@ -946,7 +1105,6 @@ async function updateDepositStats() {
     document.getElementById('depositCountDisplay').textContent = allDeposits.length + ' entries';
     document.getElementById('depositsBadge').textContent = allDeposits.length;
 
-    // Calculate stock value from inventory (already excludes hold)
     let stockValue = 0;
     const snap = await db.ref('pickups').once('value');
     const data = snap.val() || {};
@@ -959,12 +1117,11 @@ async function updateDepositStats() {
     const balance = total - stockValue;
     document.getElementById('depositBalance').textContent = '₹' + balance;
 
-    // Calculate total commission – exclude hold orders
+    // Commission now includes all orders (except on_hold) – same as dashboard
     let totalCommission = 0;
     Object.values(data).forEach(item => {
-        if (item.sold && item.status !== 'on_hold') {
-            totalCommission += item.commission || calculateCommission(item.salePrice || 0);
-        }
+        if (item.status === 'on_hold') return;
+        totalCommission += item.commission !== undefined ? item.commission : calculateCommission(item.value || 0);
     });
     document.getElementById('depositCommission').textContent = '₹' + totalCommission;
 }
@@ -1123,7 +1280,7 @@ function refreshDeposits() {
 }
 
 // ==========================================
-// AGENTS (with Role & Promotion)
+// AGENTS (unchanged from previous)
 // ==========================================
 async function loadAgents() {
     try {
@@ -1180,9 +1337,6 @@ function renderAgentsTable() {
     lucide.createIcons();
 }
 
-// ==========================================
-// PROMOTE TO ADMIN
-// ==========================================
 async function promoteToAdmin(username) {
     const confirm = await Swal.fire({
         title: `Promote "${username}" to Admin?`,
@@ -1562,7 +1716,7 @@ async function blockAgent(username, date) {
 }
 
 // ==========================================
-// SALARY / EARNINGS – hold orders skipped
+// SALARY / EARNINGS – hold orders skipped, commission not used here (only incentives)
 // ==========================================
 function setSalaryMode(mode) {
     currentSalaryMode = mode;
@@ -1630,7 +1784,6 @@ async function loadSalaryData() {
 
         for (const [oid, ord] of Object.entries(pickups)) {
             if (!ord.timestamp) continue;
-            // Skip hold orders entirely
             if (ord.status === 'on_hold') continue;
 
             const ordDate = new Date(ord.timestamp).toISOString().split('T')[0];
@@ -1718,7 +1871,8 @@ async function loadSalaryData() {
                 uniquePending.forEach(pr => {
                     pendingRejectsHtml += `<span class="text-xs bg-gray-100 px-2 py-0.5 rounded flex items-center gap-1">
                         ${pr.orderId || pr.id}
-                        <button onclick="approveRejectFromSalary('${pr.id}')" class="text-green-600 hover:text-green-800 font-bold text-xs">✅</button>
+                        <button onclick="toggleRejectApproval('${pr.id}', true)" class="text-green-600 hover:text-green-800 font-bold text-xs">✅</button>
+                        <button onclick="toggleRejectApproval('${pr.id}', false)" class="text-red-600 hover:text-red-800 font-bold text-xs">❌</button>
                     </span>`;
                 });
                 pendingRejectsHtml += `</div></div>`;
@@ -1756,8 +1910,11 @@ async function loadSalaryData() {
                 html += `<span class="text-sm bg-white px-3 py-1 rounded shadow flex items-center gap-2">
                     <span class="font-mono">${pr.orderId || pr.id}</span>
                     <span class="text-xs text-gray-500">(${pr.agent || '—'})</span>
-                    <button onclick="approveRejectFromSalary('${pr.id}')" class="btn-action approve text-xs py-0.5 px-2">
+                    <button onclick="toggleRejectApproval('${pr.id}', true)" class="btn-action approve text-xs py-0.5 px-2">
                         <i data-lucide="check-circle"></i> Approve
+                    </button>
+                    <button onclick="toggleRejectApproval('${pr.id}', false)" class="btn-action delete text-xs py-0.5 px-2">
+                        <i data-lucide="x-circle"></i> Reject
                     </button>
                 </span>`;
             });
@@ -1772,34 +1929,6 @@ async function loadSalaryData() {
         console.error(e);
         container.innerHTML = `<div class="empty-state"><i data-lucide="alert-circle"></i><p class="text-sm text-red-500">Error calculating salary</p></div>`;
         showToast('Error calculating salary', 'error');
-    }
-}
-
-async function approveRejectFromSalary(orderId) {
-    const confirm = await Swal.fire({
-        title: 'Approve Rejection?',
-        text: 'This will count the reject incentive for the agent.',
-        icon: 'question',
-        showCancelButton: true,
-        confirmButtonColor: '#059669',
-        cancelButtonColor: '#64748b',
-        confirmButtonText: 'Yes, approve',
-        cancelButtonText: 'Cancel'
-    });
-    if (!confirm.isConfirmed) return;
-    try {
-        const snap = await db.ref('pickups/' + orderId).once('value');
-        const item = snap.val();
-        if (!item) { showToast('Order not found', 'error'); return; }
-        await db.ref('pickups/' + orderId + '/incentive_approved').set(true);
-        await db.ref('pickups/' + orderId + '/incentive_paid').set(false);
-        showToast('✅ Reject approved! Incentive will be counted.', 'success');
-        loadRejectedAdmin();
-        loadDashboard();
-        loadSalaryData();
-    } catch (e) {
-        showToast('Error approving reject', 'error');
-        console.error(e);
     }
 }
 
