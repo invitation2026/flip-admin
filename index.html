@@ -18,6 +18,7 @@
     </script>
 
     <style>
+        /* (same styles as before) */
         * {
             -webkit-tap-highlight-color: transparent;
         }
@@ -875,6 +876,45 @@
         .commission-col.zero {
             color: #94a3b8;
         }
+        /* Salary global stats */
+        .salary-global-stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+            gap: 10px;
+            margin-bottom: 16px;
+        }
+        .salary-global-stats .stat-box {
+            background: #f8fafc;
+            padding: 12px 14px;
+            border-radius: 10px;
+            text-align: center;
+            border: 1px solid #e2e8f0;
+        }
+        .salary-global-stats .stat-box .num {
+            font-size: 22px;
+            font-weight: 700;
+        }
+        .salary-global-stats .stat-box .num.green {
+            color: #059669;
+        }
+        .salary-global-stats .stat-box .num.blue {
+            color: #4f46e5;
+        }
+        .salary-global-stats .stat-box .num.amber {
+            color: #d97706;
+        }
+        .salary-global-stats .stat-box .num.red {
+            color: #dc2626;
+        }
+        .salary-global-stats .stat-box .num.purple {
+            color: #7c3aed;
+        }
+        .salary-global-stats .stat-box .label {
+            font-size: 10px;
+            color: #94a3b8;
+            text-transform: uppercase;
+            font-weight: 600;
+        }
     </style>
 </head>
 <body>
@@ -1493,7 +1533,7 @@
                 </div>
             </div>
 
-            <!-- ===== SALARY / EARNINGS ===== -->
+            <!-- ===== SALARY / EARNINGS (UPDATED) ===== -->
             <div id="page-salary" class="page-content fade-in" style="display:none;">
                 <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
                     <div>
@@ -1504,14 +1544,27 @@
                         <div class="flex rounded-lg overflow-hidden border border-gray-300">
                             <button id="salaryModeToday" class="salary-toggle-btn active" onclick="setSalaryMode('today')">Today</button>
                             <button id="salaryModeMonthly" class="salary-toggle-btn" onclick="setSalaryMode('monthly')">Monthly</button>
+                            <button id="salaryModeDate" class="salary-toggle-btn" onclick="setSalaryMode('date')">Date</button>
                         </div>
                         <div id="salaryMonthWrapper" style="display:none;">
                             <input type="month" id="salaryMonth" class="px-4 py-2 border border-gray-200 rounded-xl text-sm outline-none focus:border-indigo-400" />
+                        </div>
+                        <div id="salaryDateWrapper" style="display:none;">
+                            <input type="date" id="salaryDate" class="px-4 py-2 border border-gray-200 rounded-xl text-sm outline-none focus:border-indigo-400" />
                         </div>
                         <button onclick="loadSalaryData()" id="salaryLoadBtn" class="btn-action view"><i data-lucide="refresh-cw"></i> Load</button>
                         <button onclick="recalculateAllSalary()" class="btn-action edit"><i data-lucide="calculator"></i> Recalculate</button>
                     </div>
                 </div>
+
+                <!-- Global Stats (Total Pickups, Rejects, Pending, Earnings) -->
+                <div id="salaryGlobalStats" class="salary-global-stats">
+                    <div class="stat-box"><div class="num green" id="globalPickups">0</div><div class="label">Total Pickups</div></div>
+                    <div class="stat-box"><div class="num red" id="globalRejects">0</div><div class="label">Total Rejects</div></div>
+                    <div class="stat-box"><div class="num amber" id="globalPending">0</div><div class="label">Total Pending</div></div>
+                    <div class="stat-box"><div class="num purple" id="globalEarnings">₹0</div><div class="label">Grand Earnings</div></div>
+                </div>
+
                 <div id="salaryContainer" class="space-y-4">
                     <div class="empty-state"><i data-lucide="inbox"></i><p class="text-sm font-medium">Select a view and click Load</p></div>
                 </div>
@@ -1691,7 +1744,7 @@
         </div>
     </div>
 
-    <!-- ========== EXTERNAL SCRIPT (separate file) ========== -->
+    <!-- ========== EXTERNAL SCRIPT ========== -->
     <script src="script.js"></script>
 
 </body>

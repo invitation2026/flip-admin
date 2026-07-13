@@ -18,16 +18,11 @@ const db = firebase.database();
 // COMMISSION BRACKETS – based on PURCHASE PRICE only
 // ==========================================
 const COMMISSION_BRACKETS = [
-    { min: 0, max: 10000, type: 'percentage', value: 10 },   // 10%
-    { min: 10001, max: 31000, type: 'percentage', value: 8 }, // 8%
-    { min: 31001, max: Infinity, type: 'fixed', value: 2500 } // ₹2500 fixed
+    { min: 0, max: 10000, type: 'percentage', value: 10 },
+    { min: 10001, max: 31000, type: 'percentage', value: 8 },
+    { min: 31001, max: Infinity, type: 'fixed', value: 2500 }
 ];
 
-/**
- * Calculate commission based on the purchase price (value).
- * @param {number} purchasePrice - the agreed value at pickup
- * @returns {number} commission amount
- */
 function calculateCommission(purchasePrice) {
     if (!purchasePrice || purchasePrice <= 0) return 0;
     for (const bracket of COMMISSION_BRACKETS) {
@@ -73,6 +68,7 @@ const depositPageSize = 15;
 
 // Salary mode
 let currentSalaryMode = 'today';
+let currentSalaryPeriod = null; // will hold { mode, date, month, year } for activity
 
 // IMEI override state (optional, kept for compatibility)
 let imeiOverride = {};
@@ -148,7 +144,6 @@ async function loadDashboard() {
             total++;
             if (item.status === 'on_hold') return;
 
-            // Commission is based on purchase price and applies to all orders (including inventory)
             const commission = item.commission !== undefined ? item.commission : calculateCommission(item.value || 0);
             totalCommission += commission;
 
@@ -156,7 +151,6 @@ async function loadDashboard() {
                 pickupCount++;
                 if (item.sold) {
                     soldCount++;
-                    // Revenue after commission
                     const netRevenue = (item.salePrice || 0) - commission;
                     revenue += netRevenue;
                     const itemProfit = item.profit !== undefined ? item.profit : (netRevenue - (item.value || 0));
@@ -202,7 +196,7 @@ async function loadDashboard() {
         document.getElementById('statStockValue').textContent = '₹' + totalStockValue;
         document.getElementById('statAgents').textContent = totalAgents;
         document.getElementById('statPresentToday').textContent = presentToday;
-        document.getElementById('statCommission').textContent = '₹' + Math.round(totalCommission); // now includes all pickups
+        document.getElementById('statCommission').textContent = '₹' + Math.round(totalCommission);
 
         document.getElementById('orderCountBadge').textContent = total;
         document.getElementById('pendingBadge').textContent = pendingCount;
@@ -406,6 +400,11 @@ async function toggleRejectApproval(orderId, approve) {
         if (!item) { showToast('Order not found', 'error'); return; }
         await db.ref('pickups/' + orderId + '/incentive_approved').set(approve);
         await db.ref('pickups/' + orderId + '/incentive_paid').set(false);
+        if (approve) {
+            await db.ref('pickups/' + orderId + '/incentive_approved_at').set(Date.now());
+        } else {
+            await db.ref('pickups/' + orderId + '/incentive_approved_at').remove();
+        }
         showToast(`✅ Reject ${action}ed!`, 'success');
         loadRejectedAdmin();
         loadDashboard();
@@ -705,7 +704,6 @@ function viewOrder(orderId) {
     db.ref('pickups/' + orderId).once('value').then(snap => {
         const item = snap.val();
         if (!item) { content.innerHTML = `<div class="empty-state"><i data-lucide="alert-circle"></i><p class="text-sm font-medium">Order not found</p></div>`; return; }
-        // Recalculate commission based on purchase price
         const purchase = item.value || 0;
         const commission = item.commission !== undefined ? item.commission : calculateCommission(purchase);
         if (item.sold && item.profit === undefined) {
@@ -870,7 +868,6 @@ function toggleEditMode() {
         <div><label class="edit-label">Date & Time (IST)</label><input type="datetime-local" id="edit-datetime" value="${datetimeVal}" class="edit-field"></div>`;
         
     if (item.sold) {
-        // Commission recalculated from purchase price on save
         html += `<div class="border-t pt-3"><p class="font-bold">Sale Details</p>
             <div><label class="edit-label">Sale Price</label><input type="number" id="edit-salePrice" value="${item.salePrice || ''}" class="edit-field" placeholder="Optional"></div>
             <div><label class="edit-label">Commission (on Purchase)</label><input type="number" id="edit-commission" value="${item.commission || ''}" class="edit-field" readonly style="background:#f1f5f9;"></div>
@@ -1117,7 +1114,6 @@ async function updateDepositStats() {
     const balance = total - stockValue;
     document.getElementById('depositBalance').textContent = '₹' + balance;
 
-    // Commission now includes all orders (except on_hold) – same as dashboard
     let totalCommission = 0;
     Object.values(data).forEach(item => {
         if (item.status === 'on_hold') return;
@@ -1460,21 +1456,111 @@ function showChangePasswordModal(username) {
 }
 
 // ==========================================
-// AGENT ACTIVITY
+// AGENT ACTIVITY (UPDATED with stats and period support)
 // ==========================================
+// This function is called from agent management (no period)
 function viewAgentActivity(username) {
+    // Default period: today
+    const today = new Date().toISOString().split('T')[0];
+    viewAgentActivityWithPeriod(username, { mode: 'today', date: today });
+}
+
+// New function that accepts a period object
+function viewAgentActivityWithPeriod(username, period) {
     const modal = document.getElementById('activityModal');
     const content = document.getElementById('activityContent');
     const title = document.getElementById('activityModalTitle');
     title.textContent = `Activity: ${username}`;
     modal.style.display = 'flex';
     content.innerHTML = `<div class="text-center py-8"><span class="spinner-sm"></span> Loading...</div>`;
+
+    // Determine date filter
+    let filterFn;
+    let periodLabel = '';
+    if (period.mode === 'today') {
+        const today = new Date().toISOString().split('T')[0];
+        filterFn = (ts) => {
+            if (!ts) return false;
+            const d = new Date(ts).toISOString().split('T')[0];
+            return d === today;
+        };
+        periodLabel = 'Today';
+    } else if (period.mode === 'monthly') {
+        const year = period.year;
+        const month = period.month;
+        const monthStr = String(month).padStart(2, '0');
+        filterFn = (ts) => {
+            if (!ts) return false;
+            const d = new Date(ts);
+            return d.getFullYear() === year && (d.getMonth() + 1) === month;
+        };
+        periodLabel = `${monthStr}-${year}`;
+    } else if (period.mode === 'date') {
+        const date = period.date;
+        filterFn = (ts) => {
+            if (!ts) return false;
+            const d = new Date(ts).toISOString().split('T')[0];
+            return d === date;
+        };
+        periodLabel = date;
+    } else {
+        // fallback: all time
+        filterFn = () => true;
+        periodLabel = 'All Time';
+    }
+
     db.ref('pickups').once('value').then(snap => {
         const data = snap.val() || {};
-        const orders = Object.entries(data).filter(([_, item]) => item.agent === username).map(([id, item]) => ({ id, ...item }));
+        const orders = Object.entries(data)
+            .filter(([_, item]) => item.agent === username && filterFn(item.timestamp))
+            .map(([id, item]) => ({ id, ...item }));
         orders.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
-        if (orders.length === 0) { content.innerHTML = `<div class="empty-state"><i data-lucide="inbox"></i><p class="text-sm font-medium">No activity</p></div>`; lucide.createIcons(); return; }
-        let html = `<div class="space-y-2">`;
+
+        // Compute stats for this agent
+        let pickupCount = 0, rejectCount = 0, rescheduleCount = 0, totalOrders = orders.length;
+        orders.forEach(item => {
+            if (item.status === 'pickup') pickupCount++;
+            else if (item.status === 'rejected') rejectCount++;
+            else if (item.status === 'reschedule') rescheduleCount++;
+        });
+
+        // Compute total for all agents for the same period
+        let allPickup = 0, allReject = 0, allReschedule = 0, allTotal = 0;
+        Object.values(data).forEach(item => {
+            if (filterFn(item.timestamp)) {
+                allTotal++;
+                if (item.status === 'pickup') allPickup++;
+                else if (item.status === 'rejected') allReject++;
+                else if (item.status === 'reschedule') allReschedule++;
+            }
+        });
+
+        let html = `
+            <div class="mb-4">
+                <p class="text-sm text-gray-500">Period: <strong>${periodLabel}</strong></p>
+                <div class="activity-stats" style="display:flex;gap:12px;flex-wrap:wrap;margin-top:8px;">
+                    <div class="stat-box" style="background:#f8fafc;padding:8px 14px;border-radius:8px;border:1px solid #e2e8f0;"><div class="num text-green-600" style="font-size:18px;font-weight:700;">${pickupCount}</div><div class="label" style="font-size:10px;color:#94a3b8;">${username} Pickups</div></div>
+                    <div class="stat-box" style="background:#f8fafc;padding:8px 14px;border-radius:8px;border:1px solid #e2e8f0;"><div class="num text-red-600" style="font-size:18px;font-weight:700;">${rejectCount}</div><div class="label" style="font-size:10px;color:#94a3b8;">${username} Rejects</div></div>
+                    <div class="stat-box" style="background:#f8fafc;padding:8px 14px;border-radius:8px;border:1px solid #e2e8f0;"><div class="num text-amber-600" style="font-size:18px;font-weight:700;">${rescheduleCount}</div><div class="label" style="font-size:10px;color:#94a3b8;">${username} Pending</div></div>
+                    <div class="stat-box" style="background:#f8fafc;padding:8px 14px;border-radius:8px;border:1px solid #e2e8f0;"><div class="num text-blue-600" style="font-size:18px;font-weight:700;">${totalOrders}</div><div class="label" style="font-size:10px;color:#94a3b8;">${username} Total</div></div>
+                </div>
+                <div class="activity-stats" style="display:flex;gap:12px;flex-wrap:wrap;margin-top:8px;">
+                    <div class="stat-box" style="background:#f8fafc;padding:8px 14px;border-radius:8px;border:1px solid #e2e8f0;"><div class="num text-green-600" style="font-size:18px;font-weight:700;">${allPickup}</div><div class="label" style="font-size:10px;color:#94a3b8;">All Agents Pickups</div></div>
+                    <div class="stat-box" style="background:#f8fafc;padding:8px 14px;border-radius:8px;border:1px solid #e2e8f0;"><div class="num text-red-600" style="font-size:18px;font-weight:700;">${allReject}</div><div class="label" style="font-size:10px;color:#94a3b8;">All Agents Rejects</div></div>
+                    <div class="stat-box" style="background:#f8fafc;padding:8px 14px;border-radius:8px;border:1px solid #e2e8f0;"><div class="num text-amber-600" style="font-size:18px;font-weight:700;">${allReschedule}</div><div class="label" style="font-size:10px;color:#94a3b8;">All Agents Pending</div></div>
+                    <div class="stat-box" style="background:#f8fafc;padding:8px 14px;border-radius:8px;border:1px solid #e2e8f0;"><div class="num text-blue-600" style="font-size:18px;font-weight:700;">${allTotal}</div><div class="label" style="font-size:10px;color:#94a3b8;">All Agents Total</div></div>
+                </div>
+            </div>
+        `;
+
+        if (orders.length === 0) {
+            html += `<div class="empty-state"><i data-lucide="inbox"></i><p class="text-sm font-medium">No activity for this period</p></div>`;
+            content.innerHTML = html;
+            lucide.createIcons();
+            return;
+        }
+
+        html += `<div class="space-y-2">`;
         orders.forEach(item => {
             const statusLabel = item.status || 'unknown';
             const statusClass = statusLabel === 'pickup' ? (item.sold ? 'sold' : 'pickup') : statusLabel === 'rejected' ? 'rejected' : statusLabel === 'on_hold' ? 'on_hold' : 'reschedule';
@@ -1482,13 +1568,42 @@ function viewAgentActivity(username) {
             const time = item.timestampIST || item.timestamp || '';
             const model = item.phoneModel || '—';
             const value = item.value !== undefined ? '₹' + item.value : '—';
-            html += `<div class="activity-item flex items-center justify-between py-2 px-3 rounded-xl hover:bg-gray-50 cursor-pointer" onclick="viewOrder('${item.id}')"><div class="flex items-center gap-3"><span class="badge-status ${statusClass}">${displayName}</span><span class="font-mono font-bold text-gray-700 text-sm">${item.orderId || item.id}</span><span class="text-xs text-gray-400 hidden sm:inline">${model}</span><span class="text-xs text-gray-400 hidden md:inline">${value}</span></div><div class="flex items-center gap-2"><span class="text-[10px] text-gray-400">${time}</span><span class="text-xs text-gray-500 italic">${item.reason || '—'}</span></div></div>`;
+
+            // For rejected orders, show approve/reject buttons with timestamp
+            let rejectActions = '';
+            if (statusLabel === 'rejected') {
+                const approved = item.incentive_approved === true;
+                const statusText = approved ? '✅ Approved' : '⏳ Pending';
+                const approvalTime = item.incentive_approved_at ? new Date(item.incentive_approved_at).toLocaleString() : '—';
+                rejectActions = `
+                    <span class="text-xs font-bold ${approved ? 'text-green-600' : 'text-amber-600'}">${statusText}</span>
+                    ${!approved ? `<button onclick="toggleRejectApproval('${item.id}', true)" class="btn-action approve text-xs py-0.5 px-2"><i data-lucide="check-circle"></i></button>` : `<button onclick="toggleRejectApproval('${item.id}', false)" class="btn-action delete text-xs py-0.5 px-2"><i data-lucide="x-circle"></i></button>`}
+                    ${approved ? `<span class="text-[10px] text-gray-400" title="Approved at ${approvalTime}">⏱️ ${approvalTime}</span>` : ''}
+                `;
+            }
+
+            html += `<div class="activity-item flex items-center justify-between py-2 px-3 rounded-xl hover:bg-gray-50 cursor-pointer" onclick="viewOrder('${item.id}')">
+                <div class="flex items-center gap-3">
+                    <span class="badge-status ${statusClass}">${displayName}</span>
+                    <span class="font-mono font-bold text-gray-700 text-sm">${item.orderId || item.id}</span>
+                    <span class="text-xs text-gray-400 hidden sm:inline">${model}</span>
+                    <span class="text-xs text-gray-400 hidden md:inline">${value}</span>
+                </div>
+                <div class="flex items-center gap-2">
+                    ${rejectActions}
+                    <span class="text-[10px] text-gray-400">${time}</span>
+                </div>
+            </div>`;
         });
         html += `</div>`;
         content.innerHTML = html;
         lucide.createIcons();
-    }).catch(err => { content.innerHTML = `<div class="empty-state"><i data-lucide="alert-circle"></i><p class="text-sm font-medium text-red-500">Error</p></div>`; showToast('Error', 'error'); });
+    }).catch(err => {
+        content.innerHTML = `<div class="empty-state"><i data-lucide="alert-circle"></i><p class="text-sm font-medium text-red-500">Error</p></div>`;
+        showToast('Error', 'error');
+    });
 }
+
 function closeActivityModal() { document.getElementById('activityModal').style.display = 'none'; }
 
 // ==========================================
@@ -1716,19 +1831,25 @@ async function blockAgent(username, date) {
 }
 
 // ==========================================
-// SALARY / EARNINGS – hold orders skipped, commission not used here (only incentives)
+// SALARY / EARNINGS – with custom date support and global stats
 // ==========================================
 function setSalaryMode(mode) {
     currentSalaryMode = mode;
     document.getElementById('salaryModeToday').classList.toggle('active', mode === 'today');
     document.getElementById('salaryModeMonthly').classList.toggle('active', mode === 'monthly');
+    document.getElementById('salaryModeDate').classList.toggle('active', mode === 'date');
     document.getElementById('salaryMonthWrapper').style.display = mode === 'monthly' ? 'inline-block' : 'none';
+    document.getElementById('salaryDateWrapper').style.display = mode === 'date' ? 'inline-block' : 'none';
+
     const label = document.getElementById('salaryModeLabel');
     if (mode === 'today') {
         label.textContent = "Today's Earnings";
-    } else {
+    } else if (mode === 'monthly') {
         const monthVal = document.getElementById('salaryMonth').value || 'current month';
         label.textContent = `Earnings for ${monthVal}`;
+    } else if (mode === 'date') {
+        const dateVal = document.getElementById('salaryDate').value || 'selected date';
+        label.textContent = `Earnings for ${dateVal}`;
     }
     loadSalaryData();
 }
@@ -1752,12 +1873,17 @@ async function loadSalaryData() {
 
         if (Object.keys(agents).length === 0) {
             container.innerHTML = `<div class="empty-state"><i data-lucide="inbox"></i><p class="text-sm font-medium">No agents</p></div>`;
+            document.getElementById('globalPickups').textContent = '0';
+            document.getElementById('globalRejects').textContent = '0';
+            document.getElementById('globalPending').textContent = '0';
+            document.getElementById('globalEarnings').textContent = '₹0';
             return;
         }
 
         const today = new Date().toISOString().split('T')[0];
         let year, month, monthStr, daysInMonth;
         let dateFilterFn;
+        let periodInfo = { mode };
 
         if (mode === 'today') {
             year = parseInt(today.split('-')[0]);
@@ -1765,7 +1891,8 @@ async function loadSalaryData() {
             monthStr = String(month).padStart(2, '0');
             daysInMonth = 1;
             dateFilterFn = (ordDate) => ordDate === today;
-        } else {
+            periodInfo.date = today;
+        } else if (mode === 'monthly') {
             const monthInput = document.getElementById('salaryMonth');
             if (!monthInput.value) {
                 const d = new Date();
@@ -1777,10 +1904,36 @@ async function loadSalaryData() {
             monthStr = String(month).padStart(2, '0');
             daysInMonth = new Date(year, month, 0).getDate();
             dateFilterFn = (ordDate) => ordDate.startsWith(`${year}-${monthStr}`);
+            periodInfo.year = year;
+            periodInfo.month = month;
+        } else if (mode === 'date') {
+            const dateInput = document.getElementById('salaryDate');
+            let dateVal = dateInput.value;
+            if (!dateVal) {
+                dateVal = today;
+                dateInput.value = dateVal;
+            }
+            const d = new Date(dateVal);
+            year = d.getFullYear();
+            month = d.getMonth() + 1;
+            monthStr = String(month).padStart(2, '0');
+            daysInMonth = 1;
+            dateFilterFn = (ordDate) => ordDate === dateVal;
+            periodInfo.date = dateVal;
+        } else {
+            // fallback all time
+            dateFilterFn = () => true;
+            periodInfo.mode = 'all';
         }
+
+        // Store period for activity links
+        currentSalaryPeriod = periodInfo;
 
         const pickupsByAgentDate = {};
         const allRejectedOrders = [];
+
+        // Global counts
+        let globalPickup = 0, globalReject = 0, globalPending = 0, globalEarnings = 0;
 
         for (const [oid, ord] of Object.entries(pickups)) {
             if (!ord.timestamp) continue;
@@ -1796,6 +1949,10 @@ async function loadSalaryData() {
             if (ord.status === 'rejected' && !ord.incentive_approved) {
                 allRejectedOrders.push({ id: oid, ...ord });
             }
+            // Global counts
+            if (ord.status === 'pickup') globalPickup++;
+            else if (ord.status === 'rejected') globalReject++;
+            else if (ord.status === 'reschedule') globalPending++;
         }
 
         let html = '';
@@ -1815,9 +1972,11 @@ async function loadSalaryData() {
 
             const userAttendance = allAttendance[uname] || {};
 
-            const loopDays = mode === 'today' ? [new Date().getDate()] : Array.from({ length: daysInMonth }, (_, i) => i + 1);
+            const loopDays = mode === 'today' || mode === 'date' ? [new Date().getDate()] : Array.from({ length: daysInMonth }, (_, i) => i + 1);
+            const datePrefix = mode === 'date' ? periodInfo.date : (mode === 'today' ? today : `${year}-${monthStr}`);
+            let agentPickupCount = 0, agentRejectCount = 0, agentPendingCount = 0;
             for (const d of loopDays) {
-                const dateStr = mode === 'today' ? today : `${year}-${monthStr}-${String(d).padStart(2, '0')}`;
+                const dateStr = (mode === 'today' || mode === 'date') ? (mode === 'date' ? periodInfo.date : today) : `${year}-${monthStr}-${String(d).padStart(2, '0')}`;
                 const att = userAttendance[dateStr] || {};
                 const isPresent = att.status === 'present';
                 const salaryCounted = att.salary_counted !== false;
@@ -1834,12 +1993,17 @@ async function loadSalaryData() {
                 for (const ord of dayPickups) {
                     if (ord.status === 'pickup') {
                         dayPickupInc += pickupInc;
+                        agentPickupCount++;
                     }
                     if (ord.status === 'rejected' && ord.incentive_approved === true) {
                         dayRejectInc += rejectInc;
+                        agentRejectCount++;
                     }
                     if (ord.status === 'rejected' && ord.incentive_approved !== true) {
                         pendingRejects.push({ id: ord.orderId || ord.id, ...ord });
+                    }
+                    if (ord.status === 'reschedule') {
+                        agentPendingCount++;
                     }
                 }
                 totalPickupIncentive += dayPickupInc;
@@ -1862,6 +2026,7 @@ async function loadSalaryData() {
 
             const total = totalBaseSalary + totalPickupIncentive + totalRejectIncentive;
             grandTotal += total;
+            globalEarnings += total;
 
             let pendingRejectsHtml = '';
             if (uniquePending.length > 0) {
@@ -1880,7 +2045,12 @@ async function loadSalaryData() {
 
             html += `<div class="glass rounded-2xl p-5 shadow-sm border border-gray-100 salary-summary-card">
                 <div class="flex flex-wrap items-center justify-between gap-2">
-                    <div><span class="font-bold text-gray-800 cursor-pointer hover:text-indigo-600" onclick="viewAttendanceHistory('${uname}')">${uData.name}</span> <span class="text-sm text-gray-500">(${uname})</span></div>
+                    <div>
+                        <span class="font-bold text-gray-800 cursor-pointer hover:text-indigo-600" onclick="viewAgentActivityWithPeriod('${uname}', ${JSON.stringify(currentSalaryPeriod).replace(/"/g, '&quot;')})">${uData.name}</span>
+                        <span class="text-sm text-gray-500">(${uname})</span>
+                        <button onclick="viewAgentActivityWithPeriod('${uname}', ${JSON.stringify(currentSalaryPeriod).replace(/"/g, '&quot;')})" class="btn-action activity text-xs ml-2"><i data-lucide="activity"></i> Activity</button>
+                        <span class="text-xs text-gray-400 ml-2">📦 ${agentPickupCount} | ❌ ${agentRejectCount} | ⏳ ${agentPendingCount}</span>
+                    </div>
                     <div class="text-sm font-bold text-indigo-600">₹${Math.round(total)}</div>
                 </div>
                 <div class="grid grid-cols-2 sm:grid-cols-3 gap-2 mt-2 text-sm">
@@ -1892,6 +2062,12 @@ async function loadSalaryData() {
                 ${pendingRejectsHtml}
             </div>`;
         }
+
+        // Update global stats
+        document.getElementById('globalPickups').textContent = globalPickup;
+        document.getElementById('globalRejects').textContent = globalReject;
+        document.getElementById('globalPending').textContent = globalPending;
+        document.getElementById('globalEarnings').textContent = '₹' + Math.round(globalEarnings);
 
         const uniqueAllPending = [];
         const seenAll = new Set();
@@ -1962,6 +2138,7 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('attendanceDate').value = new Date().toISOString().split('T')[0];
     const today = new Date();
     document.getElementById('salaryMonth').value = today.getFullYear() + '-' + String(today.getMonth() + 1).padStart(2, '0');
+    document.getElementById('salaryDate').value = today.toISOString().split('T')[0];
     document.getElementById('depositDate').value = today.toISOString().split('T')[0];
     document.querySelector('input[name="regRole"][value="agent"]').checked = true;
     toggleAdminFields();
