@@ -1102,11 +1102,13 @@ async function updateDepositStats() {
     document.getElementById('depositCountDisplay').textContent = allDeposits.length + ' entries';
     document.getElementById('depositsBadge').textContent = allDeposits.length;
 
+    // *** CHANGED: Stock Value = sum of all pickups (both sold and unsold) ***
     let stockValue = 0;
     const snap = await db.ref('pickups').once('value');
     const data = snap.val() || {};
     Object.values(data).forEach(item => {
-        if (item.status === 'pickup' && !item.sold) {
+        // Include only orders with status 'pickup' (both sold and unsold)
+        if (item.status === 'pickup') {
             stockValue += item.value || 0;
         }
     });
