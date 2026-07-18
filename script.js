@@ -14,6 +14,112 @@ const firebaseConfig = {
 firebase.initializeApp(firebaseConfig);
 const db = firebase.database();
 
+// ========== DOCUMENTS (Bill / Aadhaar) helpers ==========
+function _compressImageFileAdmin(file, maxDim = 1400, quality = 0.72) {
+    return new Promise((resolve, reject) => {
+        if (!file) return reject('No file');
+        if (!file.type.startsWith('image/')) return reject('Not an image');
+        const reader = new FileReader();
+        reader.onerror = () => reject('Read error');
+        reader.onload = () => {
+            const img = new Image();
+            img.onerror = () => reject('Image decode error');
+            img.onload = () => {
+                let { width, height } = img;
+                if (width > maxDim || height > maxDim) {
+                    if (width > height) { height = Math.round(height * maxDim / width); width = maxDim; }
+                    else                { width  = Math.round(width  * maxDim / height); height = maxDim; }
+                }
+                const c = document.createElement('canvas');
+                c.width = width; c.height = height;
+                const ctx = c.getContext('2d');
+                ctx.fillStyle = '#fff'; ctx.fillRect(0,0,width,height);
+                ctx.drawImage(img,0,0,width,height);
+                try { resolve(c.toDataURL('image/jpeg', quality)); }
+                catch(e){ reject(e); }
+            };
+            img.src = reader.result;
+        };
+        reader.readAsDataURL(file);
+    });
+}
+
+// Full-screen image viewer
+function openImageViewer(dataUrl, label) {
+    if (!dataUrl) return;
+    const modal = document.getElementById('imgViewerModal');
+    const img   = document.getElementById('imgViewerImg');
+    const cap   = document.getElementById('imgViewerCaption');
+    const dl    = document.getElementById('imgViewerDownload');
+    img.src = dataUrl;
+    cap.textContent = label || 'Document';
+    dl.href = dataUrl;
+    dl.download = (label || 'document').replace(/\s+/g,'_') + '.jpg';
+    modal.style.display = 'flex';
+}
+function closeImageViewer() {
+    const modal = document.getElementById('imgViewerModal');
+    if (modal) modal.style.display = 'none';
+    const img = document.getElementById('imgViewerImg');
+    if (img) img.src = '';
+}
+
+// Admin upload / replace image directly (view mode)
+async function adminUploadDocImage(which) {
+    if (!detailOrderId) return;
+    const inp = document.createElement('input');
+    inp.type = 'file'; inp.accept = 'image/*';
+    inp.onchange = async () => {
+        const f = inp.files && inp.files[0];
+        if (!f) return;
+        Swal.fire({ title:'Uploading…', allowOutsideClick:false, didOpen:()=>Swal.showLoading() });
+        try {
+            const dataUrl = await _compressImageFileAdmin(f);
+            const field = which === 'bill' ? 'billImage' : 'aadhaarImage';
+            await db.ref('pickups/' + detailOrderId).update({ [field]: dataUrl });
+            Swal.close();
+            showToast('✅ Image saved', 'success');
+            // Refresh detail view
+            db.ref('pickups/' + detailOrderId).once('value').then(snap => {
+                const it = snap.val(); if (it) { editData = { ...it, id: detailOrderId }; renderDetailView(it); }
+            });
+            loadOrders();
+        } catch(e) {
+            Swal.close();
+            showToast('Upload failed', 'error');
+            console.error(e);
+        }
+    };
+    inp.click();
+}
+
+// Save doc number (bill / aadhaar) inline from view mode
+async function adminSaveDocNumber(which) {
+    if (!detailOrderId) return;
+    const field = which === 'bill' ? 'billNumber' : 'aadhaarNumber';
+    const label = which === 'bill' ? 'Bill Number' : 'Aadhaar Number';
+    const cur = (editData && editData[field]) || '';
+    const { value: v, isConfirmed } = await Swal.fire({
+        title: 'Edit ' + label,
+        input: 'text',
+        inputValue: cur,
+        inputPlaceholder: label,
+        showCancelButton: true,
+        confirmButtonColor: '#4f46e5',
+        confirmButtonText: 'Save'
+    });
+    if (!isConfirmed) return;
+    try {
+        await db.ref('pickups/' + detailOrderId).update({ [field]: (v || '').trim() });
+        showToast('✅ Updated', 'success');
+        db.ref('pickups/' + detailOrderId).once('value').then(snap => {
+            const it = snap.val(); if (it) { editData = { ...it, id: detailOrderId }; renderDetailView(it); }
+        });
+        loadOrders();
+    } catch(e) { showToast('Update failed', 'error'); console.error(e); }
+}
+
+
 // ==========================================
 // COMMISSION BRACKETS – based on PURCHASE PRICE only
 // ==========================================
@@ -759,6 +865,39 @@ function renderDetailView(item) {
                      <div class="detail-item"><div class="label">Previous Status</div><div class="value">${item.previous_status || '—'}</div></div>`;
     }
     let html = `<div class="flex items-center gap-3 mb-4"><span class="badge-status ${statusClass} text-sm px-4 py-1.5">${displayName}</span><span class="font-mono font-bold text-gray-800 text-sm">${item.orderId || item.id}</span>${item.agent ? `<span class="text-xs text-gray-400">(Agent: ${item.agent})</span>` : ''}</div><div class="detail-grid"><div class="detail-item"><div class="label">Phone Model</div><div class="value" id="dv-model">${item.phoneModel || '—'}</div></div><div class="detail-item"><div class="label">IMEI</div><div class="value font-mono text-xs" id="dv-imei">${item.imei || '—'}</div></div>${item.imei2 ? `<div class="detail-item"><div class="label">IMEI 2</div><div class="value font-mono text-xs" id="dv-imei2">${item.imei2}</div></div>` : ''}<div class="detail-item"><div class="label">Purchase Price</div><div class="value font-bold" id="dv-value">${item.value !== undefined && item.value !== null ? '₹' + item.value : '—'}</div></div><div class="detail-item"><div class="label">Customer Name</div><div class="value" id="dv-customer">${item.customerName || '—'}</div></div><div class="detail-item"><div class="label">Reason</div><div class="value" id="dv-reason">${item.reason || '—'}</div></div><div class="detail-item"><div class="label">Status</div><div class="value" id="dv-status">${displayName}</div></div><div class="detail-item"><div class="label">Time (IST)</div><div class="value text-xs" id="dv-time">${item.timestampIST || item.timestamp || '—'}</div></div>${holdHtml}${saleHtml}</div>`;
+
+    // ===== Documents section (Bill + Aadhaar) =====
+    const _billImg = item.billImage || '';
+    const _aadImg  = item.aadhaarImage || '';
+    const _billNo  = item.billNumber || '';
+    const _aadNo   = item.aadhaarNumber || '';
+    const _docCard = (which, label, num, img, color) => {
+        const thumb = img
+            ? `<img src="${img}" onclick="openImageViewer(document.getElementById('doc_${which}_full').dataset.src, '${label}')" class="w-full h-40 object-cover rounded-lg border border-gray-200 cursor-zoom-in hover:opacity-90 transition" alt="${label}">
+               <span id="doc_${which}_full" data-src="${img}" style="display:none"></span>`
+            : `<div class="w-full h-40 rounded-lg border-2 border-dashed border-gray-200 flex items-center justify-center text-gray-400 text-xs">No image</div>`;
+        return `
+        <div class="rounded-xl border border-gray-200 p-3 bg-gradient-to-br from-${color}-50 to-white">
+            <div class="flex items-center justify-between mb-2">
+                <p class="text-xs font-bold text-${color}-700 uppercase tracking-wide">${label}</p>
+                <button onclick="adminSaveDocNumber('${which}')" class="text-[11px] text-indigo-600 font-semibold hover:underline">✏️ Edit No.</button>
+            </div>
+            <div class="text-sm font-mono font-semibold text-gray-800 mb-2 break-all">${num || '<span class="text-gray-400 font-sans font-normal">— no number —</span>'}</div>
+            ${thumb}
+            <div class="flex gap-2 mt-2">
+                ${img ? `<button onclick="openImageViewer('${img.replace(/'/g, "\\'")}', '${label}')" class="flex-1 text-xs font-semibold py-2 rounded-lg bg-gray-900 text-white hover:bg-gray-700">👁 View Full</button>` : ''}
+                <button onclick="adminUploadDocImage('${which}')" class="flex-1 text-xs font-semibold py-2 rounded-lg bg-${color}-600 text-white hover:bg-${color}-700">${img ? '🔄 Replace' : '⬆ Upload'}</button>
+            </div>
+        </div>`;
+    };
+    html += `<div class="mt-5 pt-4 border-t border-gray-100">
+        <p class="text-xs font-bold text-gray-500 uppercase tracking-wide mb-3">📄 Documents</p>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            ${_docCard('bill', 'Bill', _billNo, _billImg, 'blue')}
+            ${_docCard('aadhaar', 'Aadhaar', _aadNo, _aadImg, 'indigo')}
+        </div>
+    </div>`;
+
     content.innerHTML = html;
     lucide.createIcons();
     editData = { ...item };
@@ -865,7 +1004,20 @@ function toggleEditMode() {
         <div><label class="edit-label">Purchase Price (₹)</label><input type="number" id="edit-value" value="${item.value !== undefined && item.value !== null ? item.value : ''}" class="edit-field" placeholder="Optional"></div>
         <div><label class="edit-label">Customer Name</label><input type="text" id="edit-customer" value="${item.customerName || ''}" class="edit-field" placeholder="Optional"></div>
         <div><label class="edit-label">Reason</label><input type="text" id="edit-reason" value="${item.reason || ''}" class="edit-field" placeholder="Optional"></div>
-        <div><label class="edit-label">Date & Time (IST)</label><input type="datetime-local" id="edit-datetime" value="${datetimeVal}" class="edit-field"></div>`;
+        <div><label class="edit-label">Date & Time (IST)</label><input type="datetime-local" id="edit-datetime" value="${datetimeVal}" class="edit-field"></div>
+        <div class="pt-3 border-t border-gray-100">
+            <p class="text-xs font-bold text-gray-500 uppercase tracking-wide mb-2">📄 Documents</p>
+            <div><label class="edit-label">Bill Number</label><input type="text" id="edit-billNumber" value="${item.billNumber || ''}" class="edit-field" placeholder="Optional"></div>
+            <div class="mt-2"><label class="edit-label">Bill Image</label>
+                <button type="button" onclick="adminUploadDocImage('bill')" class="w-full py-2.5 rounded-lg border-2 border-dashed border-blue-300 bg-blue-50 text-blue-700 font-semibold text-sm">${item.billImage ? '🔄 Replace Bill Image' : '⬆ Upload Bill Image'}</button>
+                ${item.billImage ? `<div class="mt-2"><img src="${item.billImage}" onclick="openImageViewer('${(item.billImage||'').replace(/'/g,"\\'")}','Bill')" class="w-full h-32 object-cover rounded-lg border cursor-zoom-in"></div>` : ''}
+            </div>
+            <div class="mt-3"><label class="edit-label">Aadhaar Number</label><input type="text" id="edit-aadhaarNumber" value="${item.aadhaarNumber || ''}" class="edit-field font-mono" placeholder="Optional" maxlength="14"></div>
+            <div class="mt-2"><label class="edit-label">Aadhaar Image</label>
+                <button type="button" onclick="adminUploadDocImage('aadhaar')" class="w-full py-2.5 rounded-lg border-2 border-dashed border-indigo-300 bg-indigo-50 text-indigo-700 font-semibold text-sm">${item.aadhaarImage ? '🔄 Replace Aadhaar Image' : '⬆ Upload Aadhaar Image'}</button>
+                ${item.aadhaarImage ? `<div class="mt-2"><img src="${item.aadhaarImage}" onclick="openImageViewer('${(item.aadhaarImage||'').replace(/'/g,"\\'")}','Aadhaar')" class="w-full h-32 object-cover rounded-lg border cursor-zoom-in"></div>` : ''}
+            </div>
+        </div>`;
         
     if (item.sold) {
         html += `<div class="border-t pt-3"><p class="font-bold">Sale Details</p>
@@ -998,7 +1150,9 @@ async function saveEdit() {
     const buyerContact = document.getElementById('edit-buyerContact')?.value.trim() || '';
     const saleDate = document.getElementById('edit-saleDate')?.value || '';
     if (!orderId) { showToast('Order ID required', 'error'); return; }
-    let updated = { orderId, status, phoneModel: model || '', imei: imei || '', imei2: imei2 || '', value: value || 0, customerName: customer || '', reason: reason || '', timestamp: editData.timestamp, timestampIST: editData.timestampIST || '' };
+    const billNumberVal    = (document.getElementById('edit-billNumber')?.value || '').trim();
+    const aadhaarNumberVal = (document.getElementById('edit-aadhaarNumber')?.value || '').trim();
+    let updated = { orderId, status, phoneModel: model || '', imei: imei || '', imei2: imei2 || '', value: value || 0, customerName: customer || '', reason: reason || '', billNumber: billNumberVal, aadhaarNumber: aadhaarNumberVal, timestamp: editData.timestamp, timestampIST: editData.timestampIST || '' };
     if (datetimeVal) { const d = new Date(datetimeVal); if (!isNaN(d)) { updated.timestamp = d.toISOString(); const istOffset = 5.5 * 60 * 60 * 1000; const istTime = new Date(d.getTime() + istOffset); const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']; const dd = String(istTime.getUTCDate()).padStart(2,'0'); const mmm = months[istTime.getUTCMonth()]; const yyyy = istTime.getUTCFullYear(); let hours = istTime.getUTCHours(); const minutes = String(istTime.getUTCMinutes()).padStart(2,'0'); const seconds = String(istTime.getUTCSeconds()).padStart(2,'0'); const ampm = hours >= 12 ? 'PM' : 'AM'; hours = hours % 12 || 12; const hh = String(hours).padStart(2,'0'); updated.timestampIST = `${dd}-${mmm}-${yyyy}, ${hh}:${minutes}:${seconds} ${ampm} IST`; } } else { updated.timestamp = editData.timestamp; updated.timestampIST = editData.timestampIST; }
     if (editData.sold) {
         const commission = calculateCommission(value);
