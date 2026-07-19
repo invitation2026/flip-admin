@@ -15,6 +15,19 @@ firebase.initializeApp(firebaseConfig);
 const db = firebase.database();
 
 // ========== DOCUMENTS (Bill / Aadhaar) helpers ==========
+function _escape(s) { return (s || '').replace(/'/g, "\\'"); }
+const ADMIN_MAX_DOC_IMAGES = 3;
+
+// Read a doc's images as a normalized array (handles legacy single-image field)
+function getDocImages(item, which) {
+    if (!item) return [];
+    const arrField = which === 'bill' ? 'billImages' : 'aadhaarImages';
+    const legacy   = which === 'bill' ? 'billImage'  : 'aadhaarImage';
+    const arr = Array.isArray(item[arrField]) ? item[arrField].slice() : [];
+    if (arr.length === 0 && item[legacy]) arr.push(item[legacy]);
+    return arr.filter(Boolean);
+}
+
 function _compressImageFileAdmin(file, maxDim = 1400, quality = 0.72) {
     return new Promise((resolve, reject) => {
         if (!file) return reject('No file');
@@ -64,43 +77,93 @@ function closeImageViewer() {
     if (img) img.src = '';
 }
 
-// Admin upload / replace image directly (view mode)
-async function adminUploadDocImage(which) {
-    if (!detailOrderId) return;
-    const inp = document.createElement('input');
-    inp.type = 'file'; inp.accept = 'image/*';
-    inp.onchange = async () => {
-        const f = inp.files && inp.files[0];
-        if (!f) return;
-        Swal.fire({ title:'Uploading…', allowOutsideClick:false, didOpen:()=>Swal.showLoading() });
-        try {
-            const dataUrl = await _compressImageFileAdmin(f);
-            const field = which === 'bill' ? 'billImage' : 'aadhaarImage';
-            await db.ref('pickups/' + detailOrderId).update({ [field]: dataUrl });
-            Swal.close();
-            showToast('✅ Image saved', 'success');
-            // Refresh detail view
-            db.ref('pickups/' + detailOrderId).once('value').then(snap => {
-                const it = snap.val(); if (it) { editData = { ...it, id: detailOrderId }; renderDetailView(it); }
-            });
-            loadOrders();
-        } catch(e) {
-            Swal.close();
-            showToast('Upload failed', 'error');
-            console.error(e);
-        }
-    };
-    inp.click();
+// Ask user: Camera vs Gallery, then open a file input accordingly
+function _pickImageSource(useCamera, multiple) {
+    return new Promise((resolve) => {
+        const inp = document.createElement('input');
+        inp.type = 'file';
+        inp.accept = 'image/*';
+        if (useCamera) inp.setAttribute('capture', 'environment');
+        if (multiple)  inp.multiple = true;
+        inp.onchange = () => resolve(inp.files ? Array.from(inp.files) : []);
+        // Some browsers need the input in DOM
+        inp.style.position = 'fixed'; inp.style.left = '-9999px';
+        document.body.appendChild(inp);
+        inp.click();
+        setTimeout(() => { try { document.body.removeChild(inp); } catch(_){} }, 60000);
+    });
 }
 
-// NEW: Delete image (Bill / Aadhaar)
-async function adminDeleteDocImage(which) {
+// Admin upload / add image(s) — appends to array, max ADMIN_MAX_DOC_IMAGES
+async function adminUploadDocImage(which) {
     if (!detailOrderId) return;
-    const field = which === 'bill' ? 'billImage' : 'aadhaarImage';
+    // Get current images from cached editData
+    const current = getDocImages(editData || {}, which);
+    if (current.length >= ADMIN_MAX_DOC_IMAGES) {
+        showToast(`Max ${ADMIN_MAX_DOC_IMAGES} images allowed`, 'error');
+        return;
+    }
     const label = which === 'bill' ? 'Bill' : 'Aadhaar';
+    const choice = await Swal.fire({
+        title: `Add ${label} Image`,
+        text: `${current.length}/${ADMIN_MAX_DOC_IMAGES} used`,
+        showDenyButton: true,
+        showCancelButton: true,
+        confirmButtonText: '📷 Camera',
+        denyButtonText:    '🖼️ Gallery',
+        cancelButtonText:  'Cancel',
+        confirmButtonColor: '#4f46e5',
+        denyButtonColor:    '#0ea5e9'
+    });
+    if (choice.isDismissed) return;
+    const useCamera = choice.isConfirmed;   // Confirm = Camera, Deny = Gallery
+    const files = await _pickImageSource(useCamera, !useCamera);   // gallery = multi
+    if (!files.length) return;
+
+    Swal.fire({ title:'Uploading…', allowOutsideClick:false, didOpen:()=>Swal.showLoading() });
+    try {
+        const room = ADMIN_MAX_DOC_IMAGES - current.length;
+        const toDo = files.slice(0, room);
+        const compressed = [];
+        for (const f of toDo) {
+            try { compressed.push(await _compressImageFileAdmin(f)); }
+            catch(e) { console.error(e); }
+        }
+        if (!compressed.length) { Swal.close(); showToast('Failed to process images', 'error'); return; }
+        const newArr = current.concat(compressed);
+        const arrField = which === 'bill' ? 'billImages' : 'aadhaarImages';
+        const legacyField = which === 'bill' ? 'billImage' : 'aadhaarImage';
+        // Store array; keep legacy field mirrored to first image for backward compat
+        await db.ref('pickups/' + detailOrderId).update({
+            [arrField]: newArr,
+            [legacyField]: newArr[0] || null
+        });
+        Swal.close();
+        showToast(`✅ ${compressed.length} image${compressed.length>1?'s':''} saved`, 'success');
+        db.ref('pickups/' + detailOrderId).once('value').then(snap => {
+            const it = snap.val(); if (it) { editData = { ...it, id: detailOrderId }; renderDetailView(it); }
+        });
+        loadOrders();
+    } catch(e) {
+        Swal.close();
+        showToast('Upload failed', 'error');
+        console.error(e);
+    }
+}
+
+// Delete one image by index (or all if idx is null)
+async function adminDeleteDocImage(which, idx) {
+    if (!detailOrderId) return;
+    const arrField = which === 'bill' ? 'billImages' : 'aadhaarImages';
+    const legacyField = which === 'bill' ? 'billImage' : 'aadhaarImage';
+    const label = which === 'bill' ? 'Bill' : 'Aadhaar';
+    const current = getDocImages(editData || {}, which);
+    if (!current.length) return;
+
+    const isAll = (idx === undefined || idx === null);
     const confirm = await Swal.fire({
-        title: `Delete ${label} Image?`,
-        text: 'This will permanently remove the image from this order.',
+        title: isAll ? `Delete ALL ${label} Images?` : `Delete this ${label} image?`,
+        text: 'This will permanently remove the image(s) from this order.',
         icon: 'warning',
         showCancelButton: true,
         confirmButtonColor: '#dc2626',
@@ -110,9 +173,14 @@ async function adminDeleteDocImage(which) {
     });
     if (!confirm.isConfirmed) return;
     try {
-        await db.ref('pickups/' + detailOrderId).update({ [field]: null });
-        showToast(`🗑️ ${label} image deleted`, 'success');
-        // Refresh detail view
+        let newArr;
+        if (isAll) newArr = [];
+        else { newArr = current.slice(); newArr.splice(idx, 1); }
+        await db.ref('pickups/' + detailOrderId).update({
+            [arrField]: newArr.length ? newArr : null,
+            [legacyField]: newArr[0] || null
+        });
+        showToast(`🗑️ Deleted`, 'success');
         db.ref('pickups/' + detailOrderId).once('value').then(snap => {
             const it = snap.val(); if (it) { editData = { ...it, id: detailOrderId }; renderDetailView(it); }
         });
@@ -896,38 +964,41 @@ function renderDetailView(item) {
     }
     let html = `<div class="flex items-center gap-3 mb-4"><span class="badge-status ${statusClass} text-sm px-4 py-1.5">${displayName}</span><span class="font-mono font-bold text-gray-800 text-sm">${item.orderId || item.id}</span>${item.agent ? `<span class="text-xs text-gray-400">(Agent: ${item.agent})</span>` : ''}</div><div class="detail-grid"><div class="detail-item"><div class="label">Phone Model</div><div class="value" id="dv-model">${item.phoneModel || '—'}</div></div><div class="detail-item"><div class="label">IMEI</div><div class="value font-mono text-xs" id="dv-imei">${item.imei || '—'}</div></div>${item.imei2 ? `<div class="detail-item"><div class="label">IMEI 2</div><div class="value font-mono text-xs" id="dv-imei2">${item.imei2}</div></div>` : ''}<div class="detail-item"><div class="label">Purchase Price</div><div class="value font-bold" id="dv-value">${item.value !== undefined && item.value !== null ? '₹' + item.value : '—'}</div></div><div class="detail-item"><div class="label">Customer Name</div><div class="value" id="dv-customer">${item.customerName || '—'}</div></div><div class="detail-item"><div class="label">Reason</div><div class="value" id="dv-reason">${item.reason || '—'}</div></div><div class="detail-item"><div class="label">Status</div><div class="value" id="dv-status">${displayName}</div></div><div class="detail-item"><div class="label">Time (IST)</div><div class="value text-xs" id="dv-time">${item.timestampIST || item.timestamp || '—'}</div></div>${holdHtml}${saleHtml}</div>`;
 
-    // ===== Documents section (Bill + Aadhaar) =====
-    const _billImg = item.billImage || '';
-    const _aadImg  = item.aadhaarImage || '';
-    const _billNo  = item.billNumber || '';
-    const _aadNo   = item.aadhaarNumber || '';
-    const _docCard = (which, label, num, img, color) => {
-        const thumb = img
-            ? `<img src="${img}" onclick="openImageViewer(document.getElementById('doc_${which}_full').dataset.src, '${label}')" class="w-full h-40 object-cover rounded-lg border border-gray-200 cursor-zoom-in hover:opacity-90 transition" alt="${label}">
-               <span id="doc_${which}_full" data-src="${img}" style="display:none"></span>`
-            : `<div class="w-full h-40 rounded-lg border-2 border-dashed border-gray-200 flex items-center justify-center text-gray-400 text-xs">No image</div>`;
-        // delete button only if image exists
-        const delBtn = img ? `<button onclick="adminDeleteDocImage('${which}')" class="flex-1 text-xs font-semibold py-2 rounded-lg bg-red-600 text-white hover:bg-red-700">🗑 Delete</button>` : '';
+    // ===== Documents section (Bill + Aadhaar) — VIEW MODE: no direct upload =====
+    const _billImgs = getDocImages(item, 'bill');
+    const _aadImgs  = getDocImages(item, 'aadhaar');
+    const _billNo   = item.billNumber || '';
+    const _aadNo    = item.aadhaarNumber || '';
+    const _escape   = (s) => (s || '').replace(/'/g, "\\'");
+    const _docCard = (which, label, num, imgs, color) => {
+        let gallery;
+        if (imgs.length === 0) {
+            gallery = `<div class="w-full h-32 rounded-lg border-2 border-dashed border-gray-200 flex items-center justify-center text-gray-400 text-xs">No image</div>`;
+        } else {
+            gallery = `<div class="grid grid-cols-3 gap-2">` + imgs.map((img, i) => {
+                const kb = Math.round((img.length * 3 / 4) / 1024);
+                return `<div class="relative group">
+                    <img src="${img}" onclick="openImageViewer('${_escape(img)}','${label} ${i+1}')" class="w-full h-24 object-cover rounded-lg border border-gray-200 cursor-zoom-in hover:opacity-90 transition" alt="${label} ${i+1}">
+                    <button onclick="adminDeleteDocImage('${which}',${i})" class="absolute -top-1.5 -right-1.5 w-6 h-6 rounded-full bg-red-600 text-white text-xs font-bold shadow-md hover:bg-red-700" title="Delete">✕</button>
+                    <div class="absolute bottom-0 left-0 right-0 bg-black/50 text-white text-[9px] text-center rounded-b-lg">${kb}KB</div>
+                </div>`;
+            }).join('') + `</div>`;
+        }
         return `
         <div class="rounded-xl border border-gray-200 p-3 bg-gradient-to-br from-${color}-50 to-white">
             <div class="flex items-center justify-between mb-2">
-                <p class="text-xs font-bold text-${color}-700 uppercase tracking-wide">${label}</p>
+                <p class="text-xs font-bold text-${color}-700 uppercase tracking-wide">${label} <span class="text-[10px] text-gray-500 font-normal">(${imgs.length}/${ADMIN_MAX_DOC_IMAGES})</span></p>
                 <button onclick="adminSaveDocNumber('${which}')" class="text-[11px] text-indigo-600 font-semibold hover:underline">✏️ Edit No.</button>
             </div>
             <div class="text-sm font-mono font-semibold text-gray-800 mb-2 break-all">${num || '<span class="text-gray-400 font-sans font-normal">— no number —</span>'}</div>
-            ${thumb}
-            <div class="flex gap-2 mt-2 flex-wrap">
-                ${img ? `<button onclick="openImageViewer('${img.replace(/'/g, "\\'")}', '${label}')" class="flex-1 text-xs font-semibold py-2 rounded-lg bg-gray-900 text-white hover:bg-gray-700">👁 View Full</button>` : ''}
-                <button onclick="adminUploadDocImage('${which}')" class="flex-1 text-xs font-semibold py-2 rounded-lg bg-${color}-600 text-white hover:bg-${color}-700">${img ? '🔄 Replace' : '⬆ Upload'}</button>
-                ${delBtn}
-            </div>
+            ${gallery}
         </div>`;
     };
     html += `<div class="mt-5 pt-4 border-t border-gray-100">
-        <p class="text-xs font-bold text-gray-500 uppercase tracking-wide mb-3">📄 Documents</p>
+        <p class="text-xs font-bold text-gray-500 uppercase tracking-wide mb-3">📄 Documents <span class="text-[10px] font-normal text-gray-400">(add/replace in Edit mode)</span></p>
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            ${_docCard('bill', 'Bill', _billNo, _billImg, 'blue')}
-            ${_docCard('aadhaar', 'Aadhaar', _aadNo, _aadImg, 'indigo')}
+            ${_docCard('bill', 'Bill', _billNo, _billImgs, 'blue')}
+            ${_docCard('aadhaar', 'Aadhaar', _aadNo, _aadImgs, 'indigo')}
         </div>
     </div>`;
 
@@ -1041,14 +1112,14 @@ function toggleEditMode() {
         <div class="pt-3 border-t border-gray-100">
             <p class="text-xs font-bold text-gray-500 uppercase tracking-wide mb-2">📄 Documents</p>
             <div><label class="edit-label">Bill Number</label><input type="text" id="edit-billNumber" value="${item.billNumber || ''}" class="edit-field" placeholder="Optional"></div>
-            <div class="mt-2"><label class="edit-label">Bill Image</label>
-                <button type="button" onclick="adminUploadDocImage('bill')" class="w-full py-2.5 rounded-lg border-2 border-dashed border-blue-300 bg-blue-50 text-blue-700 font-semibold text-sm">${item.billImage ? '🔄 Replace Bill Image' : '⬆ Upload Bill Image'}</button>
-                ${item.billImage ? `<div class="mt-2 flex items-center gap-2"><img src="${item.billImage}" onclick="openImageViewer('${(item.billImage||'').replace(/'/g,"\\'")}','Bill')" class="w-32 h-24 object-cover rounded-lg border cursor-zoom-in"><button onclick="adminDeleteDocImage('bill')" class="btn-action delete text-sm">🗑 Delete</button></div>` : ''}
+            <div class="mt-2"><label class="edit-label">Bill Images <span class="text-gray-400 font-normal">(${getDocImages(item,'bill').length}/${ADMIN_MAX_DOC_IMAGES})</span></label>
+                <button type="button" onclick="adminUploadDocImage('bill')" class="w-full py-2.5 rounded-lg border-2 border-dashed border-blue-300 bg-blue-50 text-blue-700 font-semibold text-sm">${getDocImages(item,'bill').length >= ADMIN_MAX_DOC_IMAGES ? '✅ Max reached' : '➕ Add Bill Image (Camera / Gallery)'}</button>
+                ${getDocImages(item,'bill').length ? `<div class="mt-2 grid grid-cols-3 gap-2">${getDocImages(item,'bill').map((im,i)=>`<div class="relative"><img src="${im}" onclick="openImageViewer('${_escape(im)}','Bill ${i+1}')" class="w-full h-20 object-cover rounded-lg border cursor-zoom-in"><button type="button" onclick="adminDeleteDocImage('bill',${i})" class="absolute -top-1.5 -right-1.5 w-6 h-6 rounded-full bg-red-600 text-white text-xs font-bold shadow-md">✕</button></div>`).join('')}</div>` : ''}
             </div>
             <div class="mt-3"><label class="edit-label">Aadhaar Number</label><input type="text" id="edit-aadhaarNumber" value="${item.aadhaarNumber || ''}" class="edit-field font-mono" placeholder="Optional" maxlength="14"></div>
-            <div class="mt-2"><label class="edit-label">Aadhaar Image</label>
-                <button type="button" onclick="adminUploadDocImage('aadhaar')" class="w-full py-2.5 rounded-lg border-2 border-dashed border-indigo-300 bg-indigo-50 text-indigo-700 font-semibold text-sm">${item.aadhaarImage ? '🔄 Replace Aadhaar Image' : '⬆ Upload Aadhaar Image'}</button>
-                ${item.aadhaarImage ? `<div class="mt-2 flex items-center gap-2"><img src="${item.aadhaarImage}" onclick="openImageViewer('${(item.aadhaarImage||'').replace(/'/g,"\\'")}','Aadhaar')" class="w-32 h-24 object-cover rounded-lg border cursor-zoom-in"><button onclick="adminDeleteDocImage('aadhaar')" class="btn-action delete text-sm">🗑 Delete</button></div>` : ''}
+            <div class="mt-2"><label class="edit-label">Aadhaar Images <span class="text-gray-400 font-normal">(${getDocImages(item,'aadhaar').length}/${ADMIN_MAX_DOC_IMAGES})</span></label>
+                <button type="button" onclick="adminUploadDocImage('aadhaar')" class="w-full py-2.5 rounded-lg border-2 border-dashed border-indigo-300 bg-indigo-50 text-indigo-700 font-semibold text-sm">${getDocImages(item,'aadhaar').length >= ADMIN_MAX_DOC_IMAGES ? '✅ Max reached' : '➕ Add Aadhaar Image (Camera / Gallery)'}</button>
+                ${getDocImages(item,'aadhaar').length ? `<div class="mt-2 grid grid-cols-3 gap-2">${getDocImages(item,'aadhaar').map((im,i)=>`<div class="relative"><img src="${im}" onclick="openImageViewer('${_escape(im)}','Aadhaar ${i+1}')" class="w-full h-20 object-cover rounded-lg border cursor-zoom-in"><button type="button" onclick="adminDeleteDocImage('aadhaar',${i})" class="absolute -top-1.5 -right-1.5 w-6 h-6 rounded-full bg-red-600 text-white text-xs font-bold shadow-md">✕</button></div>`).join('')}</div>` : ''}
             </div>
         </div>`;
         
