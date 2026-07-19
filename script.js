@@ -13,21 +13,24 @@ const firebaseConfig = {
 };
 firebase.initializeApp(firebaseConfig);
 const db = firebase.database();
+const storage = firebase.storage(); // <-- new
 
 // ========== DOCUMENTS (Bill / Aadhaar) helpers ==========
 function _escape(s) { return (s || '').replace(/'/g, "\\'"); }
 const ADMIN_MAX_DOC_IMAGES = 3;
 
-// Read a doc's images as a normalized array (handles legacy single-image field)
+// Read a doc's images as a normalized array (URLs or base64)
 function getDocImages(item, which) {
     if (!item) return [];
-    const arrField = which === 'bill' ? 'billImages' : 'aadhaarImages';
+    const arrField = which === 'bill' ? 'billImageUrls' : 'aadhaarImageUrls';
     const legacy   = which === 'bill' ? 'billImage'  : 'aadhaarImage';
     const arr = Array.isArray(item[arrField]) ? item[arrField].slice() : [];
+    // If no URLs but legacy exists (base64), push it (will be shown but new uploads will use URLs)
     if (arr.length === 0 && item[legacy]) arr.push(item[legacy]);
     return arr.filter(Boolean);
 }
 
+// Compress image file (used for upload preview, but we upload original after compression)
 function _compressImageFileAdmin(file, maxDim = 1400, quality = 0.72) {
     return new Promise((resolve, reject) => {
         if (!file) return reject('No file');
@@ -48,7 +51,7 @@ function _compressImageFileAdmin(file, maxDim = 1400, quality = 0.72) {
                 const ctx = c.getContext('2d');
                 ctx.fillStyle = '#fff'; ctx.fillRect(0,0,width,height);
                 ctx.drawImage(img,0,0,width,height);
-                try { resolve(c.toDataURL('image/jpeg', quality)); }
+                try { resolve(canvas.toDataURL('image/jpeg', quality)); }
                 catch(e){ reject(e); }
             };
             img.src = reader.result;
@@ -86,7 +89,6 @@ function _pickImageSource(useCamera, multiple) {
         if (useCamera) inp.setAttribute('capture', 'environment');
         if (multiple)  inp.multiple = true;
         inp.onchange = () => resolve(inp.files ? Array.from(inp.files) : []);
-        // Some browsers need the input in DOM
         inp.style.position = 'fixed'; inp.style.left = '-9999px';
         document.body.appendChild(inp);
         inp.click();
@@ -94,7 +96,7 @@ function _pickImageSource(useCamera, multiple) {
     });
 }
 
-// Admin upload / add image(s) — appends to array, max ADMIN_MAX_DOC_IMAGES
+// ========== ADMIN UPLOAD / DELETE IMAGES (Storage) ==========
 async function adminUploadDocImage(which) {
     if (!detailOrderId) return;
     // Get current images from cached editData
@@ -116,34 +118,42 @@ async function adminUploadDocImage(which) {
         denyButtonColor:    '#0ea5e9'
     });
     if (choice.isDismissed) return;
-    const useCamera = choice.isConfirmed;   // Confirm = Camera, Deny = Gallery
-    const files = await _pickImageSource(useCamera, !useCamera);   // gallery = multi
+    const useCamera = choice.isConfirmed;
+    const files = await _pickImageSource(useCamera, !useCamera);
     if (!files.length) return;
 
     Swal.fire({ title:'Uploading…', allowOutsideClick:false, didOpen:()=>Swal.showLoading() });
     try {
         const room = ADMIN_MAX_DOC_IMAGES - current.length;
         const toDo = files.slice(0, room);
-        const compressed = [];
-        for (const f of toDo) {
-            try { compressed.push(await _compressImageFileAdmin(f)); }
-            catch(e) { console.error(e); }
+        const uploadedUrls = [];
+        for (const file of toDo) {
+            // Compress image first (to reduce storage size)
+            const dataUrl = await _compressImageFileAdmin(file, 1400, 0.72);
+            // Convert dataURL to Blob for upload
+            const blob = await fetch(dataUrl).then(r => r.blob());
+            const filePath = `orders/${detailOrderId}/${which}_${Date.now()}_${Math.random().toString(36).substr(2,6)}.jpg`;
+            const uploadTask = storage.ref(filePath).put(blob);
+            await uploadTask;
+            const downloadUrl = await storage.ref(filePath).getDownloadURL();
+            uploadedUrls.push(downloadUrl);
         }
-        if (!compressed.length) { Swal.close(); showToast('Failed to process images', 'error'); return; }
-        const newArr = current.concat(compressed);
-        const arrField = which === 'bill' ? 'billImages' : 'aadhaarImages';
+        if (!uploadedUrls.length) { Swal.close(); showToast('Upload failed', 'error'); return; }
+        const newArr = current.concat(uploadedUrls);
+        const arrField = which === 'bill' ? 'billImageUrls' : 'aadhaarImageUrls';
         const legacyField = which === 'bill' ? 'billImage' : 'aadhaarImage';
-        // Store array; keep legacy field mirrored to first image for backward compat
+        // Store array; keep legacy field as first URL for backward compat
         await db.ref('pickups/' + detailOrderId).update({
             [arrField]: newArr,
             [legacyField]: newArr[0] || null
         });
         Swal.close();
-        showToast(`✅ ${compressed.length} image${compressed.length>1?'s':''} saved`, 'success');
+        showToast(`✅ ${uploadedUrls.length} image${uploadedUrls.length>1?'s':''} saved`, 'success');
+        // Refresh detail view
         db.ref('pickups/' + detailOrderId).once('value').then(snap => {
             const it = snap.val(); if (it) { editData = { ...it, id: detailOrderId }; renderDetailView(it); }
         });
-        loadOrders();
+        loadOrders(); // update lists (though images not shown there)
     } catch(e) {
         Swal.close();
         showToast('Upload failed', 'error');
@@ -151,10 +161,9 @@ async function adminUploadDocImage(which) {
     }
 }
 
-// Delete one image by index (or all if idx is null)
 async function adminDeleteDocImage(which, idx) {
     if (!detailOrderId) return;
-    const arrField = which === 'bill' ? 'billImages' : 'aadhaarImages';
+    const arrField = which === 'bill' ? 'billImageUrls' : 'aadhaarImageUrls';
     const legacyField = which === 'bill' ? 'billImage' : 'aadhaarImage';
     const label = which === 'bill' ? 'Bill' : 'Aadhaar';
     const current = getDocImages(editData || {}, which);
@@ -163,7 +172,7 @@ async function adminDeleteDocImage(which, idx) {
     const isAll = (idx === undefined || idx === null);
     const confirm = await Swal.fire({
         title: isAll ? `Delete ALL ${label} Images?` : `Delete this ${label} image?`,
-        text: 'This will permanently remove the image(s) from this order.',
+        text: 'This will permanently remove the image(s).',
         icon: 'warning',
         showCancelButton: true,
         confirmButtonColor: '#dc2626',
@@ -174,8 +183,21 @@ async function adminDeleteDocImage(which, idx) {
     if (!confirm.isConfirmed) return;
     try {
         let newArr;
-        if (isAll) newArr = [];
-        else { newArr = current.slice(); newArr.splice(idx, 1); }
+        let deletedUrls = [];
+        if (isAll) {
+            newArr = [];
+            deletedUrls = current;
+        } else {
+            newArr = current.slice();
+            deletedUrls = [newArr.splice(idx, 1)[0]];
+        }
+        // Delete from Storage (optional but good)
+        for (const url of deletedUrls) {
+            try {
+                const ref = storage.refFromURL(url);
+                await ref.delete();
+            } catch(e) { /* might fail if not a storage URL, ignore */ }
+        }
         await db.ref('pickups/' + detailOrderId).update({
             [arrField]: newArr.length ? newArr : null,
             [legacyField]: newArr[0] || null
@@ -216,7 +238,6 @@ async function adminSaveDocNumber(which) {
         loadOrders();
     } catch(e) { showToast('Update failed', 'error'); console.error(e); }
 }
-
 
 // ==========================================
 // COMMISSION BRACKETS – based on PURCHASE PRICE only
@@ -272,9 +293,9 @@ const depositPageSize = 15;
 
 // Salary mode
 let currentSalaryMode = 'today';
-let currentSalaryPeriod = null; // will hold { mode, date, month, year } for activity
+let currentSalaryPeriod = null;
 
-// IMEI override state (optional, kept for compatibility)
+// IMEI override state (optional)
 let imeiOverride = {};
 let imei2Override = {};
 
@@ -324,7 +345,7 @@ function navigate(page) {
 }
 
 // ==========================================
-// DASHBOARD – hold orders skipped, commission based on purchase price
+// DASHBOARD
 // ==========================================
 async function loadDashboard() {
     try {
@@ -617,7 +638,7 @@ async function toggleRejectApproval(orderId, approve) {
 }
 
 // ==========================================
-// INVENTORY – commission based on purchase price
+// INVENTORY
 // ==========================================
 async function loadInventory() {
     try {
@@ -658,7 +679,7 @@ function renderInventoryTable() {
 function refreshInventory() { loadInventory(); showToast('🔄 Inventory refreshed', 'info'); }
 
 // ==========================================
-// SELL MODAL – commission based on purchase price
+// SELL MODAL
 // ==========================================
 function openSellModal(orderId) {
     const order = inventoryList.find(item => item.id === orderId);
@@ -769,7 +790,7 @@ async function confirmSell() {
 }
 
 // ==========================================
-// SALES – commission based on purchase price, hold excluded
+// SALES
 // ==========================================
 async function loadSales() {
     try {
@@ -887,7 +908,7 @@ function exportSalesCSV() {
 }
 
 // ==========================================
-// VIEW ORDER DETAIL – commission on purchase price
+// VIEW ORDER DETAIL – with Storage URLs
 // ==========================================
 function viewOrder(orderId) {
     detailOrderId = orderId;
@@ -964,7 +985,7 @@ function renderDetailView(item) {
     }
     let html = `<div class="flex items-center gap-3 mb-4"><span class="badge-status ${statusClass} text-sm px-4 py-1.5">${displayName}</span><span class="font-mono font-bold text-gray-800 text-sm">${item.orderId || item.id}</span>${item.agent ? `<span class="text-xs text-gray-400">(Agent: ${item.agent})</span>` : ''}</div><div class="detail-grid"><div class="detail-item"><div class="label">Phone Model</div><div class="value" id="dv-model">${item.phoneModel || '—'}</div></div><div class="detail-item"><div class="label">IMEI</div><div class="value font-mono text-xs" id="dv-imei">${item.imei || '—'}</div></div>${item.imei2 ? `<div class="detail-item"><div class="label">IMEI 2</div><div class="value font-mono text-xs" id="dv-imei2">${item.imei2}</div></div>` : ''}<div class="detail-item"><div class="label">Purchase Price</div><div class="value font-bold" id="dv-value">${item.value !== undefined && item.value !== null ? '₹' + item.value : '—'}</div></div><div class="detail-item"><div class="label">Customer Name</div><div class="value" id="dv-customer">${item.customerName || '—'}</div></div><div class="detail-item"><div class="label">Reason</div><div class="value" id="dv-reason">${item.reason || '—'}</div></div><div class="detail-item"><div class="label">Status</div><div class="value" id="dv-status">${displayName}</div></div><div class="detail-item"><div class="label">Time (IST)</div><div class="value text-xs" id="dv-time">${item.timestampIST || item.timestamp || '—'}</div></div>${holdHtml}${saleHtml}</div>`;
 
-    // ===== Documents section (Bill + Aadhaar) — VIEW MODE: no direct upload =====
+    // ===== Documents section (Bill + Aadhaar) – now using URLs =====
     const _billImgs = getDocImages(item, 'bill');
     const _aadImgs  = getDocImages(item, 'aadhaar');
     const _billNo   = item.billNumber || '';
@@ -976,11 +997,11 @@ function renderDetailView(item) {
             gallery = `<div class="w-full h-32 rounded-lg border-2 border-dashed border-gray-200 flex items-center justify-center text-gray-400 text-xs">No image</div>`;
         } else {
             gallery = `<div class="grid grid-cols-3 gap-2">` + imgs.map((img, i) => {
-                const kb = Math.round((img.length * 3 / 4) / 1024);
+                const sizeLabel = img.startsWith('data:') ? `${Math.round((img.length * 3/4)/1024)}KB` : 'URL';
                 return `<div class="relative group">
                     <img src="${img}" onclick="openImageViewer('${_escape(img)}','${label} ${i+1}')" class="w-full h-24 object-cover rounded-lg border border-gray-200 cursor-zoom-in hover:opacity-90 transition" alt="${label} ${i+1}">
                     <button onclick="adminDeleteDocImage('${which}',${i})" class="absolute -top-1.5 -right-1.5 w-6 h-6 rounded-full bg-red-600 text-white text-xs font-bold shadow-md hover:bg-red-700" title="Delete">✕</button>
-                    <div class="absolute bottom-0 left-0 right-0 bg-black/50 text-white text-[9px] text-center rounded-b-lg">${kb}KB</div>
+                    <div class="absolute bottom-0 left-0 right-0 bg-black/50 text-white text-[9px] text-center rounded-b-lg">${sizeLabel}</div>
                 </div>`;
             }).join('') + `</div>`;
         }
@@ -1008,7 +1029,7 @@ function renderDetailView(item) {
 }
 
 // ==========================================
-// HOLD ORDER (store previous status)
+// HOLD ORDER
 // ==========================================
 async function holdOrderFromDetail() {
     if (!detailOrderId) return;
@@ -1041,7 +1062,7 @@ async function holdOrderFromDetail() {
 }
 
 // ==========================================
-// UNHOLD ORDER (revert to previous status)
+// UNHOLD ORDER
 // ==========================================
 async function unholdOrderFromDetail() {
     if (!detailOrderId) return;
@@ -1073,7 +1094,7 @@ async function unholdOrderFromDetail() {
 }
 
 // ==========================================
-// EDIT MODE – commission recalculated from purchase price
+// EDIT MODE – with Storage-based images
 // ==========================================
 function toggleEditMode() {
     if (isEditMode) return;
@@ -1086,7 +1107,7 @@ function toggleEditMode() {
     let datetimeVal = '';
     if (item.timestamp) { const d = new Date(item.timestamp); if (!isNaN(d)) { const year = d.getFullYear(); const month = String(d.getMonth()+1).padStart(2,'0'); const day = String(d.getDate()).padStart(2,'0'); const hours = String(d.getHours()).padStart(2,'0'); const mins = String(d.getMinutes()).padStart(2,'0'); datetimeVal = `${year}-${month}-${day}T${hours}:${mins}`; } }
     
-    // IMEI override (optional) – keep as before
+    // IMEI override
     const imeiVal = item.imei || '';
     const imei2Val = item.imei2 || '';
     const imeiOver = imeiVal.length > 15;
@@ -1094,6 +1115,24 @@ function toggleEditMode() {
     imeiOverride['edit'] = imeiOver;
     imei2Override['edit'] = imei2Over;
     
+    // Build edit form with image sections
+    const _billImgs = getDocImages(item, 'bill');
+    const _aadImgs  = getDocImages(item, 'aadhaar');
+    const _billNo   = item.billNumber || '';
+    const _aadNo    = item.aadhaarNumber || '';
+    const _escape   = (s) => (s || '').replace(/'/g, "\\'");
+    const _imgGallery = (which, imgs, label) => {
+        if (imgs.length === 0) return `<div class="text-xs text-gray-400">No images uploaded</div>`;
+        return `<div class="grid grid-cols-3 gap-2">` + imgs.map((url, i) => {
+            const sizeLabel = url.startsWith('data:') ? `${Math.round((url.length * 3/4)/1024)}KB` : 'URL';
+            return `<div class="relative group">
+                <img src="${url}" onclick="openImageViewer('${_escape(url)}','${label} ${i+1}')" class="w-full h-20 object-cover rounded-lg border border-gray-200 cursor-zoom-in hover:opacity-90 transition">
+                <button type="button" onclick="adminDeleteDocImage('${which}',${i})" class="absolute -top-1.5 -right-1.5 w-6 h-6 rounded-full bg-red-600 text-white text-xs font-bold shadow-md hover:bg-red-700" title="Delete">✕</button>
+                <div class="absolute bottom-0 left-0 right-0 bg-black/50 text-white text-[9px] text-center rounded-b-lg">${sizeLabel}</div>
+            </div>`;
+        }).join('') + `</div>`;
+    };
+
     let html = `<div class="space-y-4">
         <div><label class="edit-label">Order ID</label><input type="text" id="edit-orderId" value="${item.orderId || item.id || ''}" class="edit-field" readonly style="background:#f1f5f9;cursor:not-allowed;"></div>
         <div><label class="edit-label">Status</label><select id="edit-status" class="status-select">
@@ -1112,14 +1151,18 @@ function toggleEditMode() {
         <div class="pt-3 border-t border-gray-100">
             <p class="text-xs font-bold text-gray-500 uppercase tracking-wide mb-2">📄 Documents</p>
             <div><label class="edit-label">Bill Number</label><input type="text" id="edit-billNumber" value="${item.billNumber || ''}" class="edit-field" placeholder="Optional"></div>
-            <div class="mt-2"><label class="edit-label">Bill Images <span class="text-gray-400 font-normal">(${getDocImages(item,'bill').length}/${ADMIN_MAX_DOC_IMAGES})</span></label>
-                <button type="button" onclick="adminUploadDocImage('bill')" class="w-full py-2.5 rounded-lg border-2 border-dashed border-blue-300 bg-blue-50 text-blue-700 font-semibold text-sm">${getDocImages(item,'bill').length >= ADMIN_MAX_DOC_IMAGES ? '✅ Max reached' : '➕ Add Bill Image (Camera / Gallery)'}</button>
-                ${getDocImages(item,'bill').length ? `<div class="mt-2 grid grid-cols-3 gap-2">${getDocImages(item,'bill').map((im,i)=>`<div class="relative"><img src="${im}" onclick="openImageViewer('${_escape(im)}','Bill ${i+1}')" class="w-full h-20 object-cover rounded-lg border cursor-zoom-in"><button type="button" onclick="adminDeleteDocImage('bill',${i})" class="absolute -top-1.5 -right-1.5 w-6 h-6 rounded-full bg-red-600 text-white text-xs font-bold shadow-md">✕</button></div>`).join('')}</div>` : ''}
+            <div class="mt-2"><label class="edit-label">Bill Images <span class="text-gray-400 font-normal">(${_billImgs.length}/${ADMIN_MAX_DOC_IMAGES})</span></label>
+                <button type="button" onclick="adminUploadDocImage('bill')" class="doc-upload-btn mt-1">
+                    <i data-lucide="camera"></i> ${_billImgs.length >= ADMIN_MAX_DOC_IMAGES ? '✅ Max reached' : 'Add Bill Image (Camera / Gallery)'}
+                </button>
+                <div class="mt-2">${_imgGallery('bill', _billImgs, 'Bill')}</div>
             </div>
             <div class="mt-3"><label class="edit-label">Aadhaar Number</label><input type="text" id="edit-aadhaarNumber" value="${item.aadhaarNumber || ''}" class="edit-field font-mono" placeholder="Optional" maxlength="14"></div>
-            <div class="mt-2"><label class="edit-label">Aadhaar Images <span class="text-gray-400 font-normal">(${getDocImages(item,'aadhaar').length}/${ADMIN_MAX_DOC_IMAGES})</span></label>
-                <button type="button" onclick="adminUploadDocImage('aadhaar')" class="w-full py-2.5 rounded-lg border-2 border-dashed border-indigo-300 bg-indigo-50 text-indigo-700 font-semibold text-sm">${getDocImages(item,'aadhaar').length >= ADMIN_MAX_DOC_IMAGES ? '✅ Max reached' : '➕ Add Aadhaar Image (Camera / Gallery)'}</button>
-                ${getDocImages(item,'aadhaar').length ? `<div class="mt-2 grid grid-cols-3 gap-2">${getDocImages(item,'aadhaar').map((im,i)=>`<div class="relative"><img src="${im}" onclick="openImageViewer('${_escape(im)}','Aadhaar ${i+1}')" class="w-full h-20 object-cover rounded-lg border cursor-zoom-in"><button type="button" onclick="adminDeleteDocImage('aadhaar',${i})" class="absolute -top-1.5 -right-1.5 w-6 h-6 rounded-full bg-red-600 text-white text-xs font-bold shadow-md">✕</button></div>`).join('')}</div>` : ''}
+            <div class="mt-2"><label class="edit-label">Aadhaar Images <span class="text-gray-400 font-normal">(${_aadImgs.length}/${ADMIN_MAX_DOC_IMAGES})</span></label>
+                <button type="button" onclick="adminUploadDocImage('aadhaar')" class="doc-upload-btn mt-1">
+                    <i data-lucide="camera"></i> ${_aadImgs.length >= ADMIN_MAX_DOC_IMAGES ? '✅ Max reached' : 'Add Aadhaar Image (Camera / Gallery)'}
+                </button>
+                <div class="mt-2">${_imgGallery('aadhaar', _aadImgs, 'Aadhaar')}</div>
             </div>
         </div>`;
         
@@ -1134,9 +1177,14 @@ function toggleEditMode() {
     html += `</div>`;
     content.innerHTML = html;
     lucide.createIcons();
+    // IMEI limit toggle setup
+    setTimeout(() => {
+        setupImeiValidation('edit-imei', 'imeiAllowBtn');
+        setupImeiValidation('edit-imei2', 'imei2AllowBtn');
+    }, 100);
 }
 
-// IMEI limit toggle function (same as before)
+// IMEI limit toggle function
 function toggleImeiLimit(inputId, btnId) {
     const input = document.getElementById(inputId);
     const btn = document.getElementById(btnId);
@@ -1256,6 +1304,7 @@ async function saveEdit() {
     if (!orderId) { showToast('Order ID required', 'error'); return; }
     const billNumberVal    = (document.getElementById('edit-billNumber')?.value || '').trim();
     const aadhaarNumberVal = (document.getElementById('edit-aadhaarNumber')?.value || '').trim();
+    // Note: image URLs are already stored in the database via adminUploadDocImage/delete; we don't modify them here.
     let updated = { orderId, status, phoneModel: model || '', imei: imei || '', imei2: imei2 || '', value: value || 0, customerName: customer || '', reason: reason || '', billNumber: billNumberVal, aadhaarNumber: aadhaarNumberVal, timestamp: editData.timestamp, timestampIST: editData.timestampIST || '' };
     if (datetimeVal) { const d = new Date(datetimeVal); if (!isNaN(d)) { updated.timestamp = d.toISOString(); const istOffset = 5.5 * 60 * 60 * 1000; const istTime = new Date(d.getTime() + istOffset); const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']; const dd = String(istTime.getUTCDate()).padStart(2,'0'); const mmm = months[istTime.getUTCMonth()]; const yyyy = istTime.getUTCFullYear(); let hours = istTime.getUTCHours(); const minutes = String(istTime.getUTCMinutes()).padStart(2,'0'); const seconds = String(istTime.getUTCSeconds()).padStart(2,'0'); const ampm = hours >= 12 ? 'PM' : 'AM'; hours = hours % 12 || 12; const hh = String(hours).padStart(2,'0'); updated.timestampIST = `${dd}-${mmm}-${yyyy}, ${hh}:${minutes}:${seconds} ${ampm} IST`; } } else { updated.timestamp = editData.timestamp; updated.timestampIST = editData.timestampIST; }
     if (editData.sold) {
@@ -1304,7 +1353,7 @@ function exportCSV() {
 }
 
 // ==========================================
-// DEPOSITS – commission total excludes hold orders, based on purchase price
+// DEPOSITS
 // ==========================================
 async function loadDeposits() {
     try {
@@ -1360,12 +1409,10 @@ async function updateDepositStats() {
     document.getElementById('depositCountDisplay').textContent = allDeposits.length + ' entries';
     document.getElementById('depositsBadge').textContent = allDeposits.length;
 
-    // *** CHANGED: Stock Value = sum of all pickups (both sold and unsold) ***
     let stockValue = 0;
     const snap = await db.ref('pickups').once('value');
     const data = snap.val() || {};
     Object.values(data).forEach(item => {
-        // Include only orders with status 'pickup' (both sold and unsold)
         if (item.status === 'pickup') {
             stockValue += item.value || 0;
         }
@@ -1716,16 +1763,13 @@ function showChangePasswordModal(username) {
 }
 
 // ==========================================
-// AGENT ACTIVITY (UPDATED with stats and period support)
+// AGENT ACTIVITY (unchanged except period support)
 // ==========================================
-// This function is called from agent management (no period)
 function viewAgentActivity(username) {
-    // Default period: today
     const today = new Date().toISOString().split('T')[0];
     viewAgentActivityWithPeriod(username, { mode: 'today', date: today });
 }
 
-// New function that accepts a period object
 function viewAgentActivityWithPeriod(username, period) {
     const modal = document.getElementById('activityModal');
     const content = document.getElementById('activityContent');
@@ -1734,7 +1778,6 @@ function viewAgentActivityWithPeriod(username, period) {
     modal.style.display = 'flex';
     content.innerHTML = `<div class="text-center py-8"><span class="spinner-sm"></span> Loading...</div>`;
 
-    // Determine date filter
     let filterFn;
     let periodLabel = '';
     if (period.mode === 'today') {
@@ -1764,7 +1807,6 @@ function viewAgentActivityWithPeriod(username, period) {
         };
         periodLabel = date;
     } else {
-        // fallback: all time
         filterFn = () => true;
         periodLabel = 'All Time';
     }
@@ -1776,7 +1818,6 @@ function viewAgentActivityWithPeriod(username, period) {
             .map(([id, item]) => ({ id, ...item }));
         orders.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
 
-        // Compute stats for this agent
         let pickupCount = 0, rejectCount = 0, rescheduleCount = 0, totalOrders = orders.length;
         orders.forEach(item => {
             if (item.status === 'pickup') pickupCount++;
@@ -1784,7 +1825,6 @@ function viewAgentActivityWithPeriod(username, period) {
             else if (item.status === 'reschedule') rescheduleCount++;
         });
 
-        // Compute total for all agents for the same period
         let allPickup = 0, allReject = 0, allReschedule = 0, allTotal = 0;
         Object.values(data).forEach(item => {
             if (filterFn(item.timestamp)) {
@@ -1829,7 +1869,6 @@ function viewAgentActivityWithPeriod(username, period) {
             const model = item.phoneModel || '—';
             const value = item.value !== undefined ? '₹' + item.value : '—';
 
-            // For rejected orders, show approve/reject buttons with timestamp
             let rejectActions = '';
             if (statusLabel === 'rejected') {
                 const approved = item.incentive_approved === true;
@@ -1867,7 +1906,7 @@ function viewAgentActivityWithPeriod(username, period) {
 function closeActivityModal() { document.getElementById('activityModal').style.display = 'none'; }
 
 // ==========================================
-// ATTENDANCE SYSTEM (skip admins)
+// ATTENDANCE SYSTEM
 // ==========================================
 async function generateOTPs() {
     const usersSnap = await db.ref('users').once('value');
@@ -2091,7 +2130,7 @@ async function blockAgent(username, date) {
 }
 
 // ==========================================
-// SALARY / EARNINGS – with custom date support and global stats
+// SALARY / EARNINGS
 // ==========================================
 function setSalaryMode(mode) {
     currentSalaryMode = mode;
@@ -2181,18 +2220,15 @@ async function loadSalaryData() {
             dateFilterFn = (ordDate) => ordDate === dateVal;
             periodInfo.date = dateVal;
         } else {
-            // fallback all time
             dateFilterFn = () => true;
             periodInfo.mode = 'all';
         }
 
-        // Store period for activity links
         currentSalaryPeriod = periodInfo;
 
         const pickupsByAgentDate = {};
         const allRejectedOrders = [];
 
-        // Global counts
         let globalPickup = 0, globalReject = 0, globalPending = 0, globalEarnings = 0;
 
         for (const [oid, ord] of Object.entries(pickups)) {
@@ -2209,7 +2245,6 @@ async function loadSalaryData() {
             if (ord.status === 'rejected' && !ord.incentive_approved) {
                 allRejectedOrders.push({ id: oid, ...ord });
             }
-            // Global counts
             if (ord.status === 'pickup') globalPickup++;
             else if (ord.status === 'rejected') globalReject++;
             else if (ord.status === 'reschedule') globalPending++;
@@ -2233,7 +2268,6 @@ async function loadSalaryData() {
             const userAttendance = allAttendance[uname] || {};
 
             const loopDays = mode === 'today' || mode === 'date' ? [new Date().getDate()] : Array.from({ length: daysInMonth }, (_, i) => i + 1);
-            const datePrefix = mode === 'date' ? periodInfo.date : (mode === 'today' ? today : `${year}-${monthStr}`);
             let agentPickupCount = 0, agentRejectCount = 0, agentPendingCount = 0;
             for (const d of loopDays) {
                 const dateStr = (mode === 'today' || mode === 'date') ? (mode === 'date' ? periodInfo.date : today) : `${year}-${monthStr}-${String(d).padStart(2, '0')}`;
@@ -2323,7 +2357,6 @@ async function loadSalaryData() {
             </div>`;
         }
 
-        // Update global stats
         document.getElementById('globalPickups').textContent = globalPickup;
         document.getElementById('globalRejects').textContent = globalReject;
         document.getElementById('globalPending').textContent = globalPending;
