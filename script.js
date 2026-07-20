@@ -14,6 +14,210 @@ const firebaseConfig = {
 firebase.initializeApp(firebaseConfig);
 const db = firebase.database();
 
+// ========== DOCUMENTS (Bill / Aadhaar) helpers ==========
+function _escape(s) { return (s || '').replace(/'/g, "\\'"); }
+const ADMIN_MAX_DOC_IMAGES = 3;
+
+// Read a doc's images as a normalized array (handles legacy single-image field)
+function getDocImages(item, which) {
+    if (!item) return [];
+    const arrField = which === 'bill' ? 'billImages' : 'aadhaarImages';
+    const legacy   = which === 'bill' ? 'billImage'  : 'aadhaarImage';
+    const arr = Array.isArray(item[arrField]) ? item[arrField].slice() : [];
+    if (arr.length === 0 && item[legacy]) arr.push(item[legacy]);
+    return arr.filter(Boolean);
+}
+
+function _compressImageFileAdmin(file, maxDim = 720, quality = 0.4) {
+    return new Promise((resolve, reject) => {
+        if (!file) return reject('No file');
+        if (!file.type.startsWith('image/')) return reject('Not an image');
+        const reader = new FileReader();
+        reader.onerror = () => reject('Read error');
+        reader.onload = () => {
+            const img = new Image();
+            img.onerror = () => reject('Image decode error');
+            img.onload = () => {
+                let { width, height } = img;
+                if (width > maxDim || height > maxDim) {
+                    if (width > height) { height = Math.round(height * maxDim / width); width = maxDim; }
+                    else                { width  = Math.round(width  * maxDim / height); height = maxDim; }
+                }
+                const c = document.createElement('canvas');
+                c.width = width; c.height = height;
+                const ctx = c.getContext('2d');
+                ctx.fillStyle = '#fff'; ctx.fillRect(0,0,width,height);
+                ctx.drawImage(img,0,0,width,height);
+                try { resolve(c.toDataURL('image/jpeg', quality)); }
+                catch(e){ reject(e); }
+            };
+            img.src = reader.result;
+        };
+        reader.readAsDataURL(file);
+    });
+}
+
+// Full-screen image viewer
+function openImageViewer(dataUrl, label) {
+    if (!dataUrl) return;
+    const modal = document.getElementById('imgViewerModal');
+    const img   = document.getElementById('imgViewerImg');
+    const cap   = document.getElementById('imgViewerCaption');
+    const dl    = document.getElementById('imgViewerDownload');
+    img.src = dataUrl;
+    cap.textContent = label || 'Document';
+    dl.href = dataUrl;
+    dl.download = (label || 'document').replace(/\s+/g,'_') + '.jpg';
+    modal.style.display = 'flex';
+}
+function closeImageViewer() {
+    const modal = document.getElementById('imgViewerModal');
+    if (modal) modal.style.display = 'none';
+    const img = document.getElementById('imgViewerImg');
+    if (img) img.src = '';
+}
+
+// Ask user: Camera vs Gallery, then open a file input accordingly
+function _pickImageSource(useCamera, multiple) {
+    return new Promise((resolve) => {
+        const inp = document.createElement('input');
+        inp.type = 'file';
+        inp.accept = 'image/*';
+        if (useCamera) inp.setAttribute('capture', 'environment');
+        if (multiple)  inp.multiple = true;
+        inp.onchange = () => resolve(inp.files ? Array.from(inp.files) : []);
+        // Some browsers need the input in DOM
+        inp.style.position = 'fixed'; inp.style.left = '-9999px';
+        document.body.appendChild(inp);
+        inp.click();
+        setTimeout(() => { try { document.body.removeChild(inp); } catch(_){} }, 60000);
+    });
+}
+
+// Admin upload / add image(s) — appends to array, max ADMIN_MAX_DOC_IMAGES
+async function adminUploadDocImage(which) {
+    if (!detailOrderId) return;
+    // Get current images from cached editData
+    const current = getDocImages(editData || {}, which);
+    if (current.length >= ADMIN_MAX_DOC_IMAGES) {
+        showToast(`Max ${ADMIN_MAX_DOC_IMAGES} images allowed`, 'error');
+        return;
+    }
+    const label = which === 'bill' ? 'Bill' : 'Aadhaar';
+    const choice = await Swal.fire({
+        title: `Add ${label} Image`,
+        text: `${current.length}/${ADMIN_MAX_DOC_IMAGES} used`,
+        showDenyButton: true,
+        showCancelButton: true,
+        confirmButtonText: '📷 Camera',
+        denyButtonText:    '🖼️ Gallery',
+        cancelButtonText:  'Cancel',
+        confirmButtonColor: '#4f46e5',
+        denyButtonColor:    '#0ea5e9'
+    });
+    if (choice.isDismissed) return;
+    const useCamera = choice.isConfirmed;   // Confirm = Camera, Deny = Gallery
+    const files = await _pickImageSource(useCamera, !useCamera);   // gallery = multi
+    if (!files.length) return;
+
+    Swal.fire({ title:'Uploading…', allowOutsideClick:false, didOpen:()=>Swal.showLoading() });
+    try {
+        const room = ADMIN_MAX_DOC_IMAGES - current.length;
+        const toDo = files.slice(0, room);
+        const compressed = [];
+        for (const f of toDo) {
+            try { compressed.push(await _compressImageFileAdmin(f)); }
+            catch(e) { console.error(e); }
+        }
+        if (!compressed.length) { Swal.close(); showToast('Failed to process images', 'error'); return; }
+        const newArr = current.concat(compressed);
+        const arrField = which === 'bill' ? 'billImages' : 'aadhaarImages';
+        const legacyField = which === 'bill' ? 'billImage' : 'aadhaarImage';
+        // Store array; keep legacy field mirrored to first image for backward compat
+        await db.ref('pickups/' + detailOrderId).update({
+            [arrField]: newArr,
+            [legacyField]: newArr[0] || null
+        });
+        Swal.close();
+        showToast(`✅ ${compressed.length} image${compressed.length>1?'s':''} saved`, 'success');
+        db.ref('pickups/' + detailOrderId).once('value').then(snap => {
+            const it = snap.val(); if (it) { editData = { ...it, id: detailOrderId }; renderDetailView(it); }
+        });
+        loadOrders();
+    } catch(e) {
+        Swal.close();
+        showToast('Upload failed', 'error');
+        console.error(e);
+    }
+}
+
+// Delete one image by index (or all if idx is null)
+async function adminDeleteDocImage(which, idx) {
+    if (!detailOrderId) return;
+    const arrField = which === 'bill' ? 'billImages' : 'aadhaarImages';
+    const legacyField = which === 'bill' ? 'billImage' : 'aadhaarImage';
+    const label = which === 'bill' ? 'Bill' : 'Aadhaar';
+    const current = getDocImages(editData || {}, which);
+    if (!current.length) return;
+
+    const isAll = (idx === undefined || idx === null);
+    const confirm = await Swal.fire({
+        title: isAll ? `Delete ALL ${label} Images?` : `Delete this ${label} image?`,
+        text: 'This will permanently remove the image(s) from this order.',
+        icon: 'warning',
+        showCancelButton: true,
+        confirmButtonColor: '#dc2626',
+        cancelButtonColor: '#64748b',
+        confirmButtonText: 'Yes, Delete',
+        cancelButtonText: 'Cancel'
+    });
+    if (!confirm.isConfirmed) return;
+    try {
+        let newArr;
+        if (isAll) newArr = [];
+        else { newArr = current.slice(); newArr.splice(idx, 1); }
+        await db.ref('pickups/' + detailOrderId).update({
+            [arrField]: newArr.length ? newArr : null,
+            [legacyField]: newArr[0] || null
+        });
+        showToast(`🗑️ Deleted`, 'success');
+        db.ref('pickups/' + detailOrderId).once('value').then(snap => {
+            const it = snap.val(); if (it) { editData = { ...it, id: detailOrderId }; renderDetailView(it); }
+        });
+        loadOrders();
+    } catch(e) {
+        showToast('Delete failed', 'error');
+        console.error(e);
+    }
+}
+
+// Save doc number (bill / aadhaar) inline from view mode
+async function adminSaveDocNumber(which) {
+    if (!detailOrderId) return;
+    const field = which === 'bill' ? 'billNumber' : 'aadhaarNumber';
+    const label = which === 'bill' ? 'Bill Number' : 'Aadhaar Number';
+    const cur = (editData && editData[field]) || '';
+    const { value: v, isConfirmed } = await Swal.fire({
+        title: 'Edit ' + label,
+        input: 'text',
+        inputValue: cur,
+        inputPlaceholder: label,
+        showCancelButton: true,
+        confirmButtonColor: '#4f46e5',
+        confirmButtonText: 'Save'
+    });
+    if (!isConfirmed) return;
+    try {
+        await db.ref('pickups/' + detailOrderId).update({ [field]: (v || '').trim() });
+        showToast('✅ Updated', 'success');
+        db.ref('pickups/' + detailOrderId).once('value').then(snap => {
+            const it = snap.val(); if (it) { editData = { ...it, id: detailOrderId }; renderDetailView(it); }
+        });
+        loadOrders();
+    } catch(e) { showToast('Update failed', 'error'); console.error(e); }
+}
+
+
 // ==========================================
 // COMMISSION BRACKETS – based on PURCHASE PRICE only
 // ==========================================
@@ -170,12 +374,14 @@ async function loadDashboard() {
         let totalAgents = 0;
         let presentToday = 0;
         const today = new Date().toISOString().split('T')[0];
+        // 🔥 FIX: Ek baar mein attendance read karo, har agent ke liye alag se nahi
+        const attSnapAll = await db.ref('attendance').once('value');
+        const allAttendance = attSnapAll.val() || {};
         for (const [uname, uData] of Object.entries(users)) {
             const role = uData.role || 'agent';
             if (role === 'agent') {
                 totalAgents++;
-                const attSnap = await db.ref('attendance/' + uname + '/' + today).once('value');
-                const att = attSnap.val();
+                const att = allAttendance[uname] && allAttendance[uname][today];
                 if (att && att.status === 'present') presentToday++;
             }
         }
@@ -238,7 +444,8 @@ async function loadOrders() {
     try {
         const snap = await db.ref('pickups').once('value');
         const data = snap.val() || {};
-        allOrders = Object.entries(data).map(([id, item]) => ({ id, ...item }));
+        // 🔥 FIX: Images exclude karo list view se - bandwidth bachao
+        allOrders = Object.entries(data).map(([id, item]) => ({ id, ...item, billImages: undefined, billImage: undefined, aadhaarImages: undefined, aadhaarImage: undefined }));
         allOrders.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
         applyOrderFilter(currentOrderFilter);
     } catch (e) {
@@ -419,7 +626,8 @@ async function loadInventory() {
     try {
         const snap = await db.ref('pickups').once('value');
         const data = snap.val() || {};
-        inventoryList = Object.entries(data).filter(([_, item]) => item.status === 'pickup' && !item.sold).map(([id, item]) => ({ id, ...item }));
+        // 🔥 FIX: Images exclude
+        inventoryList = Object.entries(data).filter(([_, item]) => item.status === 'pickup' && !item.sold).map(([id, item]) => ({ id, ...item, billImages: undefined, billImage: undefined, aadhaarImages: undefined, aadhaarImage: undefined }));
         inventoryList.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
         applyInventorySearch();
     } catch (e) {
@@ -759,6 +967,45 @@ function renderDetailView(item) {
                      <div class="detail-item"><div class="label">Previous Status</div><div class="value">${item.previous_status || '—'}</div></div>`;
     }
     let html = `<div class="flex items-center gap-3 mb-4"><span class="badge-status ${statusClass} text-sm px-4 py-1.5">${displayName}</span><span class="font-mono font-bold text-gray-800 text-sm">${item.orderId || item.id}</span>${item.agent ? `<span class="text-xs text-gray-400">(Agent: ${item.agent})</span>` : ''}</div><div class="detail-grid"><div class="detail-item"><div class="label">Phone Model</div><div class="value" id="dv-model">${item.phoneModel || '—'}</div></div><div class="detail-item"><div class="label">IMEI</div><div class="value font-mono text-xs" id="dv-imei">${item.imei || '—'}</div></div>${item.imei2 ? `<div class="detail-item"><div class="label">IMEI 2</div><div class="value font-mono text-xs" id="dv-imei2">${item.imei2}</div></div>` : ''}<div class="detail-item"><div class="label">Purchase Price</div><div class="value font-bold" id="dv-value">${item.value !== undefined && item.value !== null ? '₹' + item.value : '—'}</div></div><div class="detail-item"><div class="label">Customer Name</div><div class="value" id="dv-customer">${item.customerName || '—'}</div></div><div class="detail-item"><div class="label">Reason</div><div class="value" id="dv-reason">${item.reason || '—'}</div></div><div class="detail-item"><div class="label">Status</div><div class="value" id="dv-status">${displayName}</div></div><div class="detail-item"><div class="label">Time (IST)</div><div class="value text-xs" id="dv-time">${item.timestampIST || item.timestamp || '—'}</div></div>${holdHtml}${saleHtml}</div>`;
+
+    // ===== Documents section (Bill + Aadhaar) — VIEW MODE: no direct upload =====
+    const _billImgs = getDocImages(item, 'bill');
+    const _aadImgs  = getDocImages(item, 'aadhaar');
+    const _billNo   = item.billNumber || '';
+    const _aadNo    = item.aadhaarNumber || '';
+    const _escape   = (s) => (s || '').replace(/'/g, "\\'");
+    const _docCard = (which, label, num, imgs, color) => {
+        let gallery;
+        if (imgs.length === 0) {
+            gallery = `<div class="w-full h-32 rounded-lg border-2 border-dashed border-gray-200 flex items-center justify-center text-gray-400 text-xs">No image</div>`;
+        } else {
+            gallery = `<div class="grid grid-cols-3 gap-2">` + imgs.map((img, i) => {
+                const kb = Math.round((img.length * 3 / 4) / 1024);
+                return `<div class="relative group">
+                    <img src="${img}" onclick="openImageViewer('${_escape(img)}','${label} ${i+1}')" class="w-full h-24 object-cover rounded-lg border border-gray-200 cursor-zoom-in hover:opacity-90 transition" alt="${label} ${i+1}">
+                    <button onclick="adminDeleteDocImage('${which}',${i})" class="absolute -top-1.5 -right-1.5 w-6 h-6 rounded-full bg-red-600 text-white text-xs font-bold shadow-md hover:bg-red-700" title="Delete">✕</button>
+                    <div class="absolute bottom-0 left-0 right-0 bg-black/50 text-white text-[9px] text-center rounded-b-lg">${kb}KB</div>
+                </div>`;
+            }).join('') + `</div>`;
+        }
+        return `
+        <div class="rounded-xl border border-gray-200 p-3 bg-gradient-to-br from-${color}-50 to-white">
+            <div class="flex items-center justify-between mb-2">
+                <p class="text-xs font-bold text-${color}-700 uppercase tracking-wide">${label} <span class="text-[10px] text-gray-500 font-normal">(${imgs.length}/${ADMIN_MAX_DOC_IMAGES})</span></p>
+                <button onclick="adminSaveDocNumber('${which}')" class="text-[11px] text-indigo-600 font-semibold hover:underline">✏️ Edit No.</button>
+            </div>
+            <div class="text-sm font-mono font-semibold text-gray-800 mb-2 break-all">${num || '<span class="text-gray-400 font-sans font-normal">— no number —</span>'}</div>
+            ${gallery}
+        </div>`;
+    };
+    html += `<div class="mt-5 pt-4 border-t border-gray-100">
+        <p class="text-xs font-bold text-gray-500 uppercase tracking-wide mb-3">📄 Documents <span class="text-[10px] font-normal text-gray-400">(add/replace in Edit mode)</span></p>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            ${_docCard('bill', 'Bill', _billNo, _billImgs, 'blue')}
+            ${_docCard('aadhaar', 'Aadhaar', _aadNo, _aadImgs, 'indigo')}
+        </div>
+    </div>`;
+
     content.innerHTML = html;
     lucide.createIcons();
     editData = { ...item };
@@ -836,8 +1083,10 @@ function toggleEditMode() {
     if (isEditMode) return;
     isEditMode = true;
     document.getElementById('detailModalTitle').textContent = 'Edit Order';
-    document.getElementById('detailActions').style.display = 'none';
-    document.getElementById('detailSaveActions').style.display = 'flex';
+    const actBar = document.getElementById('detailActions');
+    const saveBar = document.getElementById('detailSaveActions');
+    if (actBar)  { actBar.style.display  = 'none'; }
+    if (saveBar) { saveBar.style.setProperty('display','flex','important'); saveBar.style.zIndex='20'; }
     const content = document.getElementById('detailContent');
     const item = editData;
     let datetimeVal = '';
@@ -865,7 +1114,20 @@ function toggleEditMode() {
         <div><label class="edit-label">Purchase Price (₹)</label><input type="number" id="edit-value" value="${item.value !== undefined && item.value !== null ? item.value : ''}" class="edit-field" placeholder="Optional"></div>
         <div><label class="edit-label">Customer Name</label><input type="text" id="edit-customer" value="${item.customerName || ''}" class="edit-field" placeholder="Optional"></div>
         <div><label class="edit-label">Reason</label><input type="text" id="edit-reason" value="${item.reason || ''}" class="edit-field" placeholder="Optional"></div>
-        <div><label class="edit-label">Date & Time (IST)</label><input type="datetime-local" id="edit-datetime" value="${datetimeVal}" class="edit-field"></div>`;
+        <div><label class="edit-label">Date & Time (IST)</label><input type="datetime-local" id="edit-datetime" value="${datetimeVal}" class="edit-field"></div>
+        <div class="pt-3 border-t border-gray-100">
+            <p class="text-xs font-bold text-gray-500 uppercase tracking-wide mb-2">📄 Documents</p>
+            <div><label class="edit-label">Bill Number</label><input type="text" id="edit-billNumber" value="${item.billNumber || ''}" class="edit-field" placeholder="Optional"></div>
+            <div class="mt-2"><label class="edit-label">Bill Images <span class="text-gray-400 font-normal">(${getDocImages(item,'bill').length}/${ADMIN_MAX_DOC_IMAGES})</span></label>
+                <button type="button" onclick="adminUploadDocImage('bill')" class="w-full py-2.5 rounded-lg border-2 border-dashed border-blue-300 bg-blue-50 text-blue-700 font-semibold text-sm">${getDocImages(item,'bill').length >= ADMIN_MAX_DOC_IMAGES ? '✅ Max reached' : '➕ Add Bill Image (Camera / Gallery)'}</button>
+                ${getDocImages(item,'bill').length ? `<div class="mt-2 grid grid-cols-3 gap-2">${getDocImages(item,'bill').map((im,i)=>`<div class="relative"><img src="${im}" onclick="openImageViewer('${_escape(im)}','Bill ${i+1}')" class="w-full h-20 object-cover rounded-lg border cursor-zoom-in"><button type="button" onclick="adminDeleteDocImage('bill',${i})" class="absolute -top-1.5 -right-1.5 w-6 h-6 rounded-full bg-red-600 text-white text-xs font-bold shadow-md">✕</button></div>`).join('')}</div>` : ''}
+            </div>
+            <div class="mt-3"><label class="edit-label">Aadhaar Number</label><input type="text" id="edit-aadhaarNumber" value="${item.aadhaarNumber || ''}" class="edit-field font-mono" placeholder="Optional" maxlength="14"></div>
+            <div class="mt-2"><label class="edit-label">Aadhaar Images <span class="text-gray-400 font-normal">(${getDocImages(item,'aadhaar').length}/${ADMIN_MAX_DOC_IMAGES})</span></label>
+                <button type="button" onclick="adminUploadDocImage('aadhaar')" class="w-full py-2.5 rounded-lg border-2 border-dashed border-indigo-300 bg-indigo-50 text-indigo-700 font-semibold text-sm">${getDocImages(item,'aadhaar').length >= ADMIN_MAX_DOC_IMAGES ? '✅ Max reached' : '➕ Add Aadhaar Image (Camera / Gallery)'}</button>
+                ${getDocImages(item,'aadhaar').length ? `<div class="mt-2 grid grid-cols-3 gap-2">${getDocImages(item,'aadhaar').map((im,i)=>`<div class="relative"><img src="${im}" onclick="openImageViewer('${_escape(im)}','Aadhaar ${i+1}')" class="w-full h-20 object-cover rounded-lg border cursor-zoom-in"><button type="button" onclick="adminDeleteDocImage('aadhaar',${i})" class="absolute -top-1.5 -right-1.5 w-6 h-6 rounded-full bg-red-600 text-white text-xs font-bold shadow-md">✕</button></div>`).join('')}</div>` : ''}
+            </div>
+        </div>`;
         
     if (item.sold) {
         html += `<div class="border-t pt-3"><p class="font-bold">Sale Details</p>
@@ -976,6 +1238,12 @@ toggleEditMode = function() {
     setTimeout(() => {
         setupImeiValidation('edit-imei', 'imeiAllowBtn');
         setupImeiValidation('edit-imei2', 'imei2AllowBtn');
+        // ensure Save/Cancel bar is visible & scrolled into view
+        const saveBar = document.getElementById('detailSaveActions');
+        if (saveBar) {
+            saveBar.style.setProperty('display','flex','important');
+            try { saveBar.scrollIntoView({behavior:'smooth', block:'end'}); } catch(_){}
+        }
     }, 100);
 };
 
@@ -998,7 +1266,9 @@ async function saveEdit() {
     const buyerContact = document.getElementById('edit-buyerContact')?.value.trim() || '';
     const saleDate = document.getElementById('edit-saleDate')?.value || '';
     if (!orderId) { showToast('Order ID required', 'error'); return; }
-    let updated = { orderId, status, phoneModel: model || '', imei: imei || '', imei2: imei2 || '', value: value || 0, customerName: customer || '', reason: reason || '', timestamp: editData.timestamp, timestampIST: editData.timestampIST || '' };
+    const billNumberVal    = (document.getElementById('edit-billNumber')?.value || '').trim();
+    const aadhaarNumberVal = (document.getElementById('edit-aadhaarNumber')?.value || '').trim();
+    let updated = { orderId, status, phoneModel: model || '', imei: imei || '', imei2: imei2 || '', value: value || 0, customerName: customer || '', reason: reason || '', billNumber: billNumberVal, aadhaarNumber: aadhaarNumberVal, timestamp: editData.timestamp, timestampIST: editData.timestampIST || '' };
     if (datetimeVal) { const d = new Date(datetimeVal); if (!isNaN(d)) { updated.timestamp = d.toISOString(); const istOffset = 5.5 * 60 * 60 * 1000; const istTime = new Date(d.getTime() + istOffset); const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']; const dd = String(istTime.getUTCDate()).padStart(2,'0'); const mmm = months[istTime.getUTCMonth()]; const yyyy = istTime.getUTCFullYear(); let hours = istTime.getUTCHours(); const minutes = String(istTime.getUTCMinutes()).padStart(2,'0'); const seconds = String(istTime.getUTCSeconds()).padStart(2,'0'); const ampm = hours >= 12 ? 'PM' : 'AM'; hours = hours % 12 || 12; const hh = String(hours).padStart(2,'0'); updated.timestampIST = `${dd}-${mmm}-${yyyy}, ${hh}:${minutes}:${seconds} ${ampm} IST`; } } else { updated.timestamp = editData.timestamp; updated.timestampIST = editData.timestampIST; }
     if (editData.sold) {
         const commission = calculateCommission(value);
@@ -2136,7 +2406,8 @@ setInterval(updateClock, 1000); updateClock();
 // ==========================================
 document.addEventListener('DOMContentLoaded', () => {
     lucide.createIcons();
-    loadDashboard(); loadOrders(); loadPendingAdmin(); loadRejectedAdmin(); loadInventory(); loadSales(); loadDeposits(); loadAgents();
+    // 🔥 FIX: Sirf dashboard load karo init pe, baaki jab user jaye
+    loadDashboard();
     document.getElementById('attendanceDate').value = new Date().toISOString().split('T')[0];
     const today = new Date();
     document.getElementById('salaryMonth').value = today.getFullYear() + '-' + String(today.getMonth() + 1).padStart(2, '0');
@@ -2157,7 +2428,7 @@ document.addEventListener('DOMContentLoaded', () => {
         else if (currentPageView === 'attendance') loadAttendance();
         else if (currentPageView === 'salary') loadSalaryData();
         else if (currentPageView === 'agents') loadAgents();
-    }, 60000);
+    }, 300000);  // 🔥 FIX: 5 minutes (pehle 60000 tha)
     showToast('👋 Welcome', 'info', 2000);
 });
 
