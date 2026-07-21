@@ -28,7 +28,7 @@ function getDocImages(item, which) {
     return arr.filter(Boolean);
 }
 
-function _compressImageFileAdmin(file, maxDim = 720, quality = 0.4) {
+function _compressImageFileAdmin(file, maxDim = 1200, quality = 0.7) {
     return new Promise((resolve, reject) => {
         if (!file) return reject('No file');
         if (!file.type.startsWith('image/')) return reject('Not an image');
@@ -43,54 +43,20 @@ function _compressImageFileAdmin(file, maxDim = 720, quality = 0.4) {
                     if (width > height) { height = Math.round(height * maxDim / width); width = maxDim; }
                     else                { width  = Math.round(width  * maxDim / height); height = maxDim; }
                 }
-                const c = document.createElement('canvas');
-                c.width = width; c.height = height;
-                const ctx = c.getContext('2d');
-                ctx.fillStyle = '#fff'; ctx.fillRect(0,0,width,height);
-                ctx.drawImage(img,0,0,width,height);
-                try { resolve(c.toDataURL('image/jpeg', quality)); }
-                catch(e){ reject(e); }
+                const canvas = document.createElement('canvas');
+                canvas.width = width; canvas.height = height;
+                const ctx = canvas.getContext('2d');
+                ctx.fillStyle = '#fff';
+                ctx.fillRect(0, 0, width, height);
+                ctx.drawImage(img, 0, 0, width, height);
+                try {
+                    const dataUrl = canvas.toDataURL('image/jpeg', quality);
+                    resolve(dataUrl);
+                } catch (e) { reject(e); }
             };
             img.src = reader.result;
         };
         reader.readAsDataURL(file);
-    });
-}
-
-// Full-screen image viewer
-function openImageViewer(dataUrl, label) {
-    if (!dataUrl) return;
-    const modal = document.getElementById('imgViewerModal');
-    const img   = document.getElementById('imgViewerImg');
-    const cap   = document.getElementById('imgViewerCaption');
-    const dl    = document.getElementById('imgViewerDownload');
-    img.src = dataUrl;
-    cap.textContent = label || 'Document';
-    dl.href = dataUrl;
-    dl.download = (label || 'document').replace(/\s+/g,'_') + '.jpg';
-    modal.style.display = 'flex';
-}
-function closeImageViewer() {
-    const modal = document.getElementById('imgViewerModal');
-    if (modal) modal.style.display = 'none';
-    const img = document.getElementById('imgViewerImg');
-    if (img) img.src = '';
-}
-
-// Ask user: Camera vs Gallery, then open a file input accordingly
-function _pickImageSource(useCamera, multiple) {
-    return new Promise((resolve) => {
-        const inp = document.createElement('input');
-        inp.type = 'file';
-        inp.accept = 'image/*';
-        if (useCamera) inp.setAttribute('capture', 'environment');
-        if (multiple)  inp.multiple = true;
-        inp.onchange = () => resolve(inp.files ? Array.from(inp.files) : []);
-        // Some browsers need the input in DOM
-        inp.style.position = 'fixed'; inp.style.left = '-9999px';
-        document.body.appendChild(inp);
-        inp.click();
-        setTimeout(() => { try { document.body.removeChild(inp); } catch(_){} }, 60000);
     });
 }
 
@@ -2108,17 +2074,15 @@ async function blockAgent(username, date) {
 function setSalaryMode(mode) {
     currentSalaryMode = mode;
     document.getElementById('salaryModeToday').classList.toggle('active', mode === 'today');
-    document.getElementById('salaryModeMonthly').classList.toggle('active', mode === 'monthly');
+    document.getElementById('salaryModeSinceJoin').classList.toggle('active', mode === 'since_join');
     document.getElementById('salaryModeDate').classList.toggle('active', mode === 'date');
-    document.getElementById('salaryMonthWrapper').style.display = mode === 'monthly' ? 'inline-block' : 'none';
     document.getElementById('salaryDateWrapper').style.display = mode === 'date' ? 'inline-block' : 'none';
 
     const label = document.getElementById('salaryModeLabel');
     if (mode === 'today') {
         label.textContent = "Today's Earnings";
-    } else if (mode === 'monthly') {
-        const monthVal = document.getElementById('salaryMonth').value || 'current month';
-        label.textContent = `Earnings for ${monthVal}`;
+    } else if (mode === 'since_join') {
+        label.textContent = "Earnings from Joining Date to Today";
     } else if (mode === 'date') {
         const dateVal = document.getElementById('salaryDate').value || 'selected date';
         label.textContent = `Earnings for ${dateVal}`;
@@ -2164,20 +2128,10 @@ async function loadSalaryData() {
             daysInMonth = 1;
             dateFilterFn = (ordDate) => ordDate === today;
             periodInfo.date = today;
-        } else if (mode === 'monthly') {
-            const monthInput = document.getElementById('salaryMonth');
-            if (!monthInput.value) {
-                const d = new Date();
-                monthInput.value = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
-            }
-            const [y, m] = monthInput.value.split('-').map(Number);
-            year = y;
-            month = m;
-            monthStr = String(month).padStart(2, '0');
-            daysInMonth = new Date(year, month, 0).getDate();
-            dateFilterFn = (ordDate) => ordDate.startsWith(`${year}-${monthStr}`);
-            periodInfo.year = year;
-            periodInfo.month = month;
+        } else if (mode === 'since_join') {
+            // For since_join, we don't use a single filter; we'll handle per-agent later
+            periodInfo.mode = 'since_join';
+            // no date filter needed here
         } else if (mode === 'date') {
             const dateInput = document.getElementById('salaryDate');
             let dateVal = dateInput.value;
@@ -2198,7 +2152,6 @@ async function loadSalaryData() {
             periodInfo.mode = 'all';
         }
 
-        // Store period for activity links
         currentSalaryPeriod = periodInfo;
 
         const pickupsByAgentDate = {};
@@ -2207,24 +2160,34 @@ async function loadSalaryData() {
         // Global counts
         let globalPickup = 0, globalReject = 0, globalPending = 0, globalEarnings = 0;
 
+        // 🔥 FIX: For 'today' and 'date' mode, filter reject orders by date as well
+        const rejectDateFilter = (ordDate) => {
+            if (mode === 'today') return ordDate === today;
+            if (mode === 'date') return ordDate === periodInfo.date;
+            return true; // since_join or all mode - show all pending rejects
+        };
+
         for (const [oid, ord] of Object.entries(pickups)) {
             if (!ord.timestamp) continue;
             if (ord.status === 'on_hold') continue;
-
-            const ordDate = new Date(ord.timestamp).toISOString().split('T')[0];
-            if (!dateFilterFn(ordDate)) continue;
             const agent = ord.agent || 'unknown';
             if (!agents[agent]) continue;
+            const ordDate = new Date(ord.timestamp).toISOString().split('T')[0];
+            
+            // For pickupsByAgentDate, apply date filter only if mode is today or date
+            if (mode === 'today' || mode === 'date') {
+                if (!dateFilterFn(ordDate)) continue;
+            }
+            // For since_join, we'll handle per-agent in the second loop
+            
             const key = agent + '|' + ordDate;
             if (!pickupsByAgentDate[key]) pickupsByAgentDate[key] = [];
             pickupsByAgentDate[key].push(ord);
-            if (ord.status === 'rejected' && !ord.incentive_approved) {
+            
+            // 🔥 FIX: Only add to allRejectedOrders if date passes the reject filter
+            if (ord.status === 'rejected' && !ord.incentive_approved && rejectDateFilter(ordDate)) {
                 allRejectedOrders.push({ id: oid, ...ord });
             }
-            // Global counts
-            if (ord.status === 'pickup') globalPickup++;
-            else if (ord.status === 'rejected') globalReject++;
-            else if (ord.status === 'reschedule') globalPending++;
         }
 
         let html = '';
@@ -2236,27 +2199,54 @@ async function loadSalaryData() {
             const rejectInc = uData.reject_incentive || 0;
             const perDaySalary = salary / 30;
 
+            const joinDateStr = uData.joinDate || null;
+            let joinDateObj = joinDateStr ? new Date(joinDateStr + 'T00:00:00') : null;
+
+            // Determine date range
+            let startDate, endDate;
+            if (mode === 'since_join') {
+                if (joinDateObj) {
+                    startDate = new Date(joinDateObj);
+                    endDate = new Date(today + 'T00:00:00');
+                } else {
+                    // If no join date, default to all time (or you can skip)
+                    startDate = new Date('2020-01-01'); // fallback
+                    endDate = new Date(today + 'T00:00:00');
+                }
+            } else if (mode === 'today' || mode === 'date') {
+                startDate = new Date((mode === 'date' ? periodInfo.date : today) + 'T00:00:00');
+                endDate = new Date(startDate);
+            } else {
+                startDate = new Date(today + 'T00:00:00');
+                endDate = new Date(today + 'T00:00:00');
+            }
+
             let totalBaseSalary = 0;
             let totalPickupIncentive = 0;
             let totalRejectIncentive = 0;
             let detailsHtml = '';
             let pendingRejects = [];
-
             const userAttendance = allAttendance[uname] || {};
-
-            const loopDays = mode === 'today' || mode === 'date' ? [new Date().getDate()] : Array.from({ length: daysInMonth }, (_, i) => i + 1);
-            const datePrefix = mode === 'date' ? periodInfo.date : (mode === 'today' ? today : `${year}-${monthStr}`);
             let agentPickupCount = 0, agentRejectCount = 0, agentPendingCount = 0;
-            for (const d of loopDays) {
-                const dateStr = (mode === 'today' || mode === 'date') ? (mode === 'date' ? periodInfo.date : today) : `${year}-${monthStr}-${String(d).padStart(2, '0')}`;
+
+            // Loop through each day from startDate to endDate (inclusive)
+            let currentDate = new Date(startDate);
+            while (currentDate <= endDate) {
+                const dateStr = currentDate.toISOString().split('T')[0];
+
+                // Skip if before join date (for safety)
+                if (joinDateObj && currentDate < joinDateObj) {
+                    currentDate.setDate(currentDate.getDate() + 1);
+                    continue;
+                }
+
                 const att = userAttendance[dateStr] || {};
                 const isPresent = att.status === 'present';
                 const salaryCounted = att.salary_counted !== false;
 
-                let daySalary = 0;
-                if (isPresent && salaryCounted) daySalary = perDaySalary;
-                else daySalary = 0;
-                totalBaseSalary += daySalary;
+                if (isPresent && salaryCounted) {
+                    totalBaseSalary += perDaySalary;
+                }
 
                 const key = uname + '|' + dateStr;
                 const dayPickups = pickupsByAgentDate[key] || [];
@@ -2285,6 +2275,8 @@ async function loadSalaryData() {
                     const statusIcon = isPresent ? '✅' : (att.blocked ? '🔒' : '❌');
                     detailsHtml += `<span class="text-xs mx-0.5" title="${dateStr}">${statusIcon}</span>`;
                 }
+
+                currentDate.setDate(currentDate.getDate() + 1);
             }
 
             const uniquePending = [];
@@ -2299,6 +2291,9 @@ async function loadSalaryData() {
             const total = totalBaseSalary + totalPickupIncentive + totalRejectIncentive;
             grandTotal += total;
             globalEarnings += total;
+            globalPickup += agentPickupCount;
+            globalReject += agentRejectCount;
+            globalPending += agentPendingCount;
 
             let pendingRejectsHtml = '';
             if (uniquePending.length > 0) {
@@ -2315,11 +2310,14 @@ async function loadSalaryData() {
                 pendingRejectsHtml += `</div></div>`;
             }
 
+            const joinDateDisplay = joinDateObj ? joinDateObj.toISOString().split('T')[0] : '—';
+
             html += `<div class="glass rounded-2xl p-5 shadow-sm border border-gray-100 salary-summary-card">
                 <div class="flex flex-wrap items-center justify-between gap-2">
                     <div>
                         <span class="font-bold text-gray-800 cursor-pointer hover:text-indigo-600" onclick="viewAgentActivityWithPeriod('${uname}', ${JSON.stringify(currentSalaryPeriod).replace(/"/g, '&quot;')})">${uData.name}</span>
                         <span class="text-sm text-gray-500">(${uname})</span>
+                        <span class="text-xs text-gray-400 ml-2">Joined: ${joinDateDisplay}</span>
                         <button onclick="viewAgentActivityWithPeriod('${uname}', ${JSON.stringify(currentSalaryPeriod).replace(/"/g, '&quot;')})" class="btn-action activity text-xs ml-2"><i data-lucide="activity"></i> Activity</button>
                         <span class="text-xs text-gray-400 ml-2">📦 ${agentPickupCount} | ❌ ${agentRejectCount} | ⏳ ${agentPendingCount}</span>
                     </div>
@@ -2341,23 +2339,27 @@ async function loadSalaryData() {
         document.getElementById('globalPending').textContent = globalPending;
         document.getElementById('globalEarnings').textContent = '₹' + Math.round(globalEarnings);
 
-        const uniqueAllPending = [];
+        // 🔥 FIX: All Pending Reject Approvals section - now filtered by mode
+        // For 'since_join', show all; for 'today'/'date', show only those dates
+        const filteredAllPending = [];
         const seenAll = new Set();
         for (const pr of allRejectedOrders) {
             if (!seenAll.has(pr.id)) {
                 seenAll.add(pr.id);
-                uniqueAllPending.push(pr);
+                filteredAllPending.push(pr);
             }
         }
 
-        if (uniqueAllPending.length > 0) {
+        if (filteredAllPending.length > 0) {
             html += `<div class="glass rounded-2xl p-5 shadow-sm border border-amber-200 bg-amber-50">
-                <h4 class="font-bold text-amber-700 mb-2">📋 All Pending Reject Approvals (${uniqueAllPending.length})</h4>
+                <h4 class="font-bold text-amber-700 mb-2">📋 Pending Reject Approvals (${filteredAllPending.length})</h4>
                 <div class="flex flex-wrap gap-2">`;
-            uniqueAllPending.forEach(pr => {
+            filteredAllPending.forEach(pr => {
+                const ordDate = pr.timestamp ? new Date(pr.timestamp).toISOString().split('T')[0] : '—';
                 html += `<span class="text-sm bg-white px-3 py-1 rounded shadow flex items-center gap-2">
                     <span class="font-mono">${pr.orderId || pr.id}</span>
                     <span class="text-xs text-gray-500">(${pr.agent || '—'})</span>
+                    <span class="text-xs text-gray-400">${ordDate}</span>
                     <button onclick="toggleRejectApproval('${pr.id}', true)" class="btn-action approve text-xs py-0.5 px-2">
                         <i data-lucide="check-circle"></i> Approve
                     </button>

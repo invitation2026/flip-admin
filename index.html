@@ -1533,43 +1533,39 @@
                 </div>
             </div>
 
-            <!-- ===== SALARY / EARNINGS (UPDATED) ===== -->
-            <div id="page-salary" class="page-content fade-in" style="display:none;">
-                <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
-                    <div>
-                        <h2 class="text-2xl font-bold text-gray-800">Salary & Earnings</h2>
-                        <p class="text-sm text-gray-500" id="salaryModeLabel">Today's Earnings</p>
-                    </div>
-                    <div class="flex items-center gap-2 flex-wrap">
-                        <div class="flex rounded-lg overflow-hidden border border-gray-300">
-                            <button id="salaryModeToday" class="salary-toggle-btn active" onclick="setSalaryMode('today')">Today</button>
-                            <button id="salaryModeMonthly" class="salary-toggle-btn" onclick="setSalaryMode('monthly')">Monthly</button>
-                            <button id="salaryModeDate" class="salary-toggle-btn" onclick="setSalaryMode('date')">Date</button>
-                        </div>
-                        <div id="salaryMonthWrapper" style="display:none;">
-                            <input type="month" id="salaryMonth" class="px-4 py-2 border border-gray-200 rounded-xl text-sm outline-none focus:border-indigo-400" />
-                        </div>
-                        <div id="salaryDateWrapper" style="display:none;">
-                            <input type="date" id="salaryDate" class="px-4 py-2 border border-gray-200 rounded-xl text-sm outline-none focus:border-indigo-400" />
-                        </div>
-                        <button onclick="loadSalaryData()" id="salaryLoadBtn" class="btn-action view"><i data-lucide="refresh-cw"></i> Load</button>
-                        <button onclick="recalculateAllSalary()" class="btn-action edit"><i data-lucide="calculator"></i> Recalculate</button>
-                    </div>
-                </div>
-
-                <!-- Global Stats (Total Pickups, Rejects, Pending, Earnings) -->
-                <div id="salaryGlobalStats" class="salary-global-stats">
-                    <div class="stat-box"><div class="num green" id="globalPickups">0</div><div class="label">Total Pickups</div></div>
-                    <div class="stat-box"><div class="num red" id="globalRejects">0</div><div class="label">Total Rejects</div></div>
-                    <div class="stat-box"><div class="num amber" id="globalPending">0</div><div class="label">Total Pending</div></div>
-                    <div class="stat-box"><div class="num purple" id="globalEarnings">₹0</div><div class="label">Grand Earnings</div></div>
-                </div>
-
-                <div id="salaryContainer" class="space-y-4">
-                    <div class="empty-state"><i data-lucide="inbox"></i><p class="text-sm font-medium">Select a view and click Load</p></div>
-                </div>
+<!-- ===== SALARY / EARNINGS (UPDATED) ===== -->
+<div id="page-salary" class="page-content fade-in" style="display:none;">
+    <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+        <div>
+            <h2 class="text-2xl font-bold text-gray-800">Salary & Earnings</h2>
+            <p class="text-sm text-gray-500" id="salaryModeLabel">Today's Earnings</p>
+        </div>
+        <div class="flex items-center gap-2 flex-wrap">
+            <div class="flex rounded-lg overflow-hidden border border-gray-300">
+                <button id="salaryModeToday" class="salary-toggle-btn active" onclick="setSalaryMode('today')">Today</button>
+                <button id="salaryModeSinceJoin" class="salary-toggle-btn" onclick="setSalaryMode('since_join')">Since Join</button>
+                <button id="salaryModeDate" class="salary-toggle-btn" onclick="setSalaryMode('date')">Date</button>
             </div>
+            <div id="salaryDateWrapper" style="display:none;">
+                <input type="date" id="salaryDate" class="px-4 py-2 border border-gray-200 rounded-xl text-sm outline-none focus:border-indigo-400" />
+            </div>
+            <button onclick="loadSalaryData()" id="salaryLoadBtn" class="btn-action view"><i data-lucide="refresh-cw"></i> Load</button>
+            <button onclick="recalculateAllSalary()" class="btn-action edit"><i data-lucide="calculator"></i> Recalculate</button>
+        </div>
+    </div>
 
+    <!-- Global Stats (Total Pickups, Rejects, Pending, Earnings) -->
+    <div id="salaryGlobalStats" class="salary-global-stats">
+        <div class="stat-box"><div class="num green" id="globalPickups">0</div><div class="label">Total Pickups</div></div>
+        <div class="stat-box"><div class="num red" id="globalRejects">0</div><div class="label">Total Rejects</div></div>
+        <div class="stat-box"><div class="num amber" id="globalPending">0</div><div class="label">Total Pending</div></div>
+        <div class="stat-box"><div class="num purple" id="globalEarnings">₹0</div><div class="label">Grand Earnings</div></div>
+    </div>
+
+    <div id="salaryContainer" class="space-y-4">
+        <div class="empty-state"><i data-lucide="inbox"></i><p class="text-sm font-medium">Select a view and click Load</p></div>
+    </div>
+</div>
             <!-- ===== AGENTS ===== -->
             <div id="page-agents" class="page-content fade-in" style="display:none;">
                 <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
