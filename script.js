@@ -2622,7 +2622,9 @@ async function openGlobalSearch() {
 
         let html = '';
         for (const [cat, items] of Object.entries(groups)) {
+            const catId = `cat-${cat.replace(/\s+/g, '-')}`;
             html += `<div class="category-group"><div class="category-title">${cat} <span class="count-badge">${items.length}</span></div>`;
+            html += `<div id="${catId}-items">`;
             items.slice(0, 10).forEach(r => {
                 const item = r.item;
                 let label = '';
@@ -2666,8 +2668,55 @@ async function openGlobalSearch() {
                     </div>
                 </div>`;
             });
+            html += `</div>`;
+
+            // Add hidden items and show more button
             if (items.length > 10) {
-                html += `<div class="text-xs text-gray-400 mt-1">+${items.length - 10} more</div>`;
+                html += `<div id="${catId}-hidden" style="display:none;">`;
+                items.slice(10).forEach(r => {
+                    const item = r.item;
+                    let label = '';
+                    let desc = '';
+                    let badge = '';
+                    let onClick = '';
+                    let locateFn = '';
+
+                    if (item._type === 'order' || item._type === 'inventory' || item._type === 'sale') {
+                        const orderId = item.id || item.orderId;
+                        label = item.orderId || item.id;
+                        desc = item.phoneModel || '';
+                        const status = item.status || '';
+                        let statusClass = '';
+                        let statusDisplay = status;
+                        if (status === 'pickup') {
+                            if (item.sold) { statusClass = 'sold'; statusDisplay = 'Sold'; }
+                            else { statusClass = 'pickup'; statusDisplay = 'Pickup'; }
+                        } else if (status === 'rejected') { statusClass = 'rejected'; statusDisplay = 'Rejected'; }
+                        else if (status === 'reschedule') { statusClass = 'reschedule'; statusDisplay = 'Pending'; }
+                        else if (status === 'on_hold') { statusClass = 'on_hold'; statusDisplay = 'Hold'; }
+                        badge = statusDisplay ? `<span class="badge-status ${statusClass}">${statusDisplay}</span>` : '';
+                        onClick = `onclick="viewOrder('${orderId}')"`;
+                        locateFn = `onclick="locateItem({id:'${orderId}', type:'${item._type}'})"`;
+                    } else if (item._type === 'agent') {
+                        label = item.name || item.username;
+                        desc = item.username + (item.mobile ? ' | ' + item.mobile : '');
+                        badge = `<span class="badge-status admin">Agent</span>`;
+                        onClick = `onclick="viewAgentActivity('${item.username}')"`;
+                        locateFn = `onclick="locateItem({username:'${item.username}', type:'agent'})"`;
+                    }
+
+                    html += `<div class="result-item" ${onClick}>
+                        <div><span class="text-mono">${label}</span><span class="text-desc">${desc}</span></div>
+                        <div class="action-buttons">
+                            ${badge}
+                            <button class="locate-btn" title="Locate" ${locateFn}>
+                                <i data-lucide="map-pin" class="w-4 h-4"></i>
+                            </button>
+                        </div>
+                    </div>`;
+                });
+                html += `</div>`;
+                html += `<button class="show-more-btn" onclick="toggleShowMore('${catId}', ${items.length})">+${items.length - 10} more</button>`;
             }
             html += `</div>`;
         }
@@ -2679,6 +2728,19 @@ async function openGlobalSearch() {
 function closeGlobalSearch() {
     document.getElementById('globalSearchModal').classList.remove('open');
     document.getElementById('globalSearchModalInput').value = '';
+}
+
+// Toggle show more for search results
+function toggleShowMore(catId, totalItems) {
+    const hiddenDiv = document.getElementById(catId + '-hidden');
+    const btn = event.target;
+    if (hiddenDiv.style.display === 'none') {
+        hiddenDiv.style.display = 'block';
+        btn.textContent = `Show less (${totalItems - 10} hidden)`;
+    } else {
+        hiddenDiv.style.display = 'none';
+        btn.textContent = `+${totalItems - 10} more`;
+    }
 }
 
 // ==========================================
