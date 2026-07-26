@@ -14,11 +14,21 @@ const firebaseConfig = {
 firebase.initializeApp(firebaseConfig);
 const db = firebase.database();
 
-// ========== DOCUMENTS (Bill / Aadhaar) helpers ==========
+// ==========================================
+// GLOBAL HELPERS
+// ==========================================
+const formatINR = (num) => {
+    if (num === undefined || num === null || isNaN(num)) return '₹0';
+    return '₹' + new Intl.NumberFormat('en-IN').format(Math.round(num));
+};
+
 function _escape(s) { return (s || '').replace(/'/g, "\\'"); }
+
+// ==========================================
+// DOCUMENTS (Bill / Aadhaar) helpers
+// ==========================================
 const ADMIN_MAX_DOC_IMAGES = 3;
 
-// Read a doc's images as a normalized array (handles legacy single-image field)
 function getDocImages(item, which) {
     if (!item) return [];
     const arrField = which === 'bill' ? 'billImages' : 'aadhaarImages';
@@ -60,10 +70,8 @@ function _compressImageFileAdmin(file, maxDim = 1200, quality = 0.7) {
     });
 }
 
-// Admin upload / add image(s) — appends to array, max ADMIN_MAX_DOC_IMAGES
 async function adminUploadDocImage(which) {
     if (!detailOrderId) return;
-    // Get current images from cached editData
     const current = getDocImages(editData || {}, which);
     if (current.length >= ADMIN_MAX_DOC_IMAGES) {
         showToast(`Max ${ADMIN_MAX_DOC_IMAGES} images allowed`, 'error');
@@ -82,8 +90,8 @@ async function adminUploadDocImage(which) {
         denyButtonColor:    '#0ea5e9'
     });
     if (choice.isDismissed) return;
-    const useCamera = choice.isConfirmed;   // Confirm = Camera, Deny = Gallery
-    const files = await _pickImageSource(useCamera, !useCamera);   // gallery = multi
+    const useCamera = choice.isConfirmed;
+    const files = await _pickImageSource(useCamera, !useCamera);
     if (!files.length) return;
 
     Swal.fire({ title:'Uploading…', allowOutsideClick:false, didOpen:()=>Swal.showLoading() });
@@ -99,7 +107,6 @@ async function adminUploadDocImage(which) {
         const newArr = current.concat(compressed);
         const arrField = which === 'bill' ? 'billImages' : 'aadhaarImages';
         const legacyField = which === 'bill' ? 'billImage' : 'aadhaarImage';
-        // Store array; keep legacy field mirrored to first image for backward compat
         await db.ref('pickups/' + detailOrderId).update({
             [arrField]: newArr,
             [legacyField]: newArr[0] || null
@@ -117,7 +124,6 @@ async function adminUploadDocImage(which) {
     }
 }
 
-// Delete one image by index (or all if idx is null)
 async function adminDeleteDocImage(which, idx) {
     if (!detailOrderId) return;
     const arrField = which === 'bill' ? 'billImages' : 'aadhaarImages';
@@ -157,7 +163,6 @@ async function adminDeleteDocImage(which, idx) {
     }
 }
 
-// Save doc number (bill / aadhaar) inline from view mode
 async function adminSaveDocNumber(which) {
     if (!detailOrderId) return;
     const field = which === 'bill' ? 'billNumber' : 'aadhaarNumber';
@@ -183,9 +188,8 @@ async function adminSaveDocNumber(which) {
     } catch(e) { showToast('Update failed', 'error'); console.error(e); }
 }
 
-
 // ==========================================
-// COMMISSION BRACKETS – based on PURCHASE PRICE only
+// COMMISSION BRACKETS
 // ==========================================
 const COMMISSION_BRACKETS = [
     { min: 0, max: 10000, type: 'percentage', value: 10 },
@@ -238,11 +242,14 @@ const depositPageSize = 15;
 
 // Salary mode
 let currentSalaryMode = 'today';
-let currentSalaryPeriod = null; // will hold { mode, date, month, year } for activity
+let currentSalaryPeriod = null;
 
-// IMEI override state (optional, kept for compatibility)
+// IMEI override
 let imeiOverride = {};
 let imei2Override = {};
+
+// Overhead cache (will be recalculated)
+let overheadPerPhone = 0;
 
 // ==========================================
 // DOM REFS
@@ -290,7 +297,7 @@ function navigate(page) {
 }
 
 // ==========================================
-// DASHBOARD – hold orders skipped, commission based on purchase price
+// DASHBOARD
 // ==========================================
 async function loadDashboard() {
     try {
@@ -340,7 +347,6 @@ async function loadDashboard() {
         let totalAgents = 0;
         let presentToday = 0;
         const today = new Date().toISOString().split('T')[0];
-        // 🔥 FIX: Ek baar mein attendance read karo, har agent ke liye alag se nahi
         const attSnapAll = await db.ref('attendance').once('value');
         const allAttendance = attSnapAll.val() || {};
         for (const [uname, uData] of Object.entries(users)) {
@@ -363,12 +369,12 @@ async function loadDashboard() {
         document.getElementById('statPending').textContent = pendingCount;
         document.getElementById('statInventory').textContent = unsoldCount;
         document.getElementById('statSold').textContent = soldCount;
-        document.getElementById('statRevenue').textContent = '₹' + Math.round(revenue);
-        document.getElementById('statProfit').textContent = '₹' + Math.round(profit);
-        document.getElementById('statStockValue').textContent = '₹' + totalStockValue;
+        document.getElementById('statRevenue').textContent = formatINR(revenue);
+        document.getElementById('statProfit').textContent = formatINR(profit);
+        document.getElementById('statStockValue').textContent = formatINR(totalStockValue);
         document.getElementById('statAgents').textContent = totalAgents;
         document.getElementById('statPresentToday').textContent = presentToday;
-        document.getElementById('statCommission').textContent = '₹' + Math.round(totalCommission);
+        document.getElementById('statCommission').textContent = formatINR(totalCommission);
 
         document.getElementById('orderCountBadge').textContent = total;
         document.getElementById('pendingBadge').textContent = pendingCount;
@@ -404,16 +410,16 @@ async function loadDashboard() {
 }
 
 // ==========================================
-// ORDERS
+// ORDERS (with fuzzy search and live dropdown)
 // ==========================================
 async function loadOrders() {
     try {
         const snap = await db.ref('pickups').once('value');
         const data = snap.val() || {};
-        // 🔥 FIX: Images exclude karo list view se - bandwidth bachao
         allOrders = Object.entries(data).map(([id, item]) => ({ id, ...item, billImages: undefined, billImage: undefined, aadhaarImages: undefined, aadhaarImage: undefined }));
         allOrders.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
         applyOrderFilter(currentOrderFilter);
+        setupLiveSearch('orderSearch', 'orderSearchDropdown', allOrders, ['orderId', 'phoneModel', 'imei', 'customerName', 'agent']);
     } catch (e) {
         console.error('Orders error:', e);
         showToast('Error loading orders', 'error');
@@ -425,14 +431,26 @@ function applyOrderFilter(filter) {
     document.querySelectorAll('.filter-chip').forEach(el => { el.classList.toggle('active', el.dataset.filter === filter); });
     let filtered = [...allOrders];
     if (filter !== 'all') { filtered = filtered.filter(item => item.status === filter); }
-    const searchVal = document.getElementById('orderSearch').value.trim().toUpperCase();
-    if (searchVal) { filtered = filtered.filter(item => (item.orderId || '').toUpperCase().includes(searchVal)); }
+
+    const query = document.getElementById('orderSearch').value.trim();
+    if (query) {
+        const fuse = new Fuse(filtered, {
+            keys: ['orderId', 'phoneModel', 'imei', 'customerName', 'agent'],
+            threshold: 0.3,
+            includeScore: true,
+            ignoreLocation: true
+        });
+        const results = fuse.search(query);
+        filtered = results.map(r => r.item);
+    }
+
     const dateFrom = document.getElementById('orderDateFrom').value;
     const dateTo = document.getElementById('orderDateTo').value;
     if (dateFrom) { filtered = filtered.filter(item => { if (!item.timestamp) return false; const d = new Date(item.timestamp); return d.toISOString().split('T')[0] >= dateFrom; }); }
     if (dateTo) { filtered = filtered.filter(item => { if (!item.timestamp) return false; const d = new Date(item.timestamp); return d.toISOString().split('T')[0] <= dateTo; }); }
     const agentFilter = document.getElementById('orderAgentFilter').value;
     if (agentFilter !== 'all') { filtered = filtered.filter(item => (item.agent || '') === agentFilter); }
+
     filteredOrders = filtered;
     currentPage = 1;
     renderOrdersTable();
@@ -482,7 +500,7 @@ function renderOrdersTable() {
         }
         const model = item.phoneModel || '—';
         const imei = item.imei || '—';
-        const value = item.value !== undefined && item.value !== null ? '₹' + item.value : '—';
+        const value = item.value !== undefined && item.value !== null ? formatINR(item.value) : '—';
         const customer = item.customerName || '—';
         const agent = item.agent || '—';
         html += `<tr class="order-row border-b border-gray-50"><td class="py-3 px-4 text-gray-400 font-mono text-xs">${num}</td><td class="py-3 px-4 font-mono font-bold text-gray-800 text-sm">${item.orderId || item.id}</td><td class="py-3 px-4"><span class="badge-status ${statusClass}">${displayName}</span></td><td class="py-3 px-4 hidden sm:table-cell text-gray-600 text-sm">${model}</td><td class="py-3 px-4 hidden md:table-cell font-mono text-xs text-gray-500">${imei}</td><td class="py-3 px-4 hidden lg:table-cell font-bold text-gray-700">${value}</td><td class="py-3 px-4 hidden xl:table-cell text-gray-600 text-sm">${customer}</td><td class="py-3 px-4 hidden sm:table-cell text-gray-500 text-sm">${agent}</td><td class="py-3 px-4"><div class="flex items-center gap-1.5"><button onclick="viewOrder('${item.id}')" class="btn-action view"><i data-lucide="eye"></i></button>${!item.sold && item.status === 'pickup' ? `<button onclick="openSellModalFromOrders('${item.id}')" class="btn-action sell"><i data-lucide="badge-dollar-sign"></i></button>` : ''}<button onclick="deleteOrder('${item.id}')" class="btn-action delete"><i data-lucide="trash-2"></i></button></div></td></tr>`;
@@ -586,16 +604,16 @@ async function toggleRejectApproval(orderId, approve) {
 }
 
 // ==========================================
-// INVENTORY – commission based on purchase price
+// INVENTORY (with live dropdown)
 // ==========================================
 async function loadInventory() {
     try {
         const snap = await db.ref('pickups').once('value');
         const data = snap.val() || {};
-        // 🔥 FIX: Images exclude
         inventoryList = Object.entries(data).filter(([_, item]) => item.status === 'pickup' && !item.sold).map(([id, item]) => ({ id, ...item, billImages: undefined, billImage: undefined, aadhaarImages: undefined, aadhaarImage: undefined }));
         inventoryList.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
         applyInventorySearch();
+        setupLiveSearch('inventorySearch', 'inventorySearchDropdown', inventoryList, ['orderId', 'phoneModel', 'imei', 'customerName']);
     } catch (e) {
         console.error('Inventory error:', e);
         showToast('Error loading inventory', 'error');
@@ -603,9 +621,18 @@ async function loadInventory() {
 }
 
 function applyInventorySearch() {
-    const searchVal = document.getElementById('inventorySearch').value.trim().toLowerCase();
+    const query = document.getElementById('inventorySearch').value.trim();
     let filtered = inventoryList;
-    if (searchVal) { filtered = filtered.filter(item => (item.orderId || '').toLowerCase().includes(searchVal) || (item.phoneModel || '').toLowerCase().includes(searchVal)); }
+    if (query) {
+        const fuse = new Fuse(filtered, {
+            keys: ['orderId', 'phoneModel', 'imei', 'customerName'],
+            threshold: 0.3,
+            includeScore: true,
+            ignoreLocation: true
+        });
+        const results = fuse.search(query);
+        filtered = results.map(r => r.item);
+    }
     filteredInventory = filtered;
     renderInventoryTable();
     document.getElementById('inventoryCount').textContent = filteredInventory.length + ' units';
@@ -619,7 +646,7 @@ function renderInventoryTable() {
     let html = '';
     filteredInventory.forEach((item, idx) => {
         const commission = calculateCommission(item.value || 0);
-        html += `<tr class="order-row border-b border-gray-50"><td class="py-3 px-4 text-gray-400 font-mono text-xs">${idx+1}</td><td class="py-3 px-4 font-mono font-bold text-gray-800 text-sm">${item.orderId || item.id}</td><td class="py-3 px-4 text-gray-600 text-sm">${item.phoneModel || '—'}</td><td class="py-3 px-4 hidden md:table-cell font-mono text-xs text-gray-500">${item.imei || '—'}</td><td class="py-3 px-4 font-bold text-gray-700">₹${item.value || 0}</td><td class="py-3 px-4"><span class="commission-col">₹${commission}</span></td><td class="py-3 px-4 hidden lg:table-cell text-gray-600 text-sm">${item.customerName || '—'}</td><td class="py-3 px-4"><button onclick="openSellModal('${item.id}')" class="btn-action sell"><i data-lucide="badge-dollar-sign"></i> Sell</button><button onclick="viewOrder('${item.id}')" class="btn-action view"><i data-lucide="eye"></i></button></td></tr>`;
+        html += `<tr class="order-row border-b border-gray-50"><td class="py-3 px-4 text-gray-400 font-mono text-xs">${idx+1}</td><td class="py-3 px-4 font-mono font-bold text-gray-800 text-sm">${item.orderId || item.id}</td><td class="py-3 px-4 text-gray-600 text-sm">${item.phoneModel || '—'}</td><td class="py-3 px-4 hidden md:table-cell font-mono text-xs text-gray-500">${item.imei || '—'}</td><td class="py-3 px-4 font-bold text-gray-700">${formatINR(item.value || 0)}</td><td class="py-3 px-4"><span class="commission-col">${formatINR(commission)}</span></td><td class="py-3 px-4 hidden lg:table-cell text-gray-600 text-sm">${item.customerName || '—'}</td><td class="py-3 px-4"><button onclick="openSellModal('${item.id}')" class="btn-action sell"><i data-lucide="badge-dollar-sign"></i> Sell</button><button onclick="viewOrder('${item.id}')" class="btn-action view"><i data-lucide="eye"></i></button></td></tr>`;
     });
     tbody.innerHTML = html;
     lucide.createIcons();
@@ -628,7 +655,220 @@ function renderInventoryTable() {
 function refreshInventory() { loadInventory(); showToast('🔄 Inventory refreshed', 'info'); }
 
 // ==========================================
-// SELL MODAL – commission based on purchase price
+// SALES (with overhead calculation and live dropdown)
+// =========================================
+async function loadSales() {
+    try {
+        const [pickupSnap, usersSnap, attendanceSnap] = await Promise.all([
+            db.ref('pickups').once('value'),
+            db.ref('users').once('value'),
+            db.ref('attendance').once('value')
+        ]);
+        const data = pickupSnap.val() || {};
+        const users = usersSnap.val() || {};
+        const allAttendance = attendanceSnap.val() || {};
+
+        // --- 1. Compute total all-time overhead (base salary + incentives) ---
+        let totalOverhead = 0;
+        const today = new Date();
+        const todayStr = today.toISOString().split('T')[0];
+
+        // For each agent, compute base salary from attendance
+        for (const [uname, uData] of Object.entries(users)) {
+            const role = uData.role || 'agent';
+            if (role !== 'agent') continue;
+
+            const monthlySalary = uData.salary || 0;
+            const perDaySalary = monthlySalary / 30;
+
+            // Join date (use joinDate if set, else createdAt)
+            let joinDate = null;
+            if (uData.joinDate) {
+                joinDate = new Date(uData.joinDate + 'T00:00:00');
+            } else if (uData.createdAt) {
+                joinDate = new Date(uData.createdAt);
+            }
+            if (!joinDate) joinDate = new Date(today);
+
+            let agentBaseSalary = 0;
+            let currentDate = new Date(joinDate);
+            while (currentDate <= today) {
+                const dateStr = currentDate.toISOString().split('T')[0];
+                const att = (allAttendance[uname] && allAttendance[uname][dateStr]) || {};
+                const isPresent = att.status === 'present';
+                const salaryCounted = att.salary_counted !== false;
+
+                if (isPresent && salaryCounted) {
+                    agentBaseSalary += perDaySalary;
+                }
+                currentDate.setDate(currentDate.getDate() + 1);
+            }
+            totalOverhead += agentBaseSalary;
+        }
+
+        // --- 2. Add pickup incentives from all pickups ---
+        let totalPickupIncentives = 0;
+        let totalRejectIncentives = 0;
+
+        Object.values(data).forEach(item => {
+            if (item.status === 'on_hold') return;
+            const agent = item.agent;
+            if (!agent) return;
+            const uData = users[agent];
+            if (!uData || (uData.role || 'agent') !== 'agent') return;
+
+            if (item.status === 'pickup') {
+                totalPickupIncentives += (uData.pickup_incentive || 0);
+            } else if (item.status === 'rejected' && item.incentive_approved === true) {
+                totalRejectIncentives += (uData.reject_incentive || 0);
+            }
+        });
+
+        totalOverhead += totalPickupIncentives + totalRejectIncentives;
+
+        // --- 3. Total phones sold (all time) ---
+        let totalSold = 0;
+        Object.values(data).forEach(item => {
+            if (item.status === 'pickup' && item.sold) {
+                totalSold++;
+            }
+        });
+
+        // --- 4. Overhead per phone ---
+        overheadPerPhone = totalSold > 0 ? totalOverhead / totalSold : 0;
+
+        // --- 5. Build sales list with profit values ---
+        salesList = Object.entries(data)
+            .filter(([_, item]) => item.sold === true && item.status !== 'on_hold')
+            .map(([id, item]) => {
+                const purchase = item.value || 0;
+                const commission = item.commission !== undefined ? item.commission : calculateCommission(purchase);
+                const grossProfit = (item.salePrice || 0) - purchase - commission;
+                const finalNetProfit = grossProfit - overheadPerPhone;
+                return { id, ...item, commission, grossProfit, finalNetProfit };
+            });
+        salesList.sort((a, b) => (b.saleTimestamp || b.timestamp || 0) - (a.saleTimestamp || a.timestamp || 0));
+        applySalesFilters();
+        document.getElementById('salesBadge').textContent = salesList.length;
+        setupLiveSearch('salesSearch', 'salesSearchDropdown', salesList, ['orderId', 'phoneModel', 'buyerName', 'agent']);
+    } catch (e) {
+        console.error('Sales error:', e);
+        showToast('Error loading sales', 'error');
+    }
+}
+
+function applySalesFilters() {
+    const query = document.getElementById('salesSearch').value.trim();
+    const dateFrom = document.getElementById('salesDateFrom').value;
+    const dateTo = document.getElementById('salesDateTo').value;
+    let filtered = salesList;
+    if (query) {
+        const fuse = new Fuse(filtered, {
+            keys: ['orderId', 'phoneModel', 'buyerName', 'agent'],
+            threshold: 0.3,
+            includeScore: true,
+            ignoreLocation: true
+        });
+        const results = fuse.search(query);
+        filtered = results.map(r => r.item);
+    }
+    if (dateFrom) { filtered = filtered.filter(item => (item.saleDate || '') >= dateFrom); }
+    if (dateTo) { filtered = filtered.filter(item => (item.saleDate || '') <= dateTo); }
+    filteredSales = filtered;
+    renderSalesTable();
+    updateSalesSummary();
+}
+function clearSalesFilters() { document.getElementById('salesSearch').value = ''; document.getElementById('salesDateFrom').value = ''; document.getElementById('salesDateTo').value = ''; applySalesFilters(); }
+
+function updateSalesSummary() {
+    const total = filteredSales.length;
+    let revenue = 0, grossProfitTotal = 0, finalProfitTotal = 0;
+    filteredSales.forEach(item => {
+        const purchase = item.value || 0;
+        const c = item.commission !== undefined ? item.commission : calculateCommission(purchase);
+        revenue += (item.salePrice || 0) - c;
+        const gp = item.grossProfit !== undefined ? item.grossProfit : (item.salePrice - c - purchase);
+        grossProfitTotal += gp || 0;
+        const fp = item.finalNetProfit !== undefined ? item.finalNetProfit : (gp - overheadPerPhone);
+        finalProfitTotal += fp || 0;
+    });
+    document.getElementById('salesTotalCount').textContent = total;
+    document.getElementById('salesTotalRevenue').textContent = formatINR(revenue);
+    document.getElementById('salesTotalGrossProfit').textContent = formatINR(grossProfitTotal);
+    document.getElementById('salesTotalFinalProfit').textContent = formatINR(finalProfitTotal);
+    document.getElementById('salesAvgProfit').textContent = total > 0 ? formatINR(grossProfitTotal / total) : '₹0';
+    document.getElementById('salesOverheadPerPhone').textContent = formatINR(overheadPerPhone);
+}
+
+function renderSalesTable() {
+    const tbody = document.getElementById('salesTableBody');
+    if (filteredSales.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="13"><div class="empty-state"><i data-lucide="inbox"></i><p class="text-sm font-medium">No sales found</p></div></td></tr>`;
+        lucide.createIcons();
+        return;
+    }
+
+    let html = '';
+    filteredSales.forEach((item, idx) => {
+        const purchase = item.value || 0;
+        const commission = item.commission !== undefined ? item.commission : calculateCommission(purchase);
+        const grossProfit = item.grossProfit !== undefined ? item.grossProfit : (item.salePrice - commission - purchase);
+        const finalProfit = item.finalNetProfit !== undefined ? item.finalNetProfit : (grossProfit - overheadPerPhone);
+        const profitClass = finalProfit >= 0 ? 'profit-green' : 'profit-red';
+        const saleDate = item.saleDate || item.timestampIST || '—';
+        const agent = item.agent || '—';
+        html += `<tr class="order-row border-b border-gray-50">
+            <td class="py-3 px-4 text-gray-400 font-mono text-xs">${idx+1}</td>
+            <td class="py-3 px-4 font-mono font-bold text-gray-800 text-sm">${item.orderId || item.id}</td>
+            <td class="py-3 px-4 text-gray-600 text-sm">${item.phoneModel || '—'}</td>
+            <td class="py-3 px-4 hidden md:table-cell font-mono text-xs text-gray-500">${item.imei || '—'}</td>
+            <td class="py-3 px-4 text-gray-600">${formatINR(purchase)}</td>
+            <td class="py-3 px-4 font-bold text-gray-800">${formatINR(item.salePrice || 0)}</td>
+            <td class="py-3 px-4"><span class="commission-badge">${formatINR(commission)}</span></td>
+            <td class="py-3 px-4 font-bold text-indigo-600">${formatINR(grossProfit)}</td>
+            <td class="py-3 px-4 text-amber-600 font-semibold">${formatINR(overheadPerPhone)}</td>
+            <td class="py-3 px-4 font-bold ${profitClass}">${formatINR(finalProfit)}</td>
+            <td class="py-3 px-4 hidden lg:table-cell text-gray-600 text-sm">${item.buyerName || '—'}</td>
+            <td class="py-3 px-4 text-xs text-gray-500">${saleDate} (${agent})</td>
+            <td class="py-3 px-4"><button onclick="viewOrder('${item.id}')" class="btn-action view"><i data-lucide="eye"></i></button></td>
+        </tr>`;
+    });
+    tbody.innerHTML = html;
+    lucide.createIcons();
+}
+function refreshSales() { loadSales(); showToast('🔄 Sales refreshed', 'info'); }
+
+function exportSalesCSV() {
+    if (filteredSales.length === 0) { showToast('No data', 'error'); return; }
+    const headers = ['Order ID', 'Model', 'IMEI', 'Purchase Price', 'Sale Price', 'Commission', 'Gross Profit', 'Overhead/Phone', 'Final Net Profit', 'Buyer', 'Buyer Contact', 'Sale Date', 'Agent'];
+    const rows = filteredSales.map(item => {
+        const purchase = item.value || 0;
+        const c = item.commission !== undefined ? item.commission : calculateCommission(purchase);
+        const gp = item.grossProfit !== undefined ? item.grossProfit : (item.salePrice - c - purchase);
+        const fp = item.finalNetProfit !== undefined ? item.finalNetProfit : (gp - overheadPerPhone);
+        return [
+            item.orderId || item.id || '',
+            item.phoneModel || '',
+            item.imei || '',
+            purchase,
+            item.salePrice || 0,
+            c,
+            gp,
+            overheadPerPhone,
+            fp,
+            item.buyerName || '',
+            item.buyerContact || '',
+            item.saleDate || '',
+            item.agent || ''
+        ];
+    });
+    let csv = '\uFEFF' + headers.join(',') + '\n';
+    rows.forEach(row => { csv += row.map(val => `"${String(val).replace(/"/g, '""')}"`).join(',') + '\n'; });
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' }); const link = document.createElement('a'); link.href = URL.createObjectURL(blob); link.download = `sales_report_${new Date().toISOString().slice(0,10)}.csv`; document.body.appendChild(link); link.click(); document.body.removeChild(link); URL.revokeObjectURL(link.href); showToast('📥 Sales CSV exported', 'success');
+}
+
+// ==========================================
+// SELL MODAL (with profit breakdown)
 // ==========================================
 function openSellModal(orderId) {
     const order = inventoryList.find(item => item.id === orderId);
@@ -636,10 +876,7 @@ function openSellModal(orderId) {
     sellOrderData = order;
     document.getElementById('sellOrderId').value = order.orderId || order.id;
     document.getElementById('sellModel').value = order.phoneModel || '—';
-    document.getElementById('sellPurchasePrice').value = '₹' + (order.value || 0);
-    const purchasePrice = order.value || 0;
-    const commission = calculateCommission(purchasePrice);
-    document.getElementById('sellCommissionDisplay').value = '₹' + commission;
+    document.getElementById('sellPurchasePrice').value = formatINR(order.value || 0);
     document.getElementById('sellSalePrice').value = '';
     document.getElementById('sellBuyerName').value = '';
     document.getElementById('sellBuyerContact').value = '';
@@ -649,23 +886,30 @@ function openSellModal(orderId) {
     document.getElementById('sellProfitPreview').textContent = 'Enter sale price to see profit (commission based on purchase price)';
     document.getElementById('sellModal').style.display = 'flex';
     lucide.createIcons();
-    document.getElementById('sellSalePrice').oninput = updateProfitPreviewWithCommission;
-    updateProfitPreviewWithCommission();
+    document.getElementById('sellSalePrice').oninput = updateSellProfitPreview;
+    updateSellProfitPreview();
     setTimeout(() => document.getElementById('sellSalePrice').focus(), 300);
 }
 
-function updateProfitPreviewWithCommission() {
+function updateSellProfitPreview() {
     const purchase = sellOrderData ? (sellOrderData.value || 0) : 0;
     const sale = parseFloat(document.getElementById('sellSalePrice').value) || 0;
     const commission = calculateCommission(purchase);
-    const netProfit = sale - purchase - commission;
+    const grossProfit = sale - purchase - commission;
+    const finalProfit = grossProfit - overheadPerPhone;
     const preview = document.getElementById('sellProfitPreview');
+    const breakdown = document.getElementById('sellProfitBreakdown');
     if (sale > 0) {
-        preview.textContent = `Commission: ₹${commission} | Net Profit: ₹${netProfit} (${netProfit >= 0 ? '✅' : '⚠️ Loss'})`;
-        preview.className = netProfit >= 0 ? 'profit-preview positive' : 'profit-preview negative';
+        document.getElementById('sellGrossProfit').textContent = formatINR(grossProfit);
+        document.getElementById('sellOverhead').textContent = formatINR(overheadPerPhone);
+        document.getElementById('sellFinalProfit').textContent = formatINR(finalProfit);
+        preview.textContent = `Commission: ${formatINR(commission)} | Gross: ${formatINR(grossProfit)} | Final: ${formatINR(finalProfit)}`;
+        preview.className = finalProfit >= 0 ? 'profit-preview positive' : 'profit-preview negative';
+        breakdown.style.display = 'block';
     } else {
-        preview.textContent = 'Enter sale price to see profit (commission based on purchase price)';
+        preview.textContent = 'Enter sale price to see profit breakdown';
         preview.className = 'profit-preview neutral';
+        breakdown.style.display = 'none';
     }
 }
 
@@ -684,8 +928,8 @@ async function confirmSell() {
 
     const purchasePrice = sellOrderData.value || 0;
     const commission = calculateCommission(purchasePrice);
-    const netRevenue = salePrice - commission;
-    const profit = netRevenue - purchasePrice;
+    const grossProfit = salePrice - purchasePrice - commission;
+    const finalProfit = grossProfit - overheadPerPhone;
 
     const confirm = await Swal.fire({
         title: 'Confirm Sale',
@@ -693,11 +937,12 @@ async function confirmSell() {
             <div class="text-left">
                 <p><strong>Order:</strong> ${sellOrderData.orderId}</p>
                 <p><strong>Model:</strong> ${sellOrderData.phoneModel}</p>
-                <p><strong>Purchase:</strong> ₹${purchasePrice}</p>
-                <p><strong>Sale Price:</strong> ₹${salePrice}</p>
-                <p><strong>Commission (on Purchase):</strong> ₹${commission}</p>
-                <p><strong>Net Revenue:</strong> ₹${netRevenue}</p>
-                <p><strong>Net Profit:</strong> <span class="${profit >= 0 ? 'text-green-600' : 'text-red-600'} font-bold">₹${profit}</span></p>
+                <p><strong>Purchase:</strong> ${formatINR(purchasePrice)}</p>
+                <p><strong>Sale Price:</strong> ${formatINR(salePrice)}</p>
+                <p><strong>Commission (on Purchase):</strong> ${formatINR(commission)}</p>
+                <p><strong>Gross Profit:</strong> ${formatINR(grossProfit)}</p>
+                <p><strong>Overhead/Phone:</strong> ${formatINR(overheadPerPhone)}</p>
+                <p><strong>Final Net Profit:</strong> <span class="${finalProfit >= 0 ? 'text-green-600' : 'text-red-600'} font-bold">${formatINR(finalProfit)}</span></p>
                 <p><strong>Buyer:</strong> ${buyerName}</p>
                 <p><strong>Sale Date:</strong> ${saleDate}</p>
             </div>
@@ -716,14 +961,15 @@ async function confirmSell() {
             sold: true,
             salePrice: salePrice,
             commission: commission,
-            profit: profit,
+            grossProfit: grossProfit,
+            finalNetProfit: finalProfit,
             buyerName: buyerName,
             buyerContact: buyerContact || '',
             saleDate: saleDate,
             saleTimestamp: new Date().toISOString()
         };
         await db.ref('pickups/' + sellOrderData.id).update(updates);
-        showToast(`✅ Sold! Net Profit: ₹${profit} (Commission: ₹${commission})`, 'success');
+        showToast(`✅ Sold! Final Net Profit: ${formatINR(finalProfit)}`, 'success');
 
         closeSellModal();
         await loadInventory();
@@ -739,125 +985,7 @@ async function confirmSell() {
 }
 
 // ==========================================
-// SALES – commission based on purchase price, hold excluded
-// ==========================================
-async function loadSales() {
-    try {
-        const snap = await db.ref('pickups').once('value');
-        const data = snap.val() || {};
-        salesList = Object.entries(data)
-            .filter(([_, item]) => item.sold === true && item.status !== 'on_hold')
-            .map(([id, item]) => {
-                const purchase = item.value || 0;
-                const commission = item.commission !== undefined ? item.commission : calculateCommission(purchase);
-                const netRevenue = (item.salePrice || 0) - commission;
-                const profit = netRevenue - purchase;
-                return { id, ...item, commission, profit };
-            });
-        salesList.sort((a, b) => (b.saleTimestamp || b.timestamp || 0) - (a.saleTimestamp || a.timestamp || 0));
-        applySalesFilters();
-        document.getElementById('salesBadge').textContent = salesList.length;
-    } catch (e) {
-        console.error('Sales error:', e);
-        showToast('Error loading sales', 'error');
-    }
-}
-
-function applySalesFilters() {
-    const search = document.getElementById('salesSearch').value.trim().toLowerCase();
-    const dateFrom = document.getElementById('salesDateFrom').value;
-    const dateTo = document.getElementById('salesDateTo').value;
-    let filtered = salesList;
-    if (search) { filtered = filtered.filter(item => (item.orderId || '').toLowerCase().includes(search) || (item.buyerName || '').toLowerCase().includes(search)); }
-    if (dateFrom) { filtered = filtered.filter(item => (item.saleDate || '') >= dateFrom); }
-    if (dateTo) { filtered = filtered.filter(item => (item.saleDate || '') <= dateTo); }
-    filteredSales = filtered;
-    renderSalesTable();
-    updateSalesSummary();
-}
-function clearSalesFilters() { document.getElementById('salesSearch').value = ''; document.getElementById('salesDateFrom').value = ''; document.getElementById('salesDateTo').value = ''; applySalesFilters(); }
-
-function updateSalesSummary() {
-    const total = filteredSales.length;
-    let revenue = 0, profit = 0, commission = 0;
-    filteredSales.forEach(item => {
-        const purchase = item.value || 0;
-        const c = item.commission !== undefined ? item.commission : calculateCommission(purchase);
-        commission += c;
-        revenue += (item.salePrice || 0) - c;
-        const p = item.profit !== undefined ? item.profit : (item.salePrice - c - purchase);
-        profit += p || 0;
-    });
-    document.getElementById('salesTotalCount').textContent = total;
-    document.getElementById('salesTotalRevenue').textContent = '₹' + Math.round(revenue);
-    document.getElementById('salesTotalProfit').textContent = '₹' + Math.round(profit);
-    document.getElementById('salesAvgProfit').textContent = total > 0 ? '₹' + Math.round(profit / total) : '₹0';
-}
-
-function renderSalesTable() {
-    const tbody = document.getElementById('salesTableBody');
-    if (filteredSales.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="11"><div class="empty-state"><i data-lucide="inbox"></i><p class="text-sm font-medium">No sales found</p></div></td></tr>`;
-        lucide.createIcons();
-        return;
-    }
-
-    let html = '';
-    filteredSales.forEach((item, idx) => {
-        const purchase = item.value || 0;
-        const commission = item.commission !== undefined ? item.commission : calculateCommission(purchase);
-        const profit = item.profit !== undefined ? item.profit : (item.salePrice - commission - purchase);
-        const profitNum = profit || 0;
-        const profitClass = profitNum >= 0 ? 'profit-green' : 'profit-red';
-        const saleDate = item.saleDate || item.timestampIST || '—';
-        const agent = item.agent || '—';
-        html += `<tr class="order-row border-b border-gray-50">
-            <td class="py-3 px-4 text-gray-400 font-mono text-xs">${idx+1}</td>
-            <td class="py-3 px-4 font-mono font-bold text-gray-800 text-sm">${item.orderId || item.id}</td>
-            <td class="py-3 px-4 text-gray-600 text-sm">${item.phoneModel || '—'}</td>
-            <td class="py-3 px-4 hidden md:table-cell font-mono text-xs text-gray-500">${item.imei || '—'}</td>
-            <td class="py-3 px-4 text-gray-600">₹${purchase}</td>
-            <td class="py-3 px-4 font-bold text-gray-800">₹${item.salePrice || 0}</td>
-            <td class="py-3 px-4"><span class="commission-badge">₹${commission}</span></td>
-            <td class="py-3 px-4 font-bold ${profitClass}">₹${profitNum}</td>
-            <td class="py-3 px-4 hidden lg:table-cell text-gray-600 text-sm">${item.buyerName || '—'}</td>
-            <td class="py-3 px-4 text-xs text-gray-500">${saleDate} (${agent})</td>
-            <td class="py-3 px-4"><button onclick="viewOrder('${item.id}')" class="btn-action view"><i data-lucide="eye"></i></button></td>
-        </tr>`;
-    });
-    tbody.innerHTML = html;
-    lucide.createIcons();
-}
-function refreshSales() { loadSales(); showToast('🔄 Sales refreshed', 'info'); }
-
-function exportSalesCSV() {
-    if (filteredSales.length === 0) { showToast('No data', 'error'); return; }
-    const headers = ['Order ID', 'Model', 'IMEI', 'Purchase Price', 'Sale Price', 'Commission (on Purchase)', 'Net Profit', 'Buyer', 'Buyer Contact', 'Sale Date', 'Agent'];
-    const rows = filteredSales.map(item => {
-        const purchase = item.value || 0;
-        const c = item.commission !== undefined ? item.commission : calculateCommission(purchase);
-        const p = item.profit !== undefined ? item.profit : (item.salePrice - c - purchase);
-        return [
-            item.orderId || item.id || '',
-            item.phoneModel || '',
-            item.imei || '',
-            purchase,
-            item.salePrice || 0,
-            c,
-            p || 0,
-            item.buyerName || '',
-            item.buyerContact || '',
-            item.saleDate || '',
-            item.agent || ''
-        ];
-    });
-    let csv = '\uFEFF' + headers.join(',') + '\n';
-    rows.forEach(row => { csv += row.map(val => `"${String(val).replace(/"/g, '""')}"`).join(',') + '\n'; });
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' }); const link = document.createElement('a'); link.href = URL.createObjectURL(blob); link.download = `sales_report_${new Date().toISOString().slice(0,10)}.csv`; document.body.appendChild(link); link.click(); document.body.removeChild(link); URL.revokeObjectURL(link.href); showToast('📥 Sales CSV exported', 'success');
-}
-
-// ==========================================
-// VIEW ORDER DETAIL – commission on purchase price
+// VIEW ORDER DETAIL
 // ==========================================
 function viewOrder(orderId) {
     detailOrderId = orderId;
@@ -909,19 +1037,25 @@ function renderDetailView(item) {
     }
     let profitDisplay = '—', profitClass = '';
     let commissionDisplay = '—';
+    let grossProfitDisplay = '—', finalProfitDisplay = '—';
     if (item.sold) {
         const commission = item.commission !== undefined ? item.commission : calculateCommission(item.value || 0);
-        commissionDisplay = '₹' + commission;
-        const netProfit = item.profit !== undefined ? item.profit : (item.salePrice - commission - (item.value || 0));
-        profitDisplay = '₹' + (netProfit || 0);
-        profitClass = (netProfit || 0) >= 0 ? 'green' : 'red';
+        commissionDisplay = formatINR(commission);
+        const grossProfit = item.profit !== undefined ? item.profit : (item.salePrice - commission - (item.value || 0));
+        const finalProfit = grossProfit - overheadPerPhone;
+        profitDisplay = formatINR(grossProfit);
+        profitClass = grossProfit >= 0 ? 'green' : 'red';
+        grossProfitDisplay = formatINR(grossProfit);
+        finalProfitDisplay = formatINR(finalProfit);
     }
     let saleHtml = '';
     if (item.sold) {
         saleHtml = `
-            <div class="detail-item"><div class="label">Sale Price</div><div class="value green">₹${item.salePrice || 0}</div></div>
+            <div class="detail-item"><div class="label">Sale Price</div><div class="value green">${formatINR(item.salePrice || 0)}</div></div>
             <div class="detail-item"><div class="label">Commission (on Purchase)</div><div class="value amber">${commissionDisplay}</div></div>
-            <div class="detail-item"><div class="label">Net Profit</div><div class="value ${profitClass}">${profitDisplay}</div></div>
+            <div class="detail-item"><div class="label">Gross Profit</div><div class="value ${profitClass}">${grossProfitDisplay}</div></div>
+            <div class="detail-item"><div class="label">Overhead / Phone</div><div class="value">${formatINR(overheadPerPhone)}</div></div>
+            <div class="detail-item"><div class="label">Final Net Profit</div><div class="value ${finalProfit >= 0 ? 'green' : 'red'}">${finalProfitDisplay}</div></div>
             <div class="detail-item"><div class="label">Buyer</div><div class="value">${item.buyerName || '—'}</div></div>
             <div class="detail-item"><div class="label">Buyer Contact</div><div class="value">${item.buyerContact || '—'}</div></div>
             <div class="detail-item"><div class="label">Sale Date</div><div class="value">${item.saleDate || '—'}</div></div>
@@ -932,14 +1066,13 @@ function renderDetailView(item) {
         holdHtml = `<div class="detail-item"><div class="label">Hold Reason</div><div class="value text-red-600">${item.hold_reason || '—'}</div></div>
                      <div class="detail-item"><div class="label">Previous Status</div><div class="value">${item.previous_status || '—'}</div></div>`;
     }
-    let html = `<div class="flex items-center gap-3 mb-4"><span class="badge-status ${statusClass} text-sm px-4 py-1.5">${displayName}</span><span class="font-mono font-bold text-gray-800 text-sm">${item.orderId || item.id}</span>${item.agent ? `<span class="text-xs text-gray-400">(Agent: ${item.agent})</span>` : ''}</div><div class="detail-grid"><div class="detail-item"><div class="label">Phone Model</div><div class="value" id="dv-model">${item.phoneModel || '—'}</div></div><div class="detail-item"><div class="label">IMEI</div><div class="value font-mono text-xs" id="dv-imei">${item.imei || '—'}</div></div>${item.imei2 ? `<div class="detail-item"><div class="label">IMEI 2</div><div class="value font-mono text-xs" id="dv-imei2">${item.imei2}</div></div>` : ''}<div class="detail-item"><div class="label">Purchase Price</div><div class="value font-bold" id="dv-value">${item.value !== undefined && item.value !== null ? '₹' + item.value : '—'}</div></div><div class="detail-item"><div class="label">Customer Name</div><div class="value" id="dv-customer">${item.customerName || '—'}</div></div><div class="detail-item"><div class="label">Reason</div><div class="value" id="dv-reason">${item.reason || '—'}</div></div><div class="detail-item"><div class="label">Status</div><div class="value" id="dv-status">${displayName}</div></div><div class="detail-item"><div class="label">Time (IST)</div><div class="value text-xs" id="dv-time">${item.timestampIST || item.timestamp || '—'}</div></div>${holdHtml}${saleHtml}</div>`;
+    let html = `<div class="flex items-center gap-3 mb-4"><span class="badge-status ${statusClass} text-sm px-4 py-1.5">${displayName}</span><span class="font-mono font-bold text-gray-800 text-sm">${item.orderId || item.id}</span>${item.agent ? `<span class="text-xs text-gray-400">(Agent: ${item.agent})</span>` : ''}</div><div class="detail-grid"><div class="detail-item"><div class="label">Phone Model</div><div class="value" id="dv-model">${item.phoneModel || '—'}</div></div><div class="detail-item"><div class="label">IMEI</div><div class="value font-mono text-xs" id="dv-imei">${item.imei || '—'}</div></div>${item.imei2 ? `<div class="detail-item"><div class="label">IMEI 2</div><div class="value font-mono text-xs" id="dv-imei2">${item.imei2}</div></div>` : ''}<div class="detail-item"><div class="label">Purchase Price</div><div class="value font-bold" id="dv-value">${item.value !== undefined && item.value !== null ? formatINR(item.value) : '—'}</div></div><div class="detail-item"><div class="label">Customer Name</div><div class="value" id="dv-customer">${item.customerName || '—'}</div></div><div class="detail-item"><div class="label">Reason</div><div class="value" id="dv-reason">${item.reason || '—'}</div></div><div class="detail-item"><div class="label">Status</div><div class="value" id="dv-status">${displayName}</div></div><div class="detail-item"><div class="label">Time (IST)</div><div class="value text-xs" id="dv-time">${item.timestampIST || item.timestamp || '—'}</div></div>${holdHtml}${saleHtml}</div>`;
 
-    // ===== Documents section (Bill + Aadhaar) — VIEW MODE: no direct upload =====
+    // Documents section (unchanged)
     const _billImgs = getDocImages(item, 'bill');
     const _aadImgs  = getDocImages(item, 'aadhaar');
     const _billNo   = item.billNumber || '';
     const _aadNo    = item.aadhaarNumber || '';
-    const _escape   = (s) => (s || '').replace(/'/g, "\\'");
     const _docCard = (which, label, num, imgs, color) => {
         let gallery;
         if (imgs.length === 0) {
@@ -978,7 +1111,7 @@ function renderDetailView(item) {
 }
 
 // ==========================================
-// HOLD ORDER (store previous status)
+// HOLD / UNHOLD (unchanged)
 // ==========================================
 async function holdOrderFromDetail() {
     if (!detailOrderId) return;
@@ -1010,9 +1143,6 @@ async function holdOrderFromDetail() {
     } catch (e) { showToast('Error holding order', 'error'); console.error(e); }
 }
 
-// ==========================================
-// UNHOLD ORDER (revert to previous status)
-// ==========================================
 async function unholdOrderFromDetail() {
     if (!detailOrderId) return;
     const confirm = await Swal.fire({
@@ -1043,7 +1173,7 @@ async function unholdOrderFromDetail() {
 }
 
 // ==========================================
-// EDIT MODE – commission recalculated from purchase price
+// EDIT MODE (unchanged logic, but added gross/final profit fields)
 // ==========================================
 function toggleEditMode() {
     if (isEditMode) return;
@@ -1058,7 +1188,6 @@ function toggleEditMode() {
     let datetimeVal = '';
     if (item.timestamp) { const d = new Date(item.timestamp); if (!isNaN(d)) { const year = d.getFullYear(); const month = String(d.getMonth()+1).padStart(2,'0'); const day = String(d.getDate()).padStart(2,'0'); const hours = String(d.getHours()).padStart(2,'0'); const mins = String(d.getMinutes()).padStart(2,'0'); datetimeVal = `${year}-${month}-${day}T${hours}:${mins}`; } }
     
-    // IMEI override (optional) – keep as before
     const imeiVal = item.imei || '';
     const imei2Val = item.imei2 || '';
     const imeiOver = imeiVal.length > 15;
@@ -1099,6 +1228,8 @@ function toggleEditMode() {
         html += `<div class="border-t pt-3"><p class="font-bold">Sale Details</p>
             <div><label class="edit-label">Sale Price</label><input type="number" id="edit-salePrice" value="${item.salePrice || ''}" class="edit-field" placeholder="Optional"></div>
             <div><label class="edit-label">Commission (on Purchase)</label><input type="number" id="edit-commission" value="${item.commission || ''}" class="edit-field" readonly style="background:#f1f5f9;"></div>
+            <div><label class="edit-label">Gross Profit</label><input type="number" id="edit-grossProfit" value="${item.profit || ''}" class="edit-field" readonly style="background:#f1f5f9;"></div>
+            <div><label class="edit-label">Final Net Profit</label><input type="number" id="edit-finalProfit" value="${(item.profit || 0) - overheadPerPhone}" class="edit-field" readonly style="background:#f1f5f9;"></div>
             <div><label class="edit-label">Buyer</label><input type="text" id="edit-buyer" value="${item.buyerName || ''}" class="edit-field" placeholder="Optional"></div>
             <div><label class="edit-label">Buyer Contact</label><input type="text" id="edit-buyerContact" value="${item.buyerContact || ''}" class="edit-field" placeholder="Optional"></div>
             <div><label class="edit-label">Sale Date</label><input type="date" id="edit-saleDate" value="${item.saleDate || ''}" class="edit-field"></div></div>`;
@@ -1108,7 +1239,6 @@ function toggleEditMode() {
     lucide.createIcons();
 }
 
-// IMEI limit toggle function (same as before)
 function toggleImeiLimit(inputId, btnId) {
     const input = document.getElementById(inputId);
     const btn = document.getElementById(btnId);
@@ -1204,7 +1334,6 @@ toggleEditMode = function() {
     setTimeout(() => {
         setupImeiValidation('edit-imei', 'imeiAllowBtn');
         setupImeiValidation('edit-imei2', 'imei2AllowBtn');
-        // ensure Save/Cancel bar is visible & scrolled into view
         const saveBar = document.getElementById('detailSaveActions');
         if (saveBar) {
             saveBar.style.setProperty('display','flex','important');
@@ -1238,13 +1367,17 @@ async function saveEdit() {
     if (datetimeVal) { const d = new Date(datetimeVal); if (!isNaN(d)) { updated.timestamp = d.toISOString(); const istOffset = 5.5 * 60 * 60 * 1000; const istTime = new Date(d.getTime() + istOffset); const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']; const dd = String(istTime.getUTCDate()).padStart(2,'0'); const mmm = months[istTime.getUTCMonth()]; const yyyy = istTime.getUTCFullYear(); let hours = istTime.getUTCHours(); const minutes = String(istTime.getUTCMinutes()).padStart(2,'0'); const seconds = String(istTime.getUTCSeconds()).padStart(2,'0'); const ampm = hours >= 12 ? 'PM' : 'AM'; hours = hours % 12 || 12; const hh = String(hours).padStart(2,'0'); updated.timestampIST = `${dd}-${mmm}-${yyyy}, ${hh}:${minutes}:${seconds} ${ampm} IST`; } } else { updated.timestamp = editData.timestamp; updated.timestampIST = editData.timestampIST; }
     if (editData.sold) {
         const commission = calculateCommission(value);
+        const grossProfit = salePrice - commission - value;
+        const finalProfit = grossProfit - overheadPerPhone;
         updated.sold = true;
         updated.salePrice = salePrice || 0;
         updated.commission = commission;
         updated.buyerName = buyer || '';
         updated.buyerContact = buyerContact || '';
         updated.saleDate = saleDate || '';
-        updated.profit = (salePrice - commission) - value;
+        updated.profit = grossProfit; // for backward compatibility
+        updated.grossProfit = grossProfit;
+        updated.finalNetProfit = finalProfit;
     }
     if (status === 'on_hold' && editData.status !== 'on_hold') {
         updated.previous_status = editData.status;
@@ -1259,7 +1392,7 @@ async function saveEdit() {
 }
 
 // ==========================================
-// DELETE ORDER
+// DELETE ORDER (unchanged)
 // ==========================================
 async function deleteOrder(orderId) {
     const result = await Swal.fire({ title: 'Delete Order?', text: 'Cannot be undone.', icon: 'warning', showCancelButton: true, confirmButtonColor: '#dc2626', cancelButtonColor: '#64748b', confirmButtonText: 'Yes, delete', cancelButtonText: 'Cancel' });
@@ -1270,7 +1403,7 @@ function deleteOrderFromDetail() { if (detailOrderId) deleteOrder(detailOrderId)
 function closeDetail() { document.getElementById('detailModal').style.display = 'none'; detailOrderId = null; isEditMode = false; document.getElementById('detailActions').style.display = 'flex'; document.getElementById('detailSaveActions').style.display = 'none'; }
 
 // ==========================================
-// EXPORT CSV
+// EXPORT CSV (unchanged)
 // ==========================================
 function exportCSV() {
     if (allOrders.length === 0) { showToast('No data', 'error'); return; }
@@ -1282,7 +1415,7 @@ function exportCSV() {
 }
 
 // ==========================================
-// DEPOSITS – commission total excludes hold orders, based on purchase price
+// DEPOSITS (unchanged)
 // ==========================================
 async function loadDeposits() {
     try {
@@ -1333,31 +1466,29 @@ function clearDepositDateFilter() {
 async function updateDepositStats() {
     let total = 0;
     allDeposits.forEach(d => { total += d.amount || 0; });
-    document.getElementById('depositTotal').textContent = '₹' + total;
+    document.getElementById('depositTotal').textContent = formatINR(total);
     document.getElementById('depositCount').textContent = allDeposits.length;
     document.getElementById('depositCountDisplay').textContent = allDeposits.length + ' entries';
     document.getElementById('depositsBadge').textContent = allDeposits.length;
 
-    // *** CHANGED: Stock Value = sum of all pickups (both sold and unsold) ***
     let stockValue = 0;
     const snap = await db.ref('pickups').once('value');
     const data = snap.val() || {};
     Object.values(data).forEach(item => {
-        // Include only orders with status 'pickup' (both sold and unsold)
         if (item.status === 'pickup') {
             stockValue += item.value || 0;
         }
     });
-    document.getElementById('depositStockValue').textContent = '₹' + stockValue;
+    document.getElementById('depositStockValue').textContent = formatINR(stockValue);
     const balance = total - stockValue;
-    document.getElementById('depositBalance').textContent = '₹' + balance;
+    document.getElementById('depositBalance').textContent = formatINR(balance);
 
     let totalCommission = 0;
     Object.values(data).forEach(item => {
         if (item.status === 'on_hold') return;
         totalCommission += item.commission !== undefined ? item.commission : calculateCommission(item.value || 0);
     });
-    document.getElementById('depositCommission').textContent = '₹' + totalCommission;
+    document.getElementById('depositCommission').textContent = formatINR(totalCommission);
 }
 
 function renderDepositsTable() {
@@ -1390,7 +1521,7 @@ function renderDepositsTable() {
 
         html += `<tr class="order-row border-b border-gray-50">
             <td class="py-3 px-4 text-gray-400 font-mono text-xs">${num}</td>
-            <td class="py-3 px-4 font-bold text-green-600">₹${amount}</td>
+            <td class="py-3 px-4 font-bold text-green-600">${formatINR(amount)}</td>
             <td class="py-3 px-4 text-gray-600 text-sm">${description}</td>
             <td class="py-3 px-4 hidden sm:table-cell text-xs text-gray-500">${date}</td>
             <td class="py-3 px-4 hidden md:table-cell text-xs text-gray-400">${addedOn}</td>
@@ -1431,7 +1562,7 @@ function submitDeposit(e) {
 
     Swal.fire({
         title: 'Add Deposit?',
-        text: `Amount: ₹${amount} | Date: ${date}`,
+        text: `Amount: ${formatINR(amount)} | Date: ${date}`,
         icon: 'question',
         showCancelButton: true,
         confirmButtonColor: '#059669',
@@ -1514,7 +1645,7 @@ function refreshDeposits() {
 }
 
 // ==========================================
-// AGENTS (unchanged from previous)
+// AGENTS (unchanged)
 // ==========================================
 async function loadAgents() {
     try {
@@ -1550,9 +1681,9 @@ function renderAgentsTable() {
             <td class="py-3 px-4 font-medium text-gray-800">${item.name || '—'}</td>
             <td class="py-3 px-4 font-mono text-sm text-gray-700">${item.username}</td>
             <td class="py-3 px-4 hidden sm:table-cell">${roleDisplay}</td>
-            <td class="py-3 px-4 hidden sm:table-cell font-bold">${typeof salary === 'number' ? '₹'+salary : salary}</td>
-            <td class="py-3 px-4 hidden md:table-cell">${typeof pickupInc === 'number' ? '₹'+pickupInc : pickupInc}</td>
-            <td class="py-3 px-4 hidden lg:table-cell">${typeof rejectInc === 'number' ? '₹'+rejectInc : rejectInc}</td>
+            <td class="py-3 px-4 hidden sm:table-cell font-bold">${typeof salary === 'number' ? formatINR(salary) : salary}</td>
+            <td class="py-3 px-4 hidden md:table-cell">${typeof pickupInc === 'number' ? formatINR(pickupInc) : pickupInc}</td>
+            <td class="py-3 px-4 hidden lg:table-cell">${typeof rejectInc === 'number' ? formatINR(rejectInc) : rejectInc}</td>
             <td class="py-3 px-4 hidden sm:table-cell text-gray-600">${item.mobile || '—'}</td>
             <td class="py-3 px-4 font-mono"><span class="pw-hidden">${pwDisplay}</span><button onclick="togglePassword('${item.username}')" class="btn-action show ml-1"><i data-lucide="${showPw ? 'eye-off' : 'eye'}"></i></button></td>
             <td class="py-3 px-4">
@@ -1645,7 +1776,8 @@ function registerAgent(e) {
     const userData = {
         name, username, password, aadhar: aadhar || '', mobile, alternate: alternate || '',
         role: role,
-        createdAt: Date.now()
+        createdAt: Date.now(),
+        joinDate: new Date().toISOString().split('T')[0] // add join date
     };
     if (role === 'agent') {
         userData.salary = salary;
@@ -1694,16 +1826,13 @@ function showChangePasswordModal(username) {
 }
 
 // ==========================================
-// AGENT ACTIVITY (UPDATED with stats and period support)
+// AGENT ACTIVITY (unchanged)
 // ==========================================
-// This function is called from agent management (no period)
 function viewAgentActivity(username) {
-    // Default period: today
     const today = new Date().toISOString().split('T')[0];
     viewAgentActivityWithPeriod(username, { mode: 'today', date: today });
 }
 
-// New function that accepts a period object
 function viewAgentActivityWithPeriod(username, period) {
     const modal = document.getElementById('activityModal');
     const content = document.getElementById('activityContent');
@@ -1712,7 +1841,6 @@ function viewAgentActivityWithPeriod(username, period) {
     modal.style.display = 'flex';
     content.innerHTML = `<div class="text-center py-8"><span class="spinner-sm"></span> Loading...</div>`;
 
-    // Determine date filter
     let filterFn;
     let periodLabel = '';
     if (period.mode === 'today') {
@@ -1742,7 +1870,6 @@ function viewAgentActivityWithPeriod(username, period) {
         };
         periodLabel = date;
     } else {
-        // fallback: all time
         filterFn = () => true;
         periodLabel = 'All Time';
     }
@@ -1754,7 +1881,6 @@ function viewAgentActivityWithPeriod(username, period) {
             .map(([id, item]) => ({ id, ...item }));
         orders.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
 
-        // Compute stats for this agent
         let pickupCount = 0, rejectCount = 0, rescheduleCount = 0, totalOrders = orders.length;
         orders.forEach(item => {
             if (item.status === 'pickup') pickupCount++;
@@ -1762,7 +1888,6 @@ function viewAgentActivityWithPeriod(username, period) {
             else if (item.status === 'reschedule') rescheduleCount++;
         });
 
-        // Compute total for all agents for the same period
         let allPickup = 0, allReject = 0, allReschedule = 0, allTotal = 0;
         Object.values(data).forEach(item => {
             if (filterFn(item.timestamp)) {
@@ -1805,9 +1930,8 @@ function viewAgentActivityWithPeriod(username, period) {
             const displayName = statusLabel === 'pickup' ? (item.sold ? 'Sold' : 'Pickup') : statusLabel === 'rejected' ? 'Rejected' : statusLabel === 'on_hold' ? 'Hold' : 'Pending';
             const time = item.timestampIST || item.timestamp || '';
             const model = item.phoneModel || '—';
-            const value = item.value !== undefined ? '₹' + item.value : '—';
+            const value = item.value !== undefined ? formatINR(item.value) : '—';
 
-            // For rejected orders, show approve/reject buttons with timestamp
             let rejectActions = '';
             if (statusLabel === 'rejected') {
                 const approved = item.incentive_approved === true;
@@ -1845,7 +1969,7 @@ function viewAgentActivityWithPeriod(username, period) {
 function closeActivityModal() { document.getElementById('activityModal').style.display = 'none'; }
 
 // ==========================================
-// ATTENDANCE SYSTEM (skip admins)
+// ATTENDANCE SYSTEM (unchanged)
 // ==========================================
 async function generateOTPs() {
     const usersSnap = await db.ref('users').once('value');
@@ -2069,7 +2193,7 @@ async function blockAgent(username, date) {
 }
 
 // ==========================================
-// SALARY / EARNINGS – with custom date support and global stats
+// SALARY / EARNINGS (unchanged)
 // ==========================================
 function setSalaryMode(mode) {
     currentSalaryMode = mode;
@@ -2129,9 +2253,7 @@ async function loadSalaryData() {
             dateFilterFn = (ordDate) => ordDate === today;
             periodInfo.date = today;
         } else if (mode === 'since_join') {
-            // For since_join, we don't use a single filter; we'll handle per-agent later
             periodInfo.mode = 'since_join';
-            // no date filter needed here
         } else if (mode === 'date') {
             const dateInput = document.getElementById('salaryDate');
             let dateVal = dateInput.value;
@@ -2147,7 +2269,6 @@ async function loadSalaryData() {
             dateFilterFn = (ordDate) => ordDate === dateVal;
             periodInfo.date = dateVal;
         } else {
-            // fallback all time
             dateFilterFn = () => true;
             periodInfo.mode = 'all';
         }
@@ -2157,14 +2278,12 @@ async function loadSalaryData() {
         const pickupsByAgentDate = {};
         const allRejectedOrders = [];
 
-        // Global counts
         let globalPickup = 0, globalReject = 0, globalPending = 0, globalEarnings = 0;
 
-        // 🔥 FIX: For 'today' and 'date' mode, filter reject orders by date as well
         const rejectDateFilter = (ordDate) => {
             if (mode === 'today') return ordDate === today;
             if (mode === 'date') return ordDate === periodInfo.date;
-            return true; // since_join or all mode - show all pending rejects
+            return true;
         };
 
         for (const [oid, ord] of Object.entries(pickups)) {
@@ -2174,17 +2293,14 @@ async function loadSalaryData() {
             if (!agents[agent]) continue;
             const ordDate = new Date(ord.timestamp).toISOString().split('T')[0];
             
-            // For pickupsByAgentDate, apply date filter only if mode is today or date
             if (mode === 'today' || mode === 'date') {
                 if (!dateFilterFn(ordDate)) continue;
             }
-            // For since_join, we'll handle per-agent in the second loop
             
             const key = agent + '|' + ordDate;
             if (!pickupsByAgentDate[key]) pickupsByAgentDate[key] = [];
             pickupsByAgentDate[key].push(ord);
             
-            // 🔥 FIX: Only add to allRejectedOrders if date passes the reject filter
             if (ord.status === 'rejected' && !ord.incentive_approved && rejectDateFilter(ordDate)) {
                 allRejectedOrders.push({ id: oid, ...ord });
             }
@@ -2202,15 +2318,13 @@ async function loadSalaryData() {
             const joinDateStr = uData.joinDate || null;
             let joinDateObj = joinDateStr ? new Date(joinDateStr + 'T00:00:00') : null;
 
-            // Determine date range
             let startDate, endDate;
             if (mode === 'since_join') {
                 if (joinDateObj) {
                     startDate = new Date(joinDateObj);
                     endDate = new Date(today + 'T00:00:00');
                 } else {
-                    // If no join date, default to all time (or you can skip)
-                    startDate = new Date('2020-01-01'); // fallback
+                    startDate = new Date('2020-01-01');
                     endDate = new Date(today + 'T00:00:00');
                 }
             } else if (mode === 'today' || mode === 'date') {
@@ -2229,12 +2343,10 @@ async function loadSalaryData() {
             const userAttendance = allAttendance[uname] || {};
             let agentPickupCount = 0, agentRejectCount = 0, agentPendingCount = 0;
 
-            // Loop through each day from startDate to endDate (inclusive)
             let currentDate = new Date(startDate);
             while (currentDate <= endDate) {
                 const dateStr = currentDate.toISOString().split('T')[0];
 
-                // Skip if before join date (for safety)
                 if (joinDateObj && currentDate < joinDateObj) {
                     currentDate.setDate(currentDate.getDate() + 1);
                     continue;
@@ -2321,26 +2433,23 @@ async function loadSalaryData() {
                         <button onclick="viewAgentActivityWithPeriod('${uname}', ${JSON.stringify(currentSalaryPeriod).replace(/"/g, '&quot;')})" class="btn-action activity text-xs ml-2"><i data-lucide="activity"></i> Activity</button>
                         <span class="text-xs text-gray-400 ml-2">📦 ${agentPickupCount} | ❌ ${agentRejectCount} | ⏳ ${agentPendingCount}</span>
                     </div>
-                    <div class="text-sm font-bold text-indigo-600">₹${Math.round(total)}</div>
+                    <div class="text-sm font-bold text-indigo-600">${formatINR(total)}</div>
                 </div>
                 <div class="grid grid-cols-2 sm:grid-cols-3 gap-2 mt-2 text-sm">
-                    <div class="bg-gray-50 p-2 rounded"><span class="text-gray-500">Base Salary</span><br><span class="font-bold">₹${Math.round(totalBaseSalary)}</span></div>
-                    <div class="bg-green-50 p-2 rounded"><span class="text-gray-500">Pickup Inc.</span><br><span class="font-bold text-green-700">₹${Math.round(totalPickupIncentive)}</span></div>
-                    <div class="bg-amber-50 p-2 rounded"><span class="text-gray-500">Reject Inc.</span><br><span class="font-bold text-amber-700">₹${Math.round(totalRejectIncentive)}</span></div>
+                    <div class="bg-gray-50 p-2 rounded"><span class="text-gray-500">Base Salary</span><br><span class="font-bold">${formatINR(totalBaseSalary)}</span></div>
+                    <div class="bg-green-50 p-2 rounded"><span class="text-gray-500">Pickup Inc.</span><br><span class="font-bold text-green-700">${formatINR(totalPickupIncentive)}</span></div>
+                    <div class="bg-amber-50 p-2 rounded"><span class="text-gray-500">Reject Inc.</span><br><span class="font-bold text-amber-700">${formatINR(totalRejectIncentive)}</span></div>
                 </div>
                 <div class="mt-2 text-xs text-gray-400">Attendance: ${detailsHtml}</div>
                 ${pendingRejectsHtml}
             </div>`;
         }
 
-        // Update global stats
         document.getElementById('globalPickups').textContent = globalPickup;
         document.getElementById('globalRejects').textContent = globalReject;
         document.getElementById('globalPending').textContent = globalPending;
-        document.getElementById('globalEarnings').textContent = '₹' + Math.round(globalEarnings);
+        document.getElementById('globalEarnings').textContent = formatINR(globalEarnings);
 
-        // 🔥 FIX: All Pending Reject Approvals section - now filtered by mode
-        // For 'since_join', show all; for 'today'/'date', show only those dates
         const filteredAllPending = [];
         const seenAll = new Set();
         for (const pr of allRejectedOrders) {
@@ -2371,7 +2480,7 @@ async function loadSalaryData() {
             html += `</div></div>`;
         }
 
-        html += `<div class="text-right font-bold text-xl mt-4">Grand Total: ₹${Math.round(grandTotal)}</div>`;
+        html += `<div class="text-right font-bold text-xl mt-4">Grand Total: ${formatINR(grandTotal)}</div>`;
         container.innerHTML = html;
         lucide.createIcons();
 
@@ -2385,6 +2494,350 @@ async function loadSalaryData() {
 async function recalculateAllSalary() {
     showToast('🔄 Recalculating...', 'info');
     await loadSalaryData();
+}
+
+// ==========================================
+// GLOBAL SEARCH - Fixed to search across ALL modules with fuzzy logic
+// ==========================================
+async function openGlobalSearch() {
+    const modal = document.getElementById('globalSearchModal');
+    const input = document.getElementById('globalSearchModalInput');
+    const results = document.getElementById('globalSearchModalResults');
+    modal.classList.add('open');
+    input.value = '';
+    results.innerHTML = `<div class="empty-state"><i data-lucide="inbox"></i><p class="text-sm font-medium">Type to start searching</p></div>`;
+    setTimeout(() => input.focus(), 300);
+
+    // Ensure all global arrays are populated from Firebase before searching
+    if (allOrders.length === 0) {
+        try {
+            const pickupSnap = await db.ref('pickups').once('value');
+            const data = pickupSnap.val() || {};
+            allOrders = Object.entries(data).map(([id, item]) => ({ id, ...item, billImages: undefined, billImage: undefined, aadhaarImages: undefined, aadhaarImage: undefined }));
+            allOrders.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+        } catch (e) {
+            console.error('Error fetching orders for global search:', e);
+        }
+    }
+
+    if (inventoryList.length === 0) {
+        try {
+            const pickupSnap = await db.ref('pickups').once('value');
+            const data = pickupSnap.val() || {};
+            inventoryList = Object.entries(data).filter(([_, item]) => item.status === 'pickup' && !item.sold).map(([id, item]) => ({ id, ...item, billImages: undefined, billImage: undefined, aadhaarImages: undefined, aadhaarImage: undefined }));
+            inventoryList.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+        } catch (e) {
+            console.error('Error fetching inventory for global search:', e);
+        }
+    }
+
+    if (salesList.length === 0) {
+        try {
+            const pickupSnap = await db.ref('pickups').once('value');
+            const data = pickupSnap.val() || {};
+            salesList = Object.entries(data).filter(([_, item]) => item.sold === true && item.status !== 'on_hold').map(([id, item]) => ({ id, ...item }));
+            salesList.sort((a, b) => (b.saleTimestamp || b.timestamp || 0) - (a.saleTimestamp || a.timestamp || 0));
+        } catch (e) {
+            console.error('Error fetching sales for global search:', e);
+        }
+    }
+
+    if (agentsList.length === 0) {
+        try {
+            const usersSnap = await db.ref('users').once('value');
+            const data = usersSnap.val() || {};
+            agentsList = Object.entries(data).map(([username, item]) => {
+                if (!item.role) item.role = 'agent';
+                return { username, ...item };
+            });
+        } catch (e) {
+            console.error('Error fetching agents for global search:', e);
+        }
+    }
+
+    // Remove existing listeners by replacing the function
+    input.oninput = function() {
+        const query = this.value.trim();
+        if (!query) {
+            results.innerHTML = `<div class="empty-state"><i data-lucide="inbox"></i><p class="text-sm font-medium">Type to start searching</p></div>`;
+            return;
+        }
+
+        // Build combined data from ALL modules
+        const allData = [];
+
+        // 1. Orders (all orders including pending, rejected, etc.)
+        allOrders.forEach(item => {
+            allData.push({ ...item, _category: 'Orders', _type: 'order' });
+        });
+
+        // 2. Inventory (only unsold items)
+        inventoryList.forEach(item => {
+            allData.push({ ...item, _category: 'Inventory', _type: 'inventory' });
+        });
+
+        // 3. Sales (sold items)
+        salesList.forEach(item => {
+            allData.push({ ...item, _category: 'Sales', _type: 'sale' });
+        });
+
+        // 4. Agents
+        agentsList.forEach(item => {
+            allData.push({
+                name: item.name,
+                username: item.username,
+                mobile: item.mobile,
+                _category: 'Agents',
+                _type: 'agent',
+                id: item.username // for identification
+            });
+        });
+
+        // Create Fuse instance with broad keys for smart matching
+        const fuse = new Fuse(allData, {
+            keys: [
+                'orderId', 'phoneModel', 'imei', 'customerName',
+                'buyerName', 'agent', 'name', 'username', 'mobile'
+            ],
+            threshold: 0.25,
+            includeScore: true,
+            ignoreLocation: true,
+            shouldSort: true,
+            minMatchCharLength: 2
+        });
+
+        const resultItems = fuse.search(query);
+        if (resultItems.length === 0) {
+            results.innerHTML = `<div class="empty-state"><i data-lucide="search"></i><p class="text-sm font-medium">No results found</p></div>`;
+            return;
+        }
+
+        // Group by category
+        const groups = {};
+        resultItems.forEach(r => {
+            const cat = r.item._category || 'Other';
+            if (!groups[cat]) groups[cat] = [];
+            groups[cat].push(r);
+        });
+
+        let html = '';
+        for (const [cat, items] of Object.entries(groups)) {
+            html += `<div class="category-group"><div class="category-title">${cat} <span class="count-badge">${items.length}</span></div>`;
+            items.slice(0, 10).forEach(r => {
+                const item = r.item;
+                let label = '';
+                let desc = '';
+                let badge = '';
+                let onClick = '';
+                let locateFn = '';
+
+                if (item._type === 'order' || item._type === 'inventory' || item._type === 'sale') {
+                    const orderId = item.id || item.orderId;
+                    label = item.orderId || item.id;
+                    desc = item.phoneModel || '';
+                    const status = item.status || '';
+                    let statusClass = '';
+                    let statusDisplay = status;
+                    if (status === 'pickup') {
+                        if (item.sold) { statusClass = 'sold'; statusDisplay = 'Sold'; }
+                        else { statusClass = 'pickup'; statusDisplay = 'Pickup'; }
+                    } else if (status === 'rejected') { statusClass = 'rejected'; statusDisplay = 'Rejected'; }
+                    else if (status === 'reschedule') { statusClass = 'reschedule'; statusDisplay = 'Pending'; }
+                    else if (status === 'on_hold') { statusClass = 'on_hold'; statusDisplay = 'Hold'; }
+                    badge = statusDisplay ? `<span class="badge-status ${statusClass}">${statusDisplay}</span>` : '';
+                    // Clicking result opens order detail on top, search modal stays open in background
+                    onClick = `onclick="viewOrder('${orderId}')"`;
+                    locateFn = `onclick="locateItem({id:'${orderId}', type:'${item._type}'})"`;
+                } else if (item._type === 'agent') {
+                    label = item.name || item.username;
+                    desc = item.username + (item.mobile ? ' | ' + item.mobile : '');
+                    badge = `<span class="badge-status admin">Agent</span>`;
+                    onClick = `onclick="viewAgentActivity('${item.username}')"`;
+                    locateFn = `onclick="locateItem({username:'${item.username}', type:'agent'})"`;
+                }
+
+                html += `<div class="result-item" ${onClick}>
+                    <div><span class="text-mono">${label}</span><span class="text-desc">${desc}</span></div>
+                    <div class="action-buttons">
+                        ${badge}
+                        <button class="locate-btn" title="Locate" ${locateFn}>
+                            <i data-lucide="map-pin" class="w-4 h-4"></i>
+                        </button>
+                    </div>
+                </div>`;
+            });
+            if (items.length > 10) {
+                html += `<div class="text-xs text-gray-400 mt-1">+${items.length - 10} more</div>`;
+            }
+            html += `</div>`;
+        }
+        results.innerHTML = html;
+        lucide.createIcons();
+    };
+}
+
+function closeGlobalSearch() {
+    document.getElementById('globalSearchModal').classList.remove('open');
+    document.getElementById('globalSearchModalInput').value = '';
+}
+
+// ==========================================
+// LOCATE FEATURE
+// ==========================================
+function locateItem(item) {
+    // Don't close the modal - keep it open for continued searching
+
+    if (item.type === 'order' || item.type === 'inventory' || item.type === 'sale') {
+        let page = 'orders';
+        if (item.type === 'inventory') page = 'inventory';
+        else if (item.type === 'sale') page = 'sales';
+        navigate(page);
+        // After navigation, set the search input and trigger search
+        setTimeout(() => {
+            let searchInput = null;
+            if (page === 'orders') searchInput = document.getElementById('orderSearch');
+            else if (page === 'inventory') searchInput = document.getElementById('inventorySearch');
+            else if (page === 'sales') searchInput = document.getElementById('salesSearch');
+            if (searchInput) {
+                searchInput.value = item.id;
+                // Trigger the search function
+                if (page === 'orders') applyOrderSearch();
+                else if (page === 'inventory') applyInventorySearch();
+                else if (page === 'sales') applySalesFilters();
+                showToast(`📍 Located in ${page}`, 'success');
+            }
+        }, 400);
+    } else if (item.type === 'agent') {
+        navigate('agents');
+        showToast(`📍 Agent ${item.username} found in Agents page`, 'success');
+    }
+}
+
+// ==========================================
+// LIVE SEARCH DROPDOWN - click opens detail
+// ==========================================
+function setupLiveSearch(inputId, dropdownId, dataSource, fields) {
+    const input = document.getElementById(inputId);
+    const dropdown = document.getElementById(dropdownId);
+    if (!input || !dropdown) return;
+
+    let fuse = new Fuse(dataSource, {
+        keys: fields,
+        threshold: 0.25,
+        includeScore: true,
+        ignoreLocation: true,
+        minMatchCharLength: 2
+    });
+
+    function updateFuse() {
+        fuse = new Fuse(dataSource, {
+            keys: fields,
+            threshold: 0.25,
+            includeScore: true,
+            ignoreLocation: true,
+            minMatchCharLength: 2
+        });
+    }
+
+    function debounce(fn, delay) {
+        let timer;
+        return function(...args) {
+            clearTimeout(timer);
+            timer = setTimeout(() => fn.apply(this, args), delay);
+        };
+    }
+
+    const handleInput = debounce(function() {
+        const query = this.value.trim();
+        if (!query) {
+            dropdown.classList.remove('open');
+            dropdown.innerHTML = '';
+            return;
+        }
+
+        updateFuse();
+        const results = fuse.search(query);
+        if (results.length === 0) {
+            dropdown.innerHTML = `<div class="empty-dropdown">No matches found</div>`;
+            dropdown.classList.add('open');
+            return;
+        }
+
+        let html = '';
+        const maxResults = 10;
+        results.slice(0, maxResults).forEach((r, idx) => {
+            const item = r.item;
+            let primary = '';
+            let secondary = '';
+            let extra = [];
+            let clickAction = '';
+            let id = item.id || '';
+
+            if (item.orderId) {
+                primary = item.orderId;
+                secondary = item.phoneModel || item.customerName || '';
+                if (item.phoneModel) extra.push(item.phoneModel);
+                if (item.imei) extra.push('IMEI: '+item.imei);
+                if (item.customerName) extra.push('Cust: '+item.customerName);
+                if (item.buyerName) extra.push('Buyer: '+item.buyerName);
+                if (item.agent) extra.push('Agent: '+item.agent);
+                if (id) clickAction = `onclick="viewOrder('${id}')"`;
+            } else if (item.name) {
+                primary = item.name;
+                secondary = item.username || '';
+                if (item.mobile) extra.push('📱 '+item.mobile);
+                if (item.username) clickAction = `onclick="viewAgentActivity('${item.username}')"`;
+            } else {
+                primary = item.id || 'Item';
+                if (id) clickAction = `onclick="viewOrder('${id}')"`;
+            }
+            const extraStr = extra.join(' · ');
+            html += `<div class="dropdown-item" data-id="${id}" ${clickAction}>
+                <div>
+                    <div class="item-primary">${primary}</div>
+                    <div class="item-secondary">${extraStr}</div>
+                </div>
+                ${item.value !== undefined ? `<span class="item-badge font-bold text-gray-700">${formatINR(item.value)}</span>` : ''}
+            </div>`;
+        });
+        if (results.length > maxResults) {
+            html += `<div class="dropdown-item" style="color:#94a3b8; font-size:0.8rem; text-align:center;">+${results.length - maxResults} more</div>`;
+        }
+        dropdown.innerHTML = html;
+        dropdown.classList.add('open');
+
+        // Click handler for dropdown items (already set via onclick, but also handle fallback)
+        dropdown.querySelectorAll('.dropdown-item[data-id]').forEach(el => {
+            if (!el.hasAttribute('onclick')) {
+                el.addEventListener('click', function(e) {
+                    const id = this.dataset.id;
+                    if (id) {
+                        const item = dataSource.find(d => d.id === id || d.username === id);
+                        if (item && item.username && !item.orderId) {
+                            viewAgentActivity(item.username);
+                        } else if (item && item.id) {
+                            viewOrder(item.id);
+                        }
+                    }
+                });
+            }
+        });
+    }, 250);
+
+    input.addEventListener('input', handleInput);
+    input.addEventListener('focus', function() {
+        if (this.value.trim()) {
+            handleInput.call(this);
+        }
+    });
+
+    document.addEventListener('click', function(e) {
+        if (!dropdown.contains(e.target) && e.target !== input) {
+            dropdown.classList.remove('open');
+        }
+    });
+
+    return { updateFuse };
 }
 
 // ==========================================
@@ -2408,7 +2861,6 @@ setInterval(updateClock, 1000); updateClock();
 // ==========================================
 document.addEventListener('DOMContentLoaded', () => {
     lucide.createIcons();
-    // 🔥 FIX: Sirf dashboard load karo init pe, baaki jab user jaye
     loadDashboard();
     document.getElementById('attendanceDate').value = new Date().toISOString().split('T')[0];
     const today = new Date();
@@ -2430,12 +2882,25 @@ document.addEventListener('DOMContentLoaded', () => {
         else if (currentPageView === 'attendance') loadAttendance();
         else if (currentPageView === 'salary') loadSalaryData();
         else if (currentPageView === 'agents') loadAgents();
-    }, 300000);  // 🔥 FIX: 5 minutes (pehle 60000 tha)
+    }, 300000);
     showToast('👋 Welcome', 'info', 2000);
 });
 
 document.getElementById('detailModal').addEventListener('click', function(e) { if (e.target === this) closeDetail(); });
 document.getElementById('sellModal').addEventListener('click', function(e) { if (e.target === this) closeSellModal(); });
 document.getElementById('activityModal').addEventListener('click', function(e) { if (e.target === this) closeActivityModal(); });
-document.addEventListener('keydown', function(e) { if (e.key === 'Escape') { closeDetail(); closeSellModal(); closeActivityModal(); closeSidebar(); } });
+
+// Global Search Modal event listeners
+document.getElementById('globalSearchModal').addEventListener('click', function(e) {
+    if (e.target === this) closeGlobalSearch();
+});
+document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') {
+        closeDetail();
+        closeSellModal();
+        closeActivityModal();
+        closeSidebar();
+        closeGlobalSearch();
+    }
+});
 setInterval(() => { lucide.createIcons(); }, 5000);
