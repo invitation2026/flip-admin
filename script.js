@@ -1,6 +1,6 @@
-// ==========================================
-// FIREBASE CONFIG
-// ==========================================
+// ================================================================
+// SECTION 1: FIREBASE CONFIG & INITIALIZATION
+// ================================================================
 const firebaseConfig = {
     apiKey: "AIzaSyDGJWdgj2GBL-44gXZ9W0mWnOfsczwPXdw",
     authDomain: "mobile-shop-9ea44.firebaseapp.com",
@@ -14,9 +14,9 @@ const firebaseConfig = {
 firebase.initializeApp(firebaseConfig);
 const db = firebase.database();
 
-// ==========================================
-// GLOBAL HELPERS
-// ==========================================
+// ================================================================
+// SECTION 2: GLOBAL HELPERS
+// ================================================================
 const formatINR = (num) => {
     if (num === undefined || num === null || isNaN(num)) return '₹0';
     return '₹' + new Intl.NumberFormat('en-IN').format(Math.round(num));
@@ -24,9 +24,9 @@ const formatINR = (num) => {
 
 function _escape(s) { return (s || '').replace(/'/g, "\\'"); }
 
-// ==========================================
-// DOCUMENTS (Bill / Aadhaar) helpers
-// ==========================================
+// ================================================================
+// SECTION 3: DOCUMENT (Bill / Aadhaar) HELPERS
+// ================================================================
 const ADMIN_MAX_DOC_IMAGES = 3;
 
 function getDocImages(item, which) {
@@ -188,9 +188,9 @@ async function adminSaveDocNumber(which) {
     } catch(e) { showToast('Update failed', 'error'); console.error(e); }
 }
 
-// ==========================================
-// COMMISSION BRACKETS
-// ==========================================
+// ================================================================
+// SECTION 4: COMMISSION BRACKETS
+// ================================================================
 const COMMISSION_BRACKETS = [
     { min: 0, max: 10000, type: 'percentage', value: 10 },
     { min: 10001, max: 31000, type: 'percentage', value: 8 },
@@ -211,9 +211,9 @@ function calculateCommission(purchasePrice) {
     return 0;
 }
 
-// ==========================================
-// STATE
-// ==========================================
+// ================================================================
+// SECTION 5: STATE VARIABLES
+// ================================================================
 let allOrders = [];
 let filteredOrders = [];
 let currentPage = 1;
@@ -251,14 +251,11 @@ let imei2Override = {};
 // Overhead cache (will be recalculated)
 let overheadPerPhone = 0;
 
-// ==========================================
-// DOM REFS
-// ==========================================
+// ================================================================
+// SECTION 6: DOM REFS & TOAST
+// ================================================================
 const toastEl = document.getElementById('toast');
 
-// ==========================================
-// TOAST
-// ==========================================
 function showToast(msg, type = 'info', duration = 3000) {
     toastEl.textContent = msg;
     toastEl.className = 'toast-fixed ' + type;
@@ -268,9 +265,9 @@ function showToast(msg, type = 'info', duration = 3000) {
     toastEl._timer = setTimeout(() => toastEl.classList.remove('show'), duration);
 }
 
-// ==========================================
-// SIDEBAR & NAV
-// ==========================================
+// ================================================================
+// SECTION 7: SIDEBAR & NAVIGATION
+// ================================================================
 function toggleSidebar() { document.getElementById('sidebar').classList.toggle('open'); document.getElementById('sidebarOverlay').classList.toggle('open'); }
 function closeSidebar() { document.getElementById('sidebar').classList.remove('open'); document.getElementById('sidebarOverlay').classList.remove('open'); }
 
@@ -296,9 +293,9 @@ function navigate(page) {
     else if (page === 'agents') loadAgents();
 }
 
-// ==========================================
-// DASHBOARD
-// ==========================================
+// ================================================================
+// SECTION 8: DASHBOARD
+// ================================================================
 async function loadDashboard() {
     try {
         const [pickupSnap, pendingSnap, usersSnap, depositSnap] = await Promise.all([
@@ -349,9 +346,11 @@ async function loadDashboard() {
         const today = new Date().toISOString().split('T')[0];
         const attSnapAll = await db.ref('attendance').once('value');
         const allAttendance = attSnapAll.val() || {};
+        
+        // 🔥 NEW: Only count active agents (is_active !== false)
         for (const [uname, uData] of Object.entries(users)) {
             const role = uData.role || 'agent';
-            if (role === 'agent') {
+            if (role === 'agent' && uData.is_active !== false) {
                 totalAgents++;
                 const att = allAttendance[uname] && allAttendance[uname][today];
                 if (att && att.status === 'present') presentToday++;
@@ -363,6 +362,12 @@ async function loadDashboard() {
             depositTotalAmount += d.amount || 0;
         });
 
+        // Calculate overhead per phone
+        const totalOverhead = depositTotalAmount;
+        const overheadPerPhoneCalc = soldCount > 0 ? totalOverhead / soldCount : 0;
+        overheadPerPhone = overheadPerPhoneCalc; // store globally
+        const finalNetProfit = profit - (overheadPerPhone * soldCount);
+
         document.getElementById('statTotal').textContent = total;
         document.getElementById('statPickup').textContent = pickupCount;
         document.getElementById('statRejected').textContent = rejectedCount;
@@ -371,6 +376,7 @@ async function loadDashboard() {
         document.getElementById('statSold').textContent = soldCount;
         document.getElementById('statRevenue').textContent = formatINR(revenue);
         document.getElementById('statProfit').textContent = formatINR(profit);
+        document.getElementById('statFinalProfit').textContent = formatINR(finalNetProfit);
         document.getElementById('statStockValue').textContent = formatINR(totalStockValue);
         document.getElementById('statAgents').textContent = totalAgents;
         document.getElementById('statPresentToday').textContent = presentToday;
@@ -409,9 +415,9 @@ async function loadDashboard() {
     }
 }
 
-// ==========================================
-// ORDERS (with fuzzy search and live dropdown)
-// ==========================================
+// ================================================================
+// SECTION 9: ORDERS (with fuzzy search and live dropdown)
+// ================================================================
 async function loadOrders() {
     try {
         const snap = await db.ref('pickups').once('value');
@@ -419,7 +425,7 @@ async function loadOrders() {
         allOrders = Object.entries(data).map(([id, item]) => ({ id, ...item, billImages: undefined, billImage: undefined, aadhaarImages: undefined, aadhaarImage: undefined }));
         allOrders.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
         applyOrderFilter(currentOrderFilter);
-        setupLiveSearch('orderSearch', 'orderSearchDropdown', allOrders, ['orderId', 'phoneModel', 'imei', 'customerName', 'agent']);
+        setupLiveSearch('orderSearch', 'orderSearchDropdown', allOrders, ['orderId', 'phoneModel', 'imei', 'customerName', 'agent', 'color']);
     } catch (e) {
         console.error('Orders error:', e);
         showToast('Error loading orders', 'error');
@@ -435,7 +441,7 @@ function applyOrderFilter(filter) {
     const query = document.getElementById('orderSearch').value.trim();
     if (query) {
         const fuse = new Fuse(filtered, {
-            keys: ['orderId', 'phoneModel', 'imei', 'customerName', 'agent'],
+            keys: ['orderId', 'phoneModel', 'imei', 'customerName', 'agent', 'color'],
             threshold: 0.3,
             includeScore: true,
             ignoreLocation: true
@@ -513,9 +519,9 @@ function prevOrderPage() { if (currentPage > 1) { currentPage--; renderOrdersTab
 function nextOrderPage() { const totalPages = Math.ceil(filteredOrders.length / pageSize); if (currentPage < totalPages) { currentPage++; renderOrdersTable(); } }
 function refreshOrders() { loadOrders(); loadAgentsForFilter(); showToast('🔄 Orders refreshed', 'info'); }
 
-// ==========================================
-// PENDING ADMIN
-// ==========================================
+// ================================================================
+// SECTION 10: PENDING ADMIN
+// ================================================================
 async function loadPendingAdmin() {
     try {
         const snap = await db.ref('pending').once('value');
@@ -544,9 +550,9 @@ async function deletePending(orderId) {
     try { await db.ref('pending/' + orderId).remove(); showToast('🗑️ Removed from pending', 'success'); loadPendingAdmin(); loadDashboard(); } catch (e) { showToast('Error removing pending', 'error'); console.error(e); }
 }
 
-// ==========================================
-// REJECTED ADMIN
-// ==========================================
+// ================================================================
+// SECTION 11: REJECTED ADMIN
+// ================================================================
 async function loadRejectedAdmin() {
     try {
         const snap = await db.ref('pickups').once('value');
@@ -603,9 +609,9 @@ async function toggleRejectApproval(orderId, approve) {
     } catch (e) { showToast(`Error ${action}ing reject`, 'error'); console.error(e); }
 }
 
-// ==========================================
-// INVENTORY (with live dropdown)
-// ==========================================
+// ================================================================
+// SECTION 12: INVENTORY (with live dropdown)
+// ================================================================
 async function loadInventory() {
     try {
         const snap = await db.ref('pickups').once('value');
@@ -613,7 +619,7 @@ async function loadInventory() {
         inventoryList = Object.entries(data).filter(([_, item]) => item.status === 'pickup' && !item.sold).map(([id, item]) => ({ id, ...item, billImages: undefined, billImage: undefined, aadhaarImages: undefined, aadhaarImage: undefined }));
         inventoryList.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
         applyInventorySearch();
-        setupLiveSearch('inventorySearch', 'inventorySearchDropdown', inventoryList, ['orderId', 'phoneModel', 'imei', 'customerName']);
+        setupLiveSearch('inventorySearch', 'inventorySearchDropdown', inventoryList, ['orderId', 'phoneModel', 'imei', 'customerName', 'color']);
     } catch (e) {
         console.error('Inventory error:', e);
         showToast('Error loading inventory', 'error');
@@ -625,7 +631,7 @@ function applyInventorySearch() {
     let filtered = inventoryList;
     if (query) {
         const fuse = new Fuse(filtered, {
-            keys: ['orderId', 'phoneModel', 'imei', 'customerName'],
+            keys: ['orderId', 'phoneModel', 'imei', 'customerName', 'color'],
             threshold: 0.3,
             includeScore: true,
             ignoreLocation: true
@@ -654,9 +660,9 @@ function renderInventoryTable() {
 
 function refreshInventory() { loadInventory(); showToast('🔄 Inventory refreshed', 'info'); }
 
-// ==========================================
-// SALES (with overhead calculation and live dropdown)
-// =========================================
+// ================================================================
+// SECTION 13: SALES (with overhead calculation and live dropdown)
+// ================================================================
 async function loadSales() {
     try {
         const [pickupSnap, usersSnap, attendanceSnap] = await Promise.all([
@@ -673,15 +679,15 @@ async function loadSales() {
         const today = new Date();
         const todayStr = today.toISOString().split('T')[0];
 
-        // For each agent, compute base salary from attendance
         for (const [uname, uData] of Object.entries(users)) {
             const role = uData.role || 'agent';
             if (role !== 'agent') continue;
+            // 🔥 NEW: Only active agents
+            if (uData.is_active === false) continue;
 
             const monthlySalary = uData.salary || 0;
             const perDaySalary = monthlySalary / 30;
 
-            // Join date (use joinDate if set, else createdAt)
             let joinDate = null;
             if (uData.joinDate) {
                 joinDate = new Date(uData.joinDate + 'T00:00:00');
@@ -706,7 +712,6 @@ async function loadSales() {
             totalOverhead += agentBaseSalary;
         }
 
-        // --- 2. Add pickup incentives from all pickups ---
         let totalPickupIncentives = 0;
         let totalRejectIncentives = 0;
 
@@ -716,6 +721,8 @@ async function loadSales() {
             if (!agent) return;
             const uData = users[agent];
             if (!uData || (uData.role || 'agent') !== 'agent') return;
+            // 🔥 NEW: Skip inactive agents
+            if (uData.is_active === false) return;
 
             if (item.status === 'pickup') {
                 totalPickupIncentives += (uData.pickup_incentive || 0);
@@ -726,7 +733,6 @@ async function loadSales() {
 
         totalOverhead += totalPickupIncentives + totalRejectIncentives;
 
-        // --- 3. Total phones sold (all time) ---
         let totalSold = 0;
         Object.values(data).forEach(item => {
             if (item.status === 'pickup' && item.sold) {
@@ -734,10 +740,8 @@ async function loadSales() {
             }
         });
 
-        // --- 4. Overhead per phone ---
         overheadPerPhone = totalSold > 0 ? totalOverhead / totalSold : 0;
 
-        // --- 5. Build sales list with profit values ---
         salesList = Object.entries(data)
             .filter(([_, item]) => item.sold === true && item.status !== 'on_hold')
             .map(([id, item]) => {
@@ -750,7 +754,7 @@ async function loadSales() {
         salesList.sort((a, b) => (b.saleTimestamp || b.timestamp || 0) - (a.saleTimestamp || a.timestamp || 0));
         applySalesFilters();
         document.getElementById('salesBadge').textContent = salesList.length;
-        setupLiveSearch('salesSearch', 'salesSearchDropdown', salesList, ['orderId', 'phoneModel', 'buyerName', 'agent']);
+        setupLiveSearch('salesSearch', 'salesSearchDropdown', salesList, ['orderId', 'phoneModel', 'buyerName', 'agent', 'color']);
     } catch (e) {
         console.error('Sales error:', e);
         showToast('Error loading sales', 'error');
@@ -764,7 +768,7 @@ function applySalesFilters() {
     let filtered = salesList;
     if (query) {
         const fuse = new Fuse(filtered, {
-            keys: ['orderId', 'phoneModel', 'buyerName', 'agent'],
+            keys: ['orderId', 'phoneModel', 'buyerName', 'agent', 'color'],
             threshold: 0.3,
             includeScore: true,
             ignoreLocation: true
@@ -867,9 +871,9 @@ function exportSalesCSV() {
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' }); const link = document.createElement('a'); link.href = URL.createObjectURL(blob); link.download = `sales_report_${new Date().toISOString().slice(0,10)}.csv`; document.body.appendChild(link); link.click(); document.body.removeChild(link); URL.revokeObjectURL(link.href); showToast('📥 Sales CSV exported', 'success');
 }
 
-// ==========================================
-// SELL MODAL (with profit breakdown)
-// ==========================================
+// ================================================================
+// SECTION 14: SELL MODAL (with profit breakdown)
+// ================================================================
 function openSellModal(orderId) {
     const order = inventoryList.find(item => item.id === orderId);
     if (!order) { showToast('Order not found', 'error'); return; }
@@ -984,9 +988,9 @@ async function confirmSell() {
     }
 }
 
-// ==========================================
-// VIEW ORDER DETAIL
-// ==========================================
+// ================================================================
+// SECTION 15: VIEW ORDER DETAIL
+// ================================================================
 function viewOrder(orderId) {
     detailOrderId = orderId;
     isEditMode = false;
@@ -1068,7 +1072,7 @@ function renderDetailView(item) {
     }
     let html = `<div class="flex items-center gap-3 mb-4"><span class="badge-status ${statusClass} text-sm px-4 py-1.5">${displayName}</span><span class="font-mono font-bold text-gray-800 text-sm">${item.orderId || item.id}</span>${item.agent ? `<span class="text-xs text-gray-400">(Agent: ${item.agent})</span>` : ''}</div><div class="detail-grid"><div class="detail-item"><div class="label">Phone Model</div><div class="value" id="dv-model">${item.phoneModel || '—'}</div></div><div class="detail-item"><div class="label">IMEI</div><div class="value font-mono text-xs" id="dv-imei">${item.imei || '—'}</div></div>${item.imei2 ? `<div class="detail-item"><div class="label">IMEI 2</div><div class="value font-mono text-xs" id="dv-imei2">${item.imei2}</div></div>` : ''}<div class="detail-item"><div class="label">Purchase Price</div><div class="value font-bold" id="dv-value">${item.value !== undefined && item.value !== null ? formatINR(item.value) : '—'}</div></div><div class="detail-item"><div class="label">Customer Name</div><div class="value" id="dv-customer">${item.customerName || '—'}</div></div><div class="detail-item"><div class="label">Reason</div><div class="value" id="dv-reason">${item.reason || '—'}</div></div><div class="detail-item"><div class="label">Status</div><div class="value" id="dv-status">${displayName}</div></div><div class="detail-item"><div class="label">Time (IST)</div><div class="value text-xs" id="dv-time">${item.timestampIST || item.timestamp || '—'}</div></div>${holdHtml}${saleHtml}</div>`;
 
-    // Documents section (unchanged)
+    // Documents section
     const _billImgs = getDocImages(item, 'bill');
     const _aadImgs  = getDocImages(item, 'aadhaar');
     const _billNo   = item.billNumber || '';
@@ -1110,9 +1114,9 @@ function renderDetailView(item) {
     editData = { ...item };
 }
 
-// ==========================================
-// HOLD / UNHOLD (unchanged)
-// ==========================================
+// ================================================================
+// SECTION 16: HOLD / UNHOLD
+// ================================================================
 async function holdOrderFromDetail() {
     if (!detailOrderId) return;
     const { value: reason, isConfirmed } = await Swal.fire({
@@ -1172,9 +1176,9 @@ async function unholdOrderFromDetail() {
     } catch (e) { showToast('Error unholding order', 'error'); console.error(e); }
 }
 
-// ==========================================
-// EDIT MODE (unchanged logic, but added gross/final profit fields)
-// ==========================================
+// ================================================================
+// SECTION 17: EDIT MODE (FIXED: No duplicate creation)
+// ================================================================
 function toggleEditMode() {
     if (isEditMode) return;
     isEditMode = true;
@@ -1346,7 +1350,17 @@ function cancelEdit() {
     isEditMode = false;
     if (detailOrderId) { db.ref('pickups/' + detailOrderId).once('value').then(snap => { const item = snap.val(); if (item) { renderDetailView(item); document.getElementById('detailActions').style.display = 'flex'; document.getElementById('detailSaveActions').style.display = 'none'; document.getElementById('detailModalTitle').textContent = 'Order Details'; document.getElementById('detailEditBtn').textContent = '✏️ Edit'; document.getElementById('detailEditBtn').onclick = toggleEditMode; editData = { ...item, id: detailOrderId }; } }); }
 }
+
+// ================================================================
+// SECTION 18: SAVE EDIT - FIXED (NO DUPLICATION)
+// ================================================================
 async function saveEdit() {
+    // Use the Firebase key (detailOrderId) to update, NOT push()
+    if (!detailOrderId) {
+        showToast('No order selected', 'error');
+        return;
+    }
+
     const orderId = document.getElementById('edit-orderId').value.trim();
     const status = document.getElementById('edit-status').value;
     const model = document.getElementById('edit-model').value.trim();
@@ -1363,8 +1377,42 @@ async function saveEdit() {
     if (!orderId) { showToast('Order ID required', 'error'); return; }
     const billNumberVal    = (document.getElementById('edit-billNumber')?.value || '').trim();
     const aadhaarNumberVal = (document.getElementById('edit-aadhaarNumber')?.value || '').trim();
-    let updated = { orderId, status, phoneModel: model || '', imei: imei || '', imei2: imei2 || '', value: value || 0, customerName: customer || '', reason: reason || '', billNumber: billNumberVal, aadhaarNumber: aadhaarNumberVal, timestamp: editData.timestamp, timestampIST: editData.timestampIST || '' };
-    if (datetimeVal) { const d = new Date(datetimeVal); if (!isNaN(d)) { updated.timestamp = d.toISOString(); const istOffset = 5.5 * 60 * 60 * 1000; const istTime = new Date(d.getTime() + istOffset); const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']; const dd = String(istTime.getUTCDate()).padStart(2,'0'); const mmm = months[istTime.getUTCMonth()]; const yyyy = istTime.getUTCFullYear(); let hours = istTime.getUTCHours(); const minutes = String(istTime.getUTCMinutes()).padStart(2,'0'); const seconds = String(istTime.getUTCSeconds()).padStart(2,'0'); const ampm = hours >= 12 ? 'PM' : 'AM'; hours = hours % 12 || 12; const hh = String(hours).padStart(2,'0'); updated.timestampIST = `${dd}-${mmm}-${yyyy}, ${hh}:${minutes}:${seconds} ${ampm} IST`; } } else { updated.timestamp = editData.timestamp; updated.timestampIST = editData.timestampIST; }
+
+    let updated = {
+        orderId,
+        status,
+        phoneModel: model || '',
+        imei: imei || '',
+        imei2: imei2 || '',
+        value: value || 0,
+        customerName: customer || '',
+        reason: reason || '',
+        billNumber: billNumberVal,
+        aadhaarNumber: aadhaarNumberVal,
+        timestamp: editData.timestamp,
+        timestampIST: editData.timestampIST || ''
+    };
+
+    if (datetimeVal) {
+        const d = new Date(datetimeVal);
+        if (!isNaN(d)) {
+            updated.timestamp = d.toISOString();
+            const istOffset = 5.5 * 60 * 60 * 1000;
+            const istTime = new Date(d.getTime() + istOffset);
+            const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+            const dd = String(istTime.getUTCDate()).padStart(2,'0');
+            const mmm = months[istTime.getUTCMonth()];
+            const yyyy = istTime.getUTCFullYear();
+            let hours = istTime.getUTCHours();
+            const minutes = String(istTime.getUTCMinutes()).padStart(2,'0');
+            const seconds = String(istTime.getUTCSeconds()).padStart(2,'0');
+            const ampm = hours >= 12 ? 'PM' : 'AM';
+            hours = hours % 12 || 12;
+            const hh = String(hours).padStart(2,'0');
+            updated.timestampIST = `${dd}-${mmm}-${yyyy}, ${hh}:${minutes}:${seconds} ${ampm} IST`;
+        }
+    }
+
     if (editData.sold) {
         const commission = calculateCommission(value);
         const grossProfit = salePrice - commission - value;
@@ -1375,10 +1423,11 @@ async function saveEdit() {
         updated.buyerName = buyer || '';
         updated.buyerContact = buyerContact || '';
         updated.saleDate = saleDate || '';
-        updated.profit = grossProfit; // for backward compatibility
+        updated.profit = grossProfit;
         updated.grossProfit = grossProfit;
         updated.finalNetProfit = finalProfit;
     }
+
     if (status === 'on_hold' && editData.status !== 'on_hold') {
         updated.previous_status = editData.status;
         updated.hold_reason = reason || 'Manually held';
@@ -1386,14 +1435,48 @@ async function saveEdit() {
         updated.previous_status = null;
         updated.hold_reason = null;
     }
-    const confirm = await Swal.fire({ title: 'Save Changes?', icon: 'question', showCancelButton: true, confirmButtonColor: '#4f46e5', cancelButtonColor: '#64748b', confirmButtonText: 'Yes', cancelButtonText: 'Cancel' });
+
+    const confirm = await Swal.fire({
+        title: 'Save Changes?',
+        icon: 'question',
+        showCancelButton: true,
+        confirmButtonColor: '#4f46e5',
+        cancelButtonColor: '#64748b',
+        confirmButtonText: 'Yes',
+        cancelButtonText: 'Cancel',
+        customClass: {
+            popup: 'swal2-popup-custom'
+        }
+    });
     if (!confirm.isConfirmed) return;
-    try { await db.ref('pickups/' + detailOrderId).update(updated); showToast('✅ Updated', 'success'); loadOrders(); loadDashboard(); loadPendingAdmin(); loadRejectedAdmin(); loadInventory(); loadSales(); isEditMode = false; await db.ref('pickups/' + detailOrderId).once('value').then(snap => { const item = snap.val(); if (item) { renderDetailView(item); document.getElementById('detailActions').style.display = 'flex'; document.getElementById('detailSaveActions').style.display = 'none'; document.getElementById('detailModalTitle').textContent = 'Order Details'; document.getElementById('detailEditBtn').textContent = '✏️ Edit'; document.getElementById('detailEditBtn').onclick = toggleEditMode; editData = { ...item, id: detailOrderId }; } }); } catch (e) { console.error(e); showToast('Error updating', 'error'); }
+
+    try {
+        // ✅ CRITICAL FIX: Use update() on the existing detailOrderId, NOT push()
+        await db.ref('pickups/' + detailOrderId).update(updated);
+        showToast('✅ Updated', 'success');
+        loadOrders(); loadDashboard(); loadPendingAdmin(); loadRejectedAdmin(); loadInventory(); loadSales();
+        isEditMode = false;
+        await db.ref('pickups/' + detailOrderId).once('value').then(snap => {
+            const item = snap.val();
+            if (item) {
+                renderDetailView(item);
+                document.getElementById('detailActions').style.display = 'flex';
+                document.getElementById('detailSaveActions').style.display = 'none';
+                document.getElementById('detailModalTitle').textContent = 'Order Details';
+                document.getElementById('detailEditBtn').textContent = '✏️ Edit';
+                document.getElementById('detailEditBtn').onclick = toggleEditMode;
+                editData = { ...item, id: detailOrderId };
+            }
+        });
+    } catch (e) {
+        console.error(e);
+        showToast('Error updating', 'error');
+    }
 }
 
-// ==========================================
-// DELETE ORDER (unchanged)
-// ==========================================
+// ================================================================
+// SECTION 19: DELETE ORDER
+// ================================================================
 async function deleteOrder(orderId) {
     const result = await Swal.fire({ title: 'Delete Order?', text: 'Cannot be undone.', icon: 'warning', showCancelButton: true, confirmButtonColor: '#dc2626', cancelButtonColor: '#64748b', confirmButtonText: 'Yes, delete', cancelButtonText: 'Cancel' });
     if (!result.isConfirmed) return;
@@ -1402,9 +1485,9 @@ async function deleteOrder(orderId) {
 function deleteOrderFromDetail() { if (detailOrderId) deleteOrder(detailOrderId); }
 function closeDetail() { document.getElementById('detailModal').style.display = 'none'; detailOrderId = null; isEditMode = false; document.getElementById('detailActions').style.display = 'flex'; document.getElementById('detailSaveActions').style.display = 'none'; }
 
-// ==========================================
-// EXPORT CSV (unchanged)
-// ==========================================
+// ================================================================
+// SECTION 20: EXPORT CSV
+// ================================================================
 function exportCSV() {
     if (allOrders.length === 0) { showToast('No data', 'error'); return; }
     const headers = ['Order ID','Status','Model','IMEI','IMEI2','Value','Customer','Reason','Time (IST)','Agent'];
@@ -1414,9 +1497,9 @@ function exportCSV() {
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' }); const link = document.createElement('a'); link.href = URL.createObjectURL(blob); link.download = `flipkart_orders_${new Date().toISOString().slice(0,10)}.csv`; document.body.appendChild(link); link.click(); document.body.removeChild(link); URL.revokeObjectURL(link.href); showToast('📥 Exported', 'success');
 }
 
-// ==========================================
-// DEPOSITS (unchanged)
-// ==========================================
+// ================================================================
+// SECTION 21: DEPOSITS
+// ================================================================
 async function loadDeposits() {
     try {
         const snap = await db.ref('deposits').once('value');
@@ -1644,9 +1727,9 @@ function refreshDeposits() {
     showToast('🔄 Deposits refreshed', 'info');
 }
 
-// ==========================================
-// AGENTS (unchanged)
-// ==========================================
+// ================================================================
+// SECTION 22: AGENTS (UPDATED: is_active support + Leave/Reactivate)
+// ================================================================
 async function loadAgents() {
     try {
         const snap = await db.ref('users').once('value');
@@ -1657,14 +1740,18 @@ async function loadAgents() {
         });
         agentsList.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
         renderAgentsTable();
-        document.getElementById('agentsBadge').textContent = agentsList.filter(u => u.role === 'agent').length;
+        document.getElementById('agentsBadge').textContent = agentsList.filter(u => u.role === 'agent' && u.is_active !== false).length;
         loadAgentsForFilter();
     } catch (e) { console.error(e); showToast('Error loading agents', 'error'); }
 }
 
 function renderAgentsTable() {
     const tbody = document.getElementById('agentsTableBody');
-    if (agentsList.length === 0) { tbody.innerHTML = `<tr><td colspan="10"><div class="empty-state"><i data-lucide="inbox"></i><p class="text-sm font-medium">No users</p></div></td></tr>`; lucide.createIcons(); return; }
+    if (agentsList.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="11"><div class="empty-state"><i data-lucide="inbox"></i><p class="text-sm font-medium">No users</p></div></td></tr>`;
+        lucide.createIcons();
+        return;
+    }
     let html = '';
     agentsList.forEach((item, idx) => {
         const pw = item.password || '****';
@@ -1675,12 +1762,26 @@ function renderAgentsTable() {
         const rejectInc = item.role === 'agent' ? (item.reject_incentive || 0) : '—';
         const roleDisplay = item.role === 'admin' ? '<span class="admin-tag">Admin</span>' : 'Agent';
         const isAgent = item.role === 'agent';
-        const promoteBtn = isAgent ? `<button onclick="promoteToAdmin('${item.username}')" class="btn-action promote" title="Promote to Admin"><i data-lucide="user-cog"></i> Promote</button>` : '';
+        
+        // 🔥 NEW: Status badge
+        const isActive = item.is_active !== false;
+        const statusBadge = isActive 
+            ? '<span class="badge-status pickup" style="font-size:10px;">✅ Active</span>' 
+            : '<span class="badge-status rejected" style="font-size:10px;">🚫 Left</span>';
+        
+        // 🔥 NEW: Leave/Reactivate button
+        const leaveBtn = isActive
+            ? `<button onclick="leaveAgent('${item.username}')" class="btn-action delete" title="Mark as Left"><i data-lucide="user-x"></i></button>`
+            : `<button onclick="reactivateAgent('${item.username}')" class="btn-action approve" title="Reactivate"><i data-lucide="user-check"></i></button>`;
+        
+        const promoteBtn = isAgent ? `<button onclick="promoteToAdmin('${item.username}')" class="btn-action promote" title="Promote to Admin"><i data-lucide="user-cog"></i></button>` : '';
+        
         html += `<tr class="user-row border-b border-gray-50">
             <td class="py-3 px-4 text-gray-400 font-mono text-xs">${idx+1}</td>
             <td class="py-3 px-4 font-medium text-gray-800">${item.name || '—'}</td>
             <td class="py-3 px-4 font-mono text-sm text-gray-700">${item.username}</td>
             <td class="py-3 px-4 hidden sm:table-cell">${roleDisplay}</td>
+            <td class="py-3 px-4 hidden sm:table-cell">${statusBadge}</td>
             <td class="py-3 px-4 hidden sm:table-cell font-bold">${typeof salary === 'number' ? formatINR(salary) : salary}</td>
             <td class="py-3 px-4 hidden md:table-cell">${typeof pickupInc === 'number' ? formatINR(pickupInc) : pickupInc}</td>
             <td class="py-3 px-4 hidden lg:table-cell">${typeof rejectInc === 'number' ? formatINR(rejectInc) : rejectInc}</td>
@@ -1688,6 +1789,7 @@ function renderAgentsTable() {
             <td class="py-3 px-4 font-mono"><span class="pw-hidden">${pwDisplay}</span><button onclick="togglePassword('${item.username}')" class="btn-action show ml-1"><i data-lucide="${showPw ? 'eye-off' : 'eye'}"></i></button></td>
             <td class="py-3 px-4">
                 <div class="promote-btn-wrap">
+                    ${leaveBtn}
                     ${promoteBtn}
                     <button onclick="viewAgentActivity('${item.username}')" class="btn-action activity"><i data-lucide="activity"></i></button>
                     <button onclick="showChangePasswordModal('${item.username}')" class="btn-action edit"><i data-lucide="key"></i></button>
@@ -1700,6 +1802,75 @@ function renderAgentsTable() {
     tbody.innerHTML = html;
     document.getElementById('agentsCount').textContent = agentsList.length + ' users';
     lucide.createIcons();
+}
+
+// 🔥 NEW: Leave Agent (Permanent)
+async function leaveAgent(username) {
+    const { value: reason, isConfirmed } = await Swal.fire({
+        title: `Agent "${username}" ko leave karna?`,
+        text: 'Is agent ne job chhod di hai. Account permanently block ho jayega. Wapas login nahi kar payega.',
+        input: 'text',
+        inputPlaceholder: 'Reason (optional)',
+        showCancelButton: true,
+        confirmButtonColor: '#dc2626',
+        cancelButtonColor: '#64748b',
+        confirmButtonText: 'Yes, Leave',
+        cancelButtonText: 'Cancel'
+    });
+    if (!isConfirmed) return;
+
+    try {
+        const today = new Date().toISOString().split('T')[0];
+        await db.ref('users/' + username).update({
+            is_active: false,
+            left_date: today,
+            left_reason: reason || 'Left the job'
+        });
+        showToast(`✅ ${username} marked as left.`, 'success');
+        loadAgents();
+        loadDashboard();
+        loadAttendance();
+        loadSalaryData();
+        // If agent is currently logged in, force logout via listener
+        await db.ref('users/' + username + '/forceLogout').set(true);
+        setTimeout(() => {
+            db.ref('users/' + username + '/forceLogout').remove().catch(() => {});
+        }, 3000);
+    } catch (e) {
+        showToast('Error', 'error');
+        console.error(e);
+    }
+}
+
+// 🔥 NEW: Reactivate Agent
+async function reactivateAgent(username) {
+    const confirm = await Swal.fire({
+        title: `Reactivate "${username}"?`,
+        text: 'Agent ka account dobara active ho jayega. Wapas login kar sakta hai aur attendance/salary mein include hoga.',
+        icon: 'question',
+        showCancelButton: true,
+        confirmButtonColor: '#059669',
+        cancelButtonColor: '#64748b',
+        confirmButtonText: 'Yes, Reactivate',
+        cancelButtonText: 'Cancel'
+    });
+    if (!confirm.isConfirmed) return;
+
+    try {
+        await db.ref('users/' + username).update({
+            is_active: true,
+            left_date: null,
+            left_reason: null
+        });
+        showToast(`✅ ${username} reactivated.`, 'success');
+        loadAgents();
+        loadDashboard();
+        loadAttendance();
+        loadSalaryData();
+    } catch (e) {
+        showToast('Error', 'error');
+        console.error(e);
+    }
 }
 
 async function promoteToAdmin(username) {
@@ -1719,7 +1890,8 @@ async function promoteToAdmin(username) {
             role: 'admin',
             salary: null,
             pickup_incentive: null,
-            reject_incentive: null
+            reject_incentive: null,
+            is_active: true // Admin should always be active
         });
         showToast(`✅ ${username} is now an admin`, 'success');
         loadAgents();
@@ -1777,7 +1949,8 @@ function registerAgent(e) {
         name, username, password, aadhar: aadhar || '', mobile, alternate: alternate || '',
         role: role,
         createdAt: Date.now(),
-        joinDate: new Date().toISOString().split('T')[0] // add join date
+        joinDate: new Date().toISOString().split('T')[0],
+        is_active: true  // 🔥 NEW: Default active
     };
     if (role === 'agent') {
         userData.salary = salary;
@@ -1825,9 +1998,9 @@ function showChangePasswordModal(username) {
     Swal.fire({ title: `Change Password for "${username}"`, html: `<input type="password" id="newPassword" class="swal2-input" placeholder="New password" minlength="4"><input type="password" id="confirmPassword" class="swal2-input" placeholder="Confirm" minlength="4">`, showCancelButton: true, confirmButtonText: 'Update', cancelButtonText: 'Cancel', confirmButtonColor: '#4f46e5', preConfirm: () => { const newPw = document.getElementById('newPassword').value; const confirmPw = document.getElementById('confirmPassword').value; if (!newPw || newPw.length < 4) { Swal.showValidationMessage('Min 4 chars'); return false; } if (newPw !== confirmPw) { Swal.showValidationMessage('No match'); return false; } return newPw; } }).then(async (result) => { if (result.isConfirmed) { try { await db.ref('users/' + username + '/password').set(result.value); showToast('✅ Password updated', 'success'); loadAgents(); } catch (e) { showToast('Error', 'error'); console.error(e); } } });
 }
 
-// ==========================================
-// AGENT ACTIVITY (unchanged)
-// ==========================================
+// ================================================================
+// SECTION 23: AGENT ACTIVITY
+// ================================================================
 function viewAgentActivity(username) {
     const today = new Date().toISOString().split('T')[0];
     viewAgentActivityWithPeriod(username, { mode: 'today', date: today });
@@ -1968,19 +2141,20 @@ function viewAgentActivityWithPeriod(username, period) {
 
 function closeActivityModal() { document.getElementById('activityModal').style.display = 'none'; }
 
-// ==========================================
-// ATTENDANCE SYSTEM (unchanged)
-// ==========================================
+// ================================================================
+// SECTION 24: ATTENDANCE SYSTEM (Updated: active agents only)
+// ================================================================
 async function generateOTPs() {
     const usersSnap = await db.ref('users').once('value');
     const users = usersSnap.val() || {};
     const today = new Date().toISOString().split('T')[0];
+    // 🔥 NEW: Only active agents
     const agents = Object.keys(users).filter(uname => {
         const u = users[uname];
         const role = u.role || 'agent';
-        return role === 'agent';
+        return role === 'agent' && u.is_active !== false;
     });
-    if (agents.length === 0) { showToast('No agents to generate OTP for', 'error'); return; }
+    if (agents.length === 0) { showToast('No active agents to generate OTP for', 'error'); return; }
     const confirm = await Swal.fire({ title: 'Generate OTPs?', text: `Generate OTP for ${agents.length} agents for ${today}?`, icon: 'question', showCancelButton: true, confirmButtonColor: '#059669', cancelButtonColor: '#64748b', confirmButtonText: 'Generate', cancelButtonText: 'Cancel' });
     if (!confirm.isConfirmed) return;
     try {
@@ -2007,8 +2181,13 @@ async function loadAttendance() {
     try {
         const usersSnap = await db.ref('users').once('value');
         const users = usersSnap.val() || {};
-        const agents = Object.fromEntries(Object.entries(users).filter(([_, u]) => (u.role || 'agent') === 'agent'));
-        if (Object.keys(agents).length === 0) { container.innerHTML = `<div class="empty-state"><i data-lucide="inbox"></i><p class="text-sm font-medium">No agents registered</p></div>`; return; }
+        // 🔥 NEW: Only active agents
+        const agents = Object.fromEntries(
+            Object.entries(users).filter(([_, u]) => 
+                (u.role || 'agent') === 'agent' && u.is_active !== false
+            )
+        );
+        if (Object.keys(agents).length === 0) { container.innerHTML = `<div class="empty-state"><i data-lucide="inbox"></i><p class="text-sm font-medium">No active agents</p></div>`; return; }
         let html = `<div class="space-y-3"><div class="text-sm font-bold text-gray-600 mb-2">📅 ${date}</div>`;
         for (const [uname, uData] of Object.entries(agents)) {
             const attSnap = await db.ref('attendance/' + uname + '/' + date).once('value');
@@ -2192,9 +2371,9 @@ async function blockAgent(username, date) {
     } catch (e) { showToast('Error blocking', 'error'); console.error(e); }
 }
 
-// ==========================================
-// SALARY / EARNINGS (unchanged)
-// ==========================================
+// ================================================================
+// SECTION 25: SALARY / EARNINGS (Updated: active agents only)
+// ================================================================
 function setSalaryMode(mode) {
     currentSalaryMode = mode;
     document.getElementById('salaryModeToday').classList.toggle('active', mode === 'today');
@@ -2227,12 +2406,17 @@ async function loadSalaryData() {
         ]);
 
         const users = usersSnap.val() || {};
-        const agents = Object.fromEntries(Object.entries(users).filter(([_, u]) => (u.role || 'agent') === 'agent'));
+        // 🔥 NEW: Only active agents
+        const agents = Object.fromEntries(
+            Object.entries(users).filter(([_, u]) => 
+                (u.role || 'agent') === 'agent' && u.is_active !== false
+            )
+        );
         const pickups = pickupsSnap.val() || {};
         const allAttendance = attendanceSnap.val() || {};
 
         if (Object.keys(agents).length === 0) {
-            container.innerHTML = `<div class="empty-state"><i data-lucide="inbox"></i><p class="text-sm font-medium">No agents</p></div>`;
+            container.innerHTML = `<div class="empty-state"><i data-lucide="inbox"></i><p class="text-sm font-medium">No active agents</p></div>`;
             document.getElementById('globalPickups').textContent = '0';
             document.getElementById('globalRejects').textContent = '0';
             document.getElementById('globalPending').textContent = '0';
@@ -2496,9 +2680,9 @@ async function recalculateAllSalary() {
     await loadSalaryData();
 }
 
-// ==========================================
-// GLOBAL SEARCH - Fixed to search across ALL modules with fuzzy logic
-// ==========================================
+// ================================================================
+// SECTION 26: GLOBAL SEARCH (Smart Search with Fuse.js)
+// ================================================================
 async function openGlobalSearch() {
     const modal = document.getElementById('globalSearchModal');
     const input = document.getElementById('globalSearchModalInput');
@@ -2597,9 +2781,9 @@ async function openGlobalSearch() {
         const fuse = new Fuse(allData, {
             keys: [
                 'orderId', 'phoneModel', 'imei', 'customerName',
-                'buyerName', 'agent', 'name', 'username', 'mobile'
+                'buyerName', 'agent', 'name', 'username', 'mobile', 'color', 'value'
             ],
-            threshold: 0.25,
+            threshold: 0.3,
             includeScore: true,
             ignoreLocation: true,
             shouldSort: true,
@@ -2743,9 +2927,9 @@ function toggleShowMore(catId, totalItems) {
     }
 }
 
-// ==========================================
-// LOCATE FEATURE
-// ==========================================
+// ================================================================
+// SECTION 27: LOCATE FEATURE
+// ================================================================
 function locateItem(item) {
     // Don't close the modal - keep it open for continued searching
 
@@ -2775,9 +2959,9 @@ function locateItem(item) {
     }
 }
 
-// ==========================================
-// LIVE SEARCH DROPDOWN - click opens detail
-// ==========================================
+// ================================================================
+// SECTION 28: LIVE SEARCH DROPDOWN
+// ================================================================
 function setupLiveSearch(inputId, dropdownId, dataSource, fields) {
     const input = document.getElementById(inputId);
     const dropdown = document.getElementById(dropdownId);
@@ -2785,7 +2969,7 @@ function setupLiveSearch(inputId, dropdownId, dataSource, fields) {
 
     let fuse = new Fuse(dataSource, {
         keys: fields,
-        threshold: 0.25,
+        threshold: 0.3,
         includeScore: true,
         ignoreLocation: true,
         minMatchCharLength: 2
@@ -2794,7 +2978,7 @@ function setupLiveSearch(inputId, dropdownId, dataSource, fields) {
     function updateFuse() {
         fuse = new Fuse(dataSource, {
             keys: fields,
-            threshold: 0.25,
+            threshold: 0.3,
             includeScore: true,
             ignoreLocation: true,
             minMatchCharLength: 2
@@ -2859,7 +3043,7 @@ function setupLiveSearch(inputId, dropdownId, dataSource, fields) {
                     <div class="item-primary">${primary}</div>
                     <div class="item-secondary">${extraStr}</div>
                 </div>
-                ${item.value !== undefined ? `<span class="item-badge font-bold text-gray-700">${formatINR(item.value)}</span>` : ''}
+                ${item.value !== undefined ? `<span class="item-badge">${formatINR(item.value)}</span>` : ''}
             </div>`;
         });
         if (results.length > maxResults) {
@@ -2902,9 +3086,9 @@ function setupLiveSearch(inputId, dropdownId, dataSource, fields) {
     return { updateFuse };
 }
 
-// ==========================================
-// REFRESH ALL
-// ==========================================
+// ================================================================
+// SECTION 29: REFRESH ALL
+// ================================================================
 function refreshAll() {
     if (isRefreshing) return;
     isRefreshing = true;
@@ -2912,15 +3096,15 @@ function refreshAll() {
     Promise.all([loadDashboard(), loadOrders(), loadPendingAdmin(), loadRejectedAdmin(), loadInventory(), loadSales(), loadDeposits(), loadAgents()]).then(() => { isRefreshing = false; showToast('✅ Refreshed', 'success'); }).catch(() => { isRefreshing = false; showToast('⚠️ Error', 'error'); });
 }
 
-// ==========================================
-// LIVE CLOCK
-// ==========================================
+// ================================================================
+// SECTION 30: LIVE CLOCK
+// ================================================================
 function updateClock() { const now = new Date(); document.getElementById('liveTime').textContent = now.toTimeString().slice(0,8); }
 setInterval(updateClock, 1000); updateClock();
 
-// ==========================================
-// INIT
-// ==========================================
+// ================================================================
+// SECTION 31: INITIALIZATION
+// ================================================================
 document.addEventListener('DOMContentLoaded', () => {
     lucide.createIcons();
     loadDashboard();
@@ -2948,14 +3132,17 @@ document.addEventListener('DOMContentLoaded', () => {
     showToast('👋 Welcome', 'info', 2000);
 });
 
+// ================================================================
+// SECTION 32: EVENT LISTENERS FOR MODALS & KEYBOARD
+// ================================================================
 document.getElementById('detailModal').addEventListener('click', function(e) { if (e.target === this) closeDetail(); });
 document.getElementById('sellModal').addEventListener('click', function(e) { if (e.target === this) closeSellModal(); });
 document.getElementById('activityModal').addEventListener('click', function(e) { if (e.target === this) closeActivityModal(); });
 
-// Global Search Modal event listeners
 document.getElementById('globalSearchModal').addEventListener('click', function(e) {
     if (e.target === this) closeGlobalSearch();
 });
+
 document.addEventListener('keydown', function(e) {
     if (e.key === 'Escape') {
         closeDetail();
@@ -2965,4 +3152,5 @@ document.addEventListener('keydown', function(e) {
         closeGlobalSearch();
     }
 });
+
 setInterval(() => { lucide.createIcons(); }, 5000);
