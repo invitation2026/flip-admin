@@ -13,6 +13,7 @@ const firebaseConfig = {
 };
 firebase.initializeApp(firebaseConfig);
 const db = firebase.database();
+const storage = firebase.storage();   // 🔥 YEH LINE MISSING THI
 
 // ================================================================
 // SECTION 2: GLOBAL HELPERS
@@ -25,7 +26,7 @@ const formatINR = (num) => {
 function _escape(s) { return (s || '').replace(/'/g, "\\'"); }
 
 // ================================================================
-// SECTION 3: DOCUMENT (Bill / Aadhaar) HELPERS
+// SECTION 3: DOCUMENT (Bill / Aadhaar) HELPERS - FIREBASE STORAGE
 // ================================================================
 const ADMIN_MAX_DOC_IMAGES = 3;
 
@@ -38,40 +39,41 @@ function getDocImages(item, which) {
     return arr.filter(Boolean);
 }
 
-function _compressImageFileAdmin(file, maxDim = 1200, quality = 0.7) {
-    return new Promise((resolve, reject) => {
-        if (!file) return reject('No file');
-        if (!file.type.startsWith('image/')) return reject('Not an image');
-        const reader = new FileReader();
-        reader.onerror = () => reject('Read error');
-        reader.onload = () => {
-            const img = new Image();
-            img.onerror = () => reject('Image decode error');
-            img.onload = () => {
-                let { width, height } = img;
-                if (width > maxDim || height > maxDim) {
-                    if (width > height) { height = Math.round(height * maxDim / width); width = maxDim; }
-                    else                { width  = Math.round(width  * maxDim / height); height = maxDim; }
-                }
-                const canvas = document.createElement('canvas');
-                canvas.width = width; canvas.height = height;
-                const ctx = canvas.getContext('2d');
-                ctx.fillStyle = '#fff';
-                ctx.fillRect(0, 0, width, height);
-                ctx.drawImage(img, 0, 0, width, height);
-                try {
-                    const dataUrl = canvas.toDataURL('image/jpeg', quality);
-                    resolve(dataUrl);
-                } catch (e) { reject(e); }
-            };
-            img.src = reader.result;
-        };
-        reader.readAsDataURL(file);
-    });
+// Upload a single image to Firebase Storage and return download URL
+async function _uploadImageToStorageAdmin(file, orderId, docType, index) {
+    if (!file) throw new Error('No file');
+    if (!orderId) throw new Error('Order ID required');
+    
+    const fileExt = file.name.split('.').pop() || 'jpg';
+    const fileName = `${orderId}_${docType}_${index}.${fileExt}`;
+    const storageRef = storage.ref(`pickup_docs/${orderId}/${docType}/${fileName}`);
+    
+    // Compress image before upload
+    const compressedDataUrl = await _compressImageFileAdmin(file, 1200, 0.7);
+    const blob = await (await fetch(compressedDataUrl)).blob();
+    
+    const snapshot = await storageRef.put(blob);
+    const downloadURL = await snapshot.ref.getDownloadURL();
+    return downloadURL;
+}
+
+// Delete image from Firebase Storage
+async function _deleteImageFromStorageAdmin(url) {
+    if (!url) return;
+    try {
+        const ref = storage.refFromURL(url);
+        await ref.delete();
+    } catch (e) {
+        console.warn('Could not delete image from storage:', e);
+        // Ignore if not found
+    }
 }
 
 async function adminUploadDocImage(which) {
-    if (!detailOrderId) return;
+    if (!detailOrderId) {
+        showToast('No order selected', 'error');
+        return;
+    }
     const current = getDocImages(editData || {}, which);
     if (current.length >= ADMIN_MAX_DOC_IMAGES) {
         showToast(`Max ${ADMIN_MAX_DOC_IMAGES} images allowed`, 'error');
@@ -98,13 +100,17 @@ async function adminUploadDocImage(which) {
     try {
         const room = ADMIN_MAX_DOC_IMAGES - current.length;
         const toDo = files.slice(0, room);
-        const compressed = [];
-        for (const f of toDo) {
-            try { compressed.push(await _compressImageFileAdmin(f)); }
-            catch(e) { console.error(e); }
+        const uploadPromises = [];
+        for (let i = 0; i < toDo.length; i++) {
+            const f = toDo[i];
+            const idx = current.length + i;
+            uploadPromises.push(
+                _uploadImageToStorageAdmin(f, detailOrderId, which, idx)
+            );
         }
-        if (!compressed.length) { Swal.close(); showToast('Failed to process images', 'error'); return; }
-        const newArr = current.concat(compressed);
+        const urls = await Promise.all(uploadPromises);
+        if (!urls.length) { Swal.close(); showToast('Upload failed', 'error'); return; }
+        const newArr = current.concat(urls);
         const arrField = which === 'bill' ? 'billImages' : 'aadhaarImages';
         const legacyField = which === 'bill' ? 'billImage' : 'aadhaarImage';
         await db.ref('pickups/' + detailOrderId).update({
@@ -112,7 +118,7 @@ async function adminUploadDocImage(which) {
             [legacyField]: newArr[0] || null
         });
         Swal.close();
-        showToast(`✅ ${compressed.length} image${compressed.length>1?'s':''} saved`, 'success');
+        showToast(`✅ ${urls.length} image${urls.length>1?'s':''} uploaded`, 'success');
         db.ref('pickups/' + detailOrderId).once('value').then(snap => {
             const it = snap.val(); if (it) { editData = { ...it, id: detailOrderId }; renderDetailView(it); }
         });
@@ -135,7 +141,7 @@ async function adminDeleteDocImage(which, idx) {
     const isAll = (idx === undefined || idx === null);
     const confirm = await Swal.fire({
         title: isAll ? `Delete ALL ${label} Images?` : `Delete this ${label} image?`,
-        text: 'This will permanently remove the image(s) from this order.',
+        text: 'This will permanently remove the image(s) from Storage and this order.',
         icon: 'warning',
         showCancelButton: true,
         confirmButtonColor: '#dc2626',
@@ -146,13 +152,24 @@ async function adminDeleteDocImage(which, idx) {
     if (!confirm.isConfirmed) return;
     try {
         let newArr;
-        if (isAll) newArr = [];
-        else { newArr = current.slice(); newArr.splice(idx, 1); }
+        let urlsToDelete = [];
+        if (isAll) {
+            urlsToDelete = current.slice();
+            newArr = [];
+        } else {
+            urlsToDelete = [current[idx]];
+            newArr = current.slice();
+            newArr.splice(idx, 1);
+        }
+        // Delete from Storage
+        for (const url of urlsToDelete) {
+            await _deleteImageFromStorageAdmin(url);
+        }
         await db.ref('pickups/' + detailOrderId).update({
             [arrField]: newArr.length ? newArr : null,
             [legacyField]: newArr[0] || null
         });
-        showToast(`🗑️ Deleted`, 'success');
+        showToast(`🗑️ Deleted ${urlsToDelete.length} image(s)`, 'success');
         db.ref('pickups/' + detailOrderId).once('value').then(snap => {
             const it = snap.val(); if (it) { editData = { ...it, id: detailOrderId }; renderDetailView(it); }
         });
@@ -186,6 +203,24 @@ async function adminSaveDocNumber(which) {
         });
         loadOrders();
     } catch(e) { showToast('Update failed', 'error'); console.error(e); }
+}
+
+// Helper to pick image from camera or gallery (uses input element)
+function _pickImageSource(useCamera, useGallery) {
+    return new Promise((resolve) => {
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = 'image/*';
+        input.multiple = true;
+        if (useCamera) {
+            input.capture = 'environment';
+        }
+        input.onchange = () => {
+            const files = input.files ? Array.from(input.files) : [];
+            resolve(files);
+        };
+        input.click();
+    });
 }
 
 // ================================================================
