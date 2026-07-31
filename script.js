@@ -13,7 +13,7 @@ const firebaseConfig = {
 };
 firebase.initializeApp(firebaseConfig);
 const db = firebase.database();
-const storage = firebase.storage();   // 🔥 YEH LINE MISSING THI
+const storage = firebase.storage();
 
 // ================================================================
 // SECTION 2: GLOBAL HELPERS
@@ -29,6 +29,37 @@ function _escape(s) { return (s || '').replace(/'/g, "\\'"); }
 // SECTION 3: DOCUMENT (Bill / Aadhaar) HELPERS - FIREBASE STORAGE
 // ================================================================
 const ADMIN_MAX_DOC_IMAGES = 3;
+// 🔥 RAM / STORAGE / NETWORK helpers (admin)
+const ADMIN_RAM_OPTIONS = ['1GB','2GB','3GB','4GB','6GB','8GB','12GB','16GB','18GB','24GB'];
+const ADMIN_STORAGE_OPTIONS = ['8GB','16GB','32GB','64GB','128GB','256GB','512GB','1TB','2TB'];
+const ADMIN_NETWORK_OPTIONS = ['2G','3G','4G','5G'];
+
+function getRam(item) {
+    if (!item) return '';
+    if (item.ram) return item.ram;
+    const rs = item.ramStorage || '';
+    return rs.includes('/') ? rs.split('/')[0].trim() : '';
+}
+
+function getStorage(item) {
+    if (!item) return '';
+    if (item.storage) return item.storage;
+    const rs = item.ramStorage || '';
+    return rs.includes('/') ? rs.split('/')[1].trim() : '';
+}
+
+function getRamStorageText(item) {
+    const r = getRam(item), st = getStorage(item);
+    if (r && st) return r + ' / ' + st;
+    return r || st || (item && item.ramStorage) || '';
+}
+
+function buildOptionList(options, current) {
+    return ['<option value="">— Empty —</option>']
+        .concat(options.map(o => `<option value="${o}" ${current === o ? 'selected' : ''}>${o}</option>`))
+        .concat(current && !options.includes(current) ? [`<option value="${current}" selected>${current}</option>`] : [])
+        .join('');
+}
 
 function getDocImages(item, which) {
     if (!item) return [];
@@ -39,25 +70,65 @@ function getDocImages(item, which) {
     return arr.filter(Boolean);
 }
 
-// Upload a single image to Firebase Storage and return download URL
+function _compressImageFileAdmin(file, maxDimension, quality) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = function(e) {
+            const img = new Image();
+            img.onload = function() {
+                let width = img.width;
+                let height = img.height;
+                if (width > height) {
+                    if (width > maxDimension) {
+                        height = Math.round((height * maxDimension) / width);
+                        width = maxDimension;
+                    }
+                } else {
+                    if (height > maxDimension) {
+                        width = Math.round((width * maxDimension) / height);
+                        height = maxDimension;
+                    }
+                }
+                const canvas = document.createElement('canvas');
+                canvas.width = width;
+                canvas.height = height;
+                const ctx = canvas.getContext('2d');
+                // 🔥 FIX: White background for transparent PNGs
+                ctx.fillStyle = '#fff';
+                ctx.fillRect(0, 0, width, height);
+                ctx.drawImage(img, 0, 0, width, height);
+                const dataUrl = canvas.toDataURL('image/jpeg', quality);
+                resolve(dataUrl);
+            };
+            img.onerror = reject;
+            img.src = e.target.result;
+        };
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+    });
+}
+
+function closeImageViewer() {
+    try {
+        document.getElementById('imgViewerModal').style.display = 'none';
+        document.body.style.overflow = '';
+    } catch (e) {}
+}
+
 async function _uploadImageToStorageAdmin(file, orderId, docType, index) {
     if (!file) throw new Error('No file');
     if (!orderId) throw new Error('Order ID required');
-    
     const fileExt = file.name.split('.').pop() || 'jpg';
     const fileName = `${orderId}_${docType}_${index}.${fileExt}`;
     const storageRef = storage.ref(`pickup_docs/${orderId}/${docType}/${fileName}`);
-    
-    // Compress image before upload
-    const compressedDataUrl = await _compressImageFileAdmin(file, 1200, 0.7);
+    // 🔥 FIX: 800px, 0.55 quality - much smaller files
+    const compressedDataUrl = await _compressImageFileAdmin(file, 800, 0.55);
     const blob = await (await fetch(compressedDataUrl)).blob();
-    
-    const snapshot = await storageRef.put(blob);
+    const snapshot = await storageRef.put(blob, { contentType: 'image/jpeg' });
     const downloadURL = await snapshot.ref.getDownloadURL();
     return downloadURL;
 }
 
-// Delete image from Firebase Storage
 async function _deleteImageFromStorageAdmin(url) {
     if (!url) return;
     try {
@@ -65,7 +136,6 @@ async function _deleteImageFromStorageAdmin(url) {
         await ref.delete();
     } catch (e) {
         console.warn('Could not delete image from storage:', e);
-        // Ignore if not found
     }
 }
 
@@ -95,7 +165,6 @@ async function adminUploadDocImage(which) {
     const useCamera = choice.isConfirmed;
     const files = await _pickImageSource(useCamera, !useCamera);
     if (!files.length) return;
-
     Swal.fire({ title:'Uploading…', allowOutsideClick:false, didOpen:()=>Swal.showLoading() });
     try {
         const room = ADMIN_MAX_DOC_IMAGES - current.length;
@@ -137,7 +206,6 @@ async function adminDeleteDocImage(which, idx) {
     const label = which === 'bill' ? 'Bill' : 'Aadhaar';
     const current = getDocImages(editData || {}, which);
     if (!current.length) return;
-
     const isAll = (idx === undefined || idx === null);
     const confirm = await Swal.fire({
         title: isAll ? `Delete ALL ${label} Images?` : `Delete this ${label} image?`,
@@ -161,7 +229,6 @@ async function adminDeleteDocImage(which, idx) {
             newArr = current.slice();
             newArr.splice(idx, 1);
         }
-        // Delete from Storage
         for (const url of urlsToDelete) {
             await _deleteImageFromStorageAdmin(url);
         }
@@ -205,7 +272,6 @@ async function adminSaveDocNumber(which) {
     } catch(e) { showToast('Update failed', 'error'); console.error(e); }
 }
 
-// Helper to pick image from camera or gallery (uses input element)
 function _pickImageSource(useCamera, useGallery) {
     return new Promise((resolve) => {
         const input = document.createElement('input');
@@ -269,25 +335,21 @@ let sellOrderData = null;
 let agentsList = [];
 let passwordVisible = {};
 
-// Deposit state
 let allDeposits = [];
 let filteredDeposits = [];
 let depositCurrentPage = 1;
 const depositPageSize = 15;
 
-// Salary mode
 let currentSalaryMode = 'today';
 let currentSalaryPeriod = null;
 
-// IMEI override
 let imeiOverride = {};
 let imei2Override = {};
 
-// Overhead cache (will be recalculated)
 let overheadPerPhone = 0;
 
 // ================================================================
-// SECTION 6: DOM REFS & TOAST
+// SECTION 6: TOAST
 // ================================================================
 const toastEl = document.getElementById('toast');
 
@@ -382,7 +444,6 @@ async function loadDashboard() {
         const attSnapAll = await db.ref('attendance').once('value');
         const allAttendance = attSnapAll.val() || {};
         
-        // 🔥 NEW: Only count active agents (is_active !== false)
         for (const [uname, uData] of Object.entries(users)) {
             const role = uData.role || 'agent';
             if (role === 'agent' && uData.is_active !== false) {
@@ -397,11 +458,14 @@ async function loadDashboard() {
             depositTotalAmount += d.amount || 0;
         });
 
-        // Calculate overhead per phone
+        // FIX (overhead): the dashboard only knows deposits, NOT agent salaries.
+        // It used to overwrite the global `overheadPerPhone`, wiping out the
+        // salary-inclusive value computed in loadSales() (which counts ALL
+        // agents, including ones who left). Keep it local so the Sales page
+        // overhead / Final Net Profit stay correct.
         const totalOverhead = depositTotalAmount;
-        const overheadPerPhoneCalc = soldCount > 0 ? totalOverhead / soldCount : 0;
-        overheadPerPhone = overheadPerPhoneCalc; // store globally
-        const finalNetProfit = profit - (overheadPerPhone * soldCount);
+        const dashOverheadPerPhone = soldCount > 0 ? totalOverhead / soldCount : 0;
+        const finalNetProfit = profit - (dashOverheadPerPhone * soldCount);
 
         document.getElementById('statTotal').textContent = total;
         document.getElementById('statPickup').textContent = pickupCount;
@@ -451,7 +515,7 @@ async function loadDashboard() {
 }
 
 // ================================================================
-// SECTION 9: ORDERS (with fuzzy search and live dropdown)
+// SECTION 9: ORDERS
 // ================================================================
 async function loadOrders() {
     try {
@@ -645,7 +709,7 @@ async function toggleRejectApproval(orderId, approve) {
 }
 
 // ================================================================
-// SECTION 12: INVENTORY (with live dropdown)
+// SECTION 12: INVENTORY
 // ================================================================
 async function loadInventory() {
     try {
@@ -696,7 +760,7 @@ function renderInventoryTable() {
 function refreshInventory() { loadInventory(); showToast('🔄 Inventory refreshed', 'info'); }
 
 // ================================================================
-// SECTION 13: SALES (with overhead calculation and live dropdown)
+// SECTION 13: SALES (Overhead includes ALL agents - FIXED)
 // ================================================================
 async function loadSales() {
     try {
@@ -709,16 +773,15 @@ async function loadSales() {
         const users = usersSnap.val() || {};
         const allAttendance = attendanceSnap.val() || {};
 
-        // --- 1. Compute total all-time overhead (base salary + incentives) ---
         let totalOverhead = 0;
         const today = new Date();
         const todayStr = today.toISOString().split('T')[0];
 
+        // ---- Base salary: INCLUDE ALL AGENTS (active + left) ----
         for (const [uname, uData] of Object.entries(users)) {
             const role = uData.role || 'agent';
             if (role !== 'agent') continue;
-            // 🔥 NEW: Only active agents
-            if (uData.is_active === false) continue;
+            // NO is_active filter – all agents' past salaries count
 
             const monthlySalary = uData.salary || 0;
             const perDaySalary = monthlySalary / 30;
@@ -747,6 +810,7 @@ async function loadSales() {
             totalOverhead += agentBaseSalary;
         }
 
+        // ---- Incentives: INCLUDE ALL AGENTS ----
         let totalPickupIncentives = 0;
         let totalRejectIncentives = 0;
 
@@ -756,8 +820,7 @@ async function loadSales() {
             if (!agent) return;
             const uData = users[agent];
             if (!uData || (uData.role || 'agent') !== 'agent') return;
-            // 🔥 NEW: Skip inactive agents
-            if (uData.is_active === false) return;
+            // NO is_active filter
 
             if (item.status === 'pickup') {
                 totalPickupIncentives += (uData.pickup_incentive || 0);
@@ -907,7 +970,7 @@ function exportSalesCSV() {
 }
 
 // ================================================================
-// SECTION 14: SELL MODAL (with profit breakdown)
+// SECTION 14: SELL MODAL
 // ================================================================
 function openSellModal(orderId) {
     const order = inventoryList.find(item => item.id === orderId);
@@ -1024,9 +1087,10 @@ async function confirmSell() {
 }
 
 // ================================================================
-// SECTION 15: VIEW ORDER DETAIL
+// SECTION 15: VIEW ORDER DETAIL (FIXED with try-catch)
 // ================================================================
 function viewOrder(orderId) {
+    console.log('viewOrder called with:', orderId);
     detailOrderId = orderId;
     isEditMode = false;
     document.getElementById('detailModalTitle').textContent = 'Order Details';
@@ -1044,109 +1108,135 @@ function viewOrder(orderId) {
 
     db.ref('pickups/' + orderId).once('value').then(snap => {
         const item = snap.val();
-        if (!item) { content.innerHTML = `<div class="empty-state"><i data-lucide="alert-circle"></i><p class="text-sm font-medium">Order not found</p></div>`; return; }
-        const purchase = item.value || 0;
-        const commission = item.commission !== undefined ? item.commission : calculateCommission(purchase);
-        if (item.sold && item.profit === undefined) {
-            const netRevenue = (item.salePrice || 0) - commission;
-            item.profit = netRevenue - purchase;
+        if (!item) {
+            content.innerHTML = `<div class="empty-state"><i data-lucide="alert-circle"></i><p class="text-sm font-medium">Order not found in database</p></div>`;
+            showToast('Order not found', 'error');
+            return;
         }
-        item.commission = commission;
-        editData = { ...item, id: orderId };
-        renderDetailView(item);
-        if (item.status === 'on_hold') {
-            document.getElementById('detailHoldBtn').style.display = 'none';
-            document.getElementById('detailUnholdBtn').style.display = 'inline-flex';
-            document.getElementById('detailUnholdBtn').onclick = unholdOrderFromDetail;
-        } else {
-            document.getElementById('detailHoldBtn').style.display = 'inline-flex';
-            document.getElementById('detailUnholdBtn').style.display = 'none';
+        try {
+            const purchase = item.value || 0;
+            const commission = item.commission !== undefined ? item.commission : calculateCommission(purchase);
+            if (item.sold && item.profit === undefined) {
+                const netRevenue = (item.salePrice || 0) - commission;
+                item.profit = netRevenue - purchase;
+            }
+            item.commission = commission;
+            editData = { ...item, id: orderId };
+            renderDetailView(item);
+            if (item.status === 'on_hold') {
+                document.getElementById('detailHoldBtn').style.display = 'none';
+                document.getElementById('detailUnholdBtn').style.display = 'inline-flex';
+                document.getElementById('detailUnholdBtn').onclick = unholdOrderFromDetail;
+            } else {
+                document.getElementById('detailHoldBtn').style.display = 'inline-flex';
+                document.getElementById('detailUnholdBtn').style.display = 'none';
+            }
+        } catch (e) {
+            console.error('Error rendering detail view:', e);
+            content.innerHTML = `<div class="empty-state"><i data-lucide="alert-circle"></i><p class="text-sm font-medium text-red-500">Error rendering order: ${e.message}</p></div>`;
+            showToast('Error rendering order', 'error');
         }
-    }).catch(err => { content.innerHTML = `<div class="empty-state"><i data-lucide="alert-circle"></i><p class="text-sm font-medium text-red-500">Error loading</p></div>`; showToast('Error loading order', 'error'); });
+    }).catch(err => {
+        console.error('Firebase read error:', err);
+        content.innerHTML = `<div class="empty-state"><i data-lucide="alert-circle"></i><p class="text-sm font-medium text-red-500">Error loading: ${err.message}</p></div>`;
+        showToast('Error loading order', 'error');
+    });
 }
 
 function renderDetailView(item) {
-    const content = document.getElementById('detailContent');
-    const statusLabel = item.status || 'unknown';
-    let statusClass = statusLabel === 'pickup' ? (item.sold ? 'sold' : 'pickup') : statusLabel === 'rejected' ? 'rejected' : statusLabel === 'on_hold' ? 'on_hold' : 'reschedule';
-    let displayName = statusLabel === 'pickup' ? (item.sold ? 'Sold' : 'Pickup') : statusLabel === 'rejected' ? 'Rejected' : statusLabel === 'on_hold' ? 'Hold' : 'Pending';
-    if (statusLabel === 'on_hold' && item.previous_status) {
-        const prevDisplay = item.previous_status === 'pickup' ? (item.sold ? 'Sold' : 'Pickup') : item.previous_status;
-        displayName = `Hold (was ${prevDisplay})`;
-    }
-    let profitDisplay = '—', profitClass = '';
-    let commissionDisplay = '—';
-    let grossProfitDisplay = '—', finalProfitDisplay = '—';
-    if (item.sold) {
-        const commission = item.commission !== undefined ? item.commission : calculateCommission(item.value || 0);
-        commissionDisplay = formatINR(commission);
-        const grossProfit = item.profit !== undefined ? item.profit : (item.salePrice - commission - (item.value || 0));
-        const finalProfit = grossProfit - overheadPerPhone;
-        profitDisplay = formatINR(grossProfit);
-        profitClass = grossProfit >= 0 ? 'green' : 'red';
-        grossProfitDisplay = formatINR(grossProfit);
-        finalProfitDisplay = formatINR(finalProfit);
-    }
-    let saleHtml = '';
-    if (item.sold) {
-        saleHtml = `
-            <div class="detail-item"><div class="label">Sale Price</div><div class="value green">${formatINR(item.salePrice || 0)}</div></div>
-            <div class="detail-item"><div class="label">Commission (on Purchase)</div><div class="value amber">${commissionDisplay}</div></div>
-            <div class="detail-item"><div class="label">Gross Profit</div><div class="value ${profitClass}">${grossProfitDisplay}</div></div>
-            <div class="detail-item"><div class="label">Overhead / Phone</div><div class="value">${formatINR(overheadPerPhone)}</div></div>
-            <div class="detail-item"><div class="label">Final Net Profit</div><div class="value ${finalProfit >= 0 ? 'green' : 'red'}">${finalProfitDisplay}</div></div>
-            <div class="detail-item"><div class="label">Buyer</div><div class="value">${item.buyerName || '—'}</div></div>
-            <div class="detail-item"><div class="label">Buyer Contact</div><div class="value">${item.buyerContact || '—'}</div></div>
-            <div class="detail-item"><div class="label">Sale Date</div><div class="value">${item.saleDate || '—'}</div></div>
-        `;
-    }
-    let holdHtml = '';
-    if (item.status === 'on_hold') {
-        holdHtml = `<div class="detail-item"><div class="label">Hold Reason</div><div class="value text-red-600">${item.hold_reason || '—'}</div></div>
-                     <div class="detail-item"><div class="label">Previous Status</div><div class="value">${item.previous_status || '—'}</div></div>`;
-    }
-    let html = `<div class="flex items-center gap-3 mb-4"><span class="badge-status ${statusClass} text-sm px-4 py-1.5">${displayName}</span><span class="font-mono font-bold text-gray-800 text-sm">${item.orderId || item.id}</span>${item.agent ? `<span class="text-xs text-gray-400">(Agent: ${item.agent})</span>` : ''}</div><div class="detail-grid"><div class="detail-item"><div class="label">Phone Model</div><div class="value" id="dv-model">${item.phoneModel || '—'}</div></div><div class="detail-item"><div class="label">IMEI</div><div class="value font-mono text-xs" id="dv-imei">${item.imei || '—'}</div></div>${item.imei2 ? `<div class="detail-item"><div class="label">IMEI 2</div><div class="value font-mono text-xs" id="dv-imei2">${item.imei2}</div></div>` : ''}<div class="detail-item"><div class="label">Purchase Price</div><div class="value font-bold" id="dv-value">${item.value !== undefined && item.value !== null ? formatINR(item.value) : '—'}</div></div><div class="detail-item"><div class="label">Customer Name</div><div class="value" id="dv-customer">${item.customerName || '—'}</div></div><div class="detail-item"><div class="label">Reason</div><div class="value" id="dv-reason">${item.reason || '—'}</div></div><div class="detail-item"><div class="label">Status</div><div class="value" id="dv-status">${displayName}</div></div><div class="detail-item"><div class="label">Time (IST)</div><div class="value text-xs" id="dv-time">${item.timestampIST || item.timestamp || '—'}</div></div>${holdHtml}${saleHtml}</div>`;
-
-    // Documents section
-    const _billImgs = getDocImages(item, 'bill');
-    const _aadImgs  = getDocImages(item, 'aadhaar');
-    const _billNo   = item.billNumber || '';
-    const _aadNo    = item.aadhaarNumber || '';
-    const _docCard = (which, label, num, imgs, color) => {
-        let gallery;
-        if (imgs.length === 0) {
-            gallery = `<div class="w-full h-32 rounded-lg border-2 border-dashed border-gray-200 flex items-center justify-center text-gray-400 text-xs">No image</div>`;
-        } else {
-            gallery = `<div class="grid grid-cols-3 gap-2">` + imgs.map((img, i) => {
-                const kb = Math.round((img.length * 3 / 4) / 1024);
-                return `<div class="relative group">
-                    <img src="${img}" onclick="openImageViewer('${_escape(img)}','${label} ${i+1}')" class="w-full h-24 object-cover rounded-lg border border-gray-200 cursor-zoom-in hover:opacity-90 transition" alt="${label} ${i+1}">
-                    <button onclick="adminDeleteDocImage('${which}',${i})" class="absolute -top-1.5 -right-1.5 w-6 h-6 rounded-full bg-red-600 text-white text-xs font-bold shadow-md hover:bg-red-700" title="Delete">✕</button>
-                    <div class="absolute bottom-0 left-0 right-0 bg-black/50 text-white text-[9px] text-center rounded-b-lg">${kb}KB</div>
-                </div>`;
-            }).join('') + `</div>`;
+    try {
+        const content = document.getElementById('detailContent');
+        const statusLabel = item.status || 'unknown';
+        let statusClass = statusLabel === 'pickup' ? (item.sold ? 'sold' : 'pickup') : statusLabel === 'rejected' ? 'rejected' : statusLabel === 'on_hold' ? 'on_hold' : 'reschedule';
+        let displayName = statusLabel === 'pickup' ? (item.sold ? 'Sold' : 'Pickup') : statusLabel === 'rejected' ? 'Rejected' : statusLabel === 'on_hold' ? 'Hold' : 'Pending';
+        if (statusLabel === 'on_hold' && item.previous_status) {
+            const prevDisplay = item.previous_status === 'pickup' ? (item.sold ? 'Sold' : 'Pickup') : item.previous_status;
+            displayName = `Hold (was ${prevDisplay})`;
         }
-        return `
-        <div class="rounded-xl border border-gray-200 p-3 bg-gradient-to-br from-${color}-50 to-white">
-            <div class="flex items-center justify-between mb-2">
-                <p class="text-xs font-bold text-${color}-700 uppercase tracking-wide">${label} <span class="text-[10px] text-gray-500 font-normal">(${imgs.length}/${ADMIN_MAX_DOC_IMAGES})</span></p>
-                <button onclick="adminSaveDocNumber('${which}')" class="text-[11px] text-indigo-600 font-semibold hover:underline">✏️ Edit No.</button>
-            </div>
-            <div class="text-sm font-mono font-semibold text-gray-800 mb-2 break-all">${num || '<span class="text-gray-400 font-sans font-normal">— no number —</span>'}</div>
-            ${gallery}
-        </div>`;
-    };
-    html += `<div class="mt-5 pt-4 border-t border-gray-100">
-        <p class="text-xs font-bold text-gray-500 uppercase tracking-wide mb-3">📄 Documents <span class="text-[10px] font-normal text-gray-400">(add/replace in Edit mode)</span></p>
-        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            ${_docCard('bill', 'Bill', _billNo, _billImgs, 'blue')}
-            ${_docCard('aadhaar', 'Aadhaar', _aadNo, _aadImgs, 'indigo')}
-        </div>
-    </div>`;
+        let profitDisplay = '—', profitClass = '';
+        let commissionDisplay = '—';
+        let grossProfitDisplay = '—', finalProfitDisplay = '—';
+        // FIX (Sales View button): finalProfit / finalProfitClass must live in the
+        // OUTER scope. Earlier they were declared with `const` inside this if-block
+        // but used later inside saleHtml -> "finalProfit is not defined"
+        // ReferenceError, which only triggered for sold items (Sales page).
+        let finalProfit = 0, finalProfitClass = '';
+        if (item.sold) {
+            const commission = item.commission !== undefined ? item.commission : calculateCommission(item.value || 0);
+            commissionDisplay = formatINR(commission);
+            const grossProfit = item.profit !== undefined ? item.profit : ((item.salePrice || 0) - commission - (item.value || 0));
+            finalProfit = grossProfit - overheadPerPhone;
+            finalProfitClass = finalProfit >= 0 ? 'green' : 'red';
+            profitDisplay = formatINR(grossProfit);
+            profitClass = grossProfit >= 0 ? 'green' : 'red';
+            grossProfitDisplay = formatINR(grossProfit);
+            finalProfitDisplay = formatINR(finalProfit);
+        }
+        let saleHtml = '';
+        if (item.sold) {
+            saleHtml = `
+                <div class="detail-item"><div class="label">Sale Price</div><div class="value green">${formatINR(item.salePrice || 0)}</div></div>
+                <div class="detail-item"><div class="label">Commission (on Purchase)</div><div class="value amber">${commissionDisplay}</div></div>
+                <div class="detail-item"><div class="label">Gross Profit</div><div class="value ${profitClass}">${grossProfitDisplay}</div></div>
+                <div class="detail-item"><div class="label">Overhead / Phone</div><div class="value">${formatINR(overheadPerPhone)}</div></div>
+                <div class="detail-item"><div class="label">Final Net Profit</div><div class="value ${finalProfitClass}">${finalProfitDisplay}</div></div>
+                <div class="detail-item"><div class="label">Buyer</div><div class="value">${item.buyerName || '—'}</div></div>
+                <div class="detail-item"><div class="label">Buyer Contact</div><div class="value">${item.buyerContact || '—'}</div></div>
+                <div class="detail-item"><div class="label">Sale Date</div><div class="value">${item.saleDate || '—'}</div></div>
+            `;
+        }
+        let holdHtml = '';
+        if (item.status === 'on_hold') {
+            holdHtml = `<div class="detail-item"><div class="label">Hold Reason</div><div class="value text-red-600">${item.hold_reason || '—'}</div></div>
+                         <div class="detail-item"><div class="label">Previous Status</div><div class="value">${item.previous_status || '—'}</div></div>`;
+        }
+        let html = `<div class="flex items-center gap-3 mb-4"><span class="badge-status ${statusClass} text-sm px-4 py-1.5">${displayName}</span><span class="font-mono font-bold text-gray-800 text-sm">${item.orderId || item.id}</span>${item.agent ? `<span class="text-xs text-gray-400">(Agent: ${item.agent})</span>` : ''}</div><div class="detail-grid"><div class="detail-item"><div class="label">Phone Model</div><div class="value" id="dv-model">${item.phoneModel || '—'}</div></div><div class="detail-item"><div class="label">IMEI</div><div class="value font-mono text-xs" id="dv-imei">${item.imei || '—'}</div></div>${item.imei2 ? `<div class="detail-item"><div class="label">IMEI 2</div><div class="value font-mono text-xs" id="dv-imei2">${item.imei2}</div></div>` : ''}<div class="detail-item"><div class="label">Purchase Price</div><div class="value font-bold" id="dv-value">${item.value !== undefined && item.value !== null ? formatINR(item.value) : '—'}</div></div><div class="detail-item"><div class="label">Customer Name</div><div class="value" id="dv-customer">${item.customerName || '—'}</div></div><div class="detail-item"><div class="label">RAM / Storage</div><div class="value" id="dv-ramStorage">${getRamStorageText(item) || '—'}</div></div><div class="detail-item"><div class="label">Network</div><div class="value" id="dv-network">${item.networkType || '—'}</div></div><div class="detail-item"><div class="label">Reason</div><div class="value" id="dv-reason">${item.reason || '—'}</div></div><div class="detail-item"><div class="label">Status</div><div class="value" id="dv-status">${displayName}</div></div><div class="detail-item"><div class="label">Time (IST)</div><div class="value text-xs" id="dv-time">${item.timestampIST || item.timestamp || '—'}</div></div>${holdHtml}${saleHtml}</div>`;
 
-    content.innerHTML = html;
-    lucide.createIcons();
-    editData = { ...item };
+        // Documents section
+        const _billImgs = getDocImages(item, 'bill');
+        const _aadImgs  = getDocImages(item, 'aadhaar');
+        const _billNo   = item.billNumber || '';
+        const _aadNo    = item.aadhaarNumber || '';
+        const _docCard = (which, label, num, imgs, color) => {
+            let gallery;
+            if (imgs.length === 0) {
+                gallery = `<div class="w-full h-32 rounded-lg border-2 border-dashed border-gray-200 flex items-center justify-center text-gray-400 text-xs">No image</div>`;
+            } else {
+                gallery = `<div class="grid grid-cols-3 gap-2">` + imgs.map((img, i) => {
+                    const kb = Math.round((img.length * 3 / 4) / 1024);
+                    return `<div class="relative group">
+                        <img src="${img}" onclick="openImageViewer('${_escape(img)}','${label} ${i+1}')" class="w-full h-24 object-cover rounded-lg border border-gray-200 cursor-zoom-in hover:opacity-90 transition" alt="${label} ${i+1}">
+                        <button onclick="adminDeleteDocImage('${which}',${i})" class="absolute -top-1.5 -right-1.5 w-6 h-6 rounded-full bg-red-600 text-white text-xs font-bold shadow-md hover:bg-red-700" title="Delete">✕</button>
+                        <div class="absolute bottom-0 left-0 right-0 bg-black/50 text-white text-[9px] text-center rounded-b-lg">${kb}KB</div>
+                    </div>`;
+                }).join('') + `</div>`;
+            }
+            return `
+            <div class="rounded-xl border border-gray-200 p-3 bg-gradient-to-br from-${color}-50 to-white">
+                <div class="flex items-center justify-between mb-2">
+                    <p class="text-xs font-bold text-${color}-700 uppercase tracking-wide">${label} <span class="text-[10px] text-gray-500 font-normal">(${imgs.length}/${ADMIN_MAX_DOC_IMAGES})</span></p>
+                    <button onclick="adminSaveDocNumber('${which}')" class="text-[11px] text-indigo-600 font-semibold hover:underline">✏️ Edit No.</button>
+                </div>
+                <div class="text-sm font-mono font-semibold text-gray-800 mb-2 break-all">${num || '<span class="text-gray-400 font-sans font-normal">— no number —</span>'}</div>
+                ${gallery}
+            </div>`;
+        };
+        html += `<div class="mt-5 pt-4 border-t border-gray-100">
+            <p class="text-xs font-bold text-gray-500 uppercase tracking-wide mb-3">📄 Documents <span class="text-[10px] font-normal text-gray-400">(add/replace in Edit mode)</span></p>
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                ${_docCard('bill', 'Bill', _billNo, _billImgs, 'blue')}
+                ${_docCard('aadhaar', 'Aadhaar', _aadNo, _aadImgs, 'indigo')}
+            </div>
+        </div>`;
+
+        content.innerHTML = html;
+        lucide.createIcons();
+        editData = { ...item };
+    } catch (e) {
+        console.error('Error in renderDetailView:', e);
+        document.getElementById('detailContent').innerHTML = `<div class="empty-state"><i data-lucide="alert-circle"></i><p class="text-sm font-medium text-red-500">Render error: ${e.message}</p></div>`;
+        showToast('Error rendering details', 'error');
+    }
 }
 
 // ================================================================
@@ -1212,7 +1302,7 @@ async function unholdOrderFromDetail() {
 }
 
 // ================================================================
-// SECTION 17: EDIT MODE (FIXED: No duplicate creation)
+// SECTION 17: EDIT MODE (unchanged)
 // ================================================================
 function toggleEditMode() {
     if (isEditMode) return;
@@ -1247,6 +1337,11 @@ function toggleEditMode() {
         <div><label class="edit-label">IMEI 2</label><div class="imei-wrap"><input type="text" id="edit-imei2" value="${item.imei2 || ''}" class="edit-field font-mono" maxlength="15" placeholder="15 digits max"><button id="imei2AllowBtn" class="imei-allow-btn ${imei2Over ? 'allowed' : ''}" onclick="toggleImeiLimit('edit-imei2', 'imei2AllowBtn')">${imei2Over ? '✅ Unlimited' : 'Add more'}</button></div></div>
         <div><label class="edit-label">Purchase Price (₹)</label><input type="number" id="edit-value" value="${item.value !== undefined && item.value !== null ? item.value : ''}" class="edit-field" placeholder="Optional"></div>
         <div><label class="edit-label">Customer Name</label><input type="text" id="edit-customer" value="${item.customerName || ''}" class="edit-field" placeholder="Optional"></div>
+        <div class="grid grid-cols-2 gap-2">
+            <div><label class="edit-label">RAM <span class="text-gray-400 font-normal">(can be empty)</span></label><select id="edit-ram" class="edit-field">${buildOptionList(ADMIN_RAM_OPTIONS, getRam(item))}</select></div>
+            <div><label class="edit-label">Storage <span class="text-gray-400 font-normal">(can be empty)</span></label><select id="edit-storage" class="edit-field">${buildOptionList(ADMIN_STORAGE_OPTIONS, getStorage(item))}</select></div>
+        </div>
+        <div><label class="edit-label">Network <span class="text-gray-400 font-normal">(can be empty)</span></label><select id="edit-network" class="edit-field">${buildOptionList(ADMIN_NETWORK_OPTIONS, item.networkType || '')}</select></div>
         <div><label class="edit-label">Reason</label><input type="text" id="edit-reason" value="${item.reason || ''}" class="edit-field" placeholder="Optional"></div>
         <div><label class="edit-label">Date & Time (IST)</label><input type="datetime-local" id="edit-datetime" value="${datetimeVal}" class="edit-field"></div>
         <div class="pt-3 border-t border-gray-100">
@@ -1387,10 +1482,9 @@ function cancelEdit() {
 }
 
 // ================================================================
-// SECTION 18: SAVE EDIT - FIXED (NO DUPLICATION)
+// SECTION 18: SAVE EDIT (unchanged)
 // ================================================================
 async function saveEdit() {
-    // Use the Firebase key (detailOrderId) to update, NOT push()
     if (!detailOrderId) {
         showToast('No order selected', 'error');
         return;
@@ -1404,6 +1498,9 @@ async function saveEdit() {
     const value = parseFloat(document.getElementById('edit-value').value) || 0;
     const customer = document.getElementById('edit-customer').value.trim();
     const reason = document.getElementById('edit-reason').value.trim();
+    const ramVal = document.getElementById('edit-ram')?.value || '';
+    const storageVal = document.getElementById('edit-storage')?.value || '';
+    const networkVal = document.getElementById('edit-network')?.value || '';
     const datetimeVal = document.getElementById('edit-datetime').value;
     const salePrice = parseFloat(document.getElementById('edit-salePrice')?.value) || 0;
     const buyer = document.getElementById('edit-buyer')?.value.trim() || '';
@@ -1422,6 +1519,10 @@ async function saveEdit() {
         value: value || 0,
         customerName: customer || '',
         reason: reason || '',
+        ram: ramVal,
+        storage: storageVal,
+        ramStorage: (ramVal && storageVal) ? (ramVal + '/' + storageVal) : (ramVal || storageVal || ''),
+        networkType: networkVal,
         billNumber: billNumberVal,
         aadhaarNumber: aadhaarNumberVal,
         timestamp: editData.timestamp,
@@ -1486,7 +1587,6 @@ async function saveEdit() {
     if (!confirm.isConfirmed) return;
 
     try {
-        // ✅ CRITICAL FIX: Use update() on the existing detailOrderId, NOT push()
         await db.ref('pickups/' + detailOrderId).update(updated);
         showToast('✅ Updated', 'success');
         loadOrders(); loadDashboard(); loadPendingAdmin(); loadRejectedAdmin(); loadInventory(); loadSales();
@@ -1525,8 +1625,8 @@ function closeDetail() { document.getElementById('detailModal').style.display = 
 // ================================================================
 function exportCSV() {
     if (allOrders.length === 0) { showToast('No data', 'error'); return; }
-    const headers = ['Order ID','Status','Model','IMEI','IMEI2','Value','Customer','Reason','Time (IST)','Agent'];
-    const rows = allOrders.map(item => [item.orderId || item.id || '', item.status || '', item.phoneModel || '', item.imei || '', item.imei2 || '', item.value !== undefined ? item.value : '', item.customerName || '', item.reason || '', item.timestampIST || item.timestamp || '', item.agent || '']);
+    const headers = ['Order ID','Status','Model','RAM/Storage','Network','IMEI','IMEI2','Value','Customer','Reason','Time (IST)','Agent'];
+    const rows = allOrders.map(item => [item.orderId || item.id || '', item.status || '', item.phoneModel || '', getRamStorageText(item) || '', item.networkType || '', item.imei || '', item.imei2 || '', item.value !== undefined ? item.value : '', item.customerName || '', item.reason || '', item.timestampIST || item.timestamp || '', item.agent || '']);
     let csv = '\uFEFF' + headers.join(',') + '\n';
     rows.forEach(row => { csv += row.map(val => `"${String(val).replace(/"/g, '""')}"`).join(',') + '\n'; });
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' }); const link = document.createElement('a'); link.href = URL.createObjectURL(blob); link.download = `flipkart_orders_${new Date().toISOString().slice(0,10)}.csv`; document.body.appendChild(link); link.click(); document.body.removeChild(link); URL.revokeObjectURL(link.href); showToast('📥 Exported', 'success');
@@ -1798,13 +1898,11 @@ function renderAgentsTable() {
         const roleDisplay = item.role === 'admin' ? '<span class="admin-tag">Admin</span>' : 'Agent';
         const isAgent = item.role === 'agent';
         
-        // 🔥 NEW: Status badge
         const isActive = item.is_active !== false;
         const statusBadge = isActive 
             ? '<span class="badge-status pickup" style="font-size:10px;">✅ Active</span>' 
             : '<span class="badge-status rejected" style="font-size:10px;">🚫 Left</span>';
         
-        // 🔥 NEW: Leave/Reactivate button
         const leaveBtn = isActive
             ? `<button onclick="leaveAgent('${item.username}')" class="btn-action delete" title="Mark as Left"><i data-lucide="user-x"></i></button>`
             : `<button onclick="reactivateAgent('${item.username}')" class="btn-action approve" title="Reactivate"><i data-lucide="user-check"></i></button>`;
@@ -1839,7 +1937,6 @@ function renderAgentsTable() {
     lucide.createIcons();
 }
 
-// 🔥 NEW: Leave Agent (Permanent)
 async function leaveAgent(username) {
     const { value: reason, isConfirmed } = await Swal.fire({
         title: `Agent "${username}" ko leave karna?`,
@@ -1866,7 +1963,6 @@ async function leaveAgent(username) {
         loadDashboard();
         loadAttendance();
         loadSalaryData();
-        // If agent is currently logged in, force logout via listener
         await db.ref('users/' + username + '/forceLogout').set(true);
         setTimeout(() => {
             db.ref('users/' + username + '/forceLogout').remove().catch(() => {});
@@ -1877,7 +1973,6 @@ async function leaveAgent(username) {
     }
 }
 
-// 🔥 NEW: Reactivate Agent
 async function reactivateAgent(username) {
     const confirm = await Swal.fire({
         title: `Reactivate "${username}"?`,
@@ -1926,7 +2021,7 @@ async function promoteToAdmin(username) {
             salary: null,
             pickup_incentive: null,
             reject_incentive: null,
-            is_active: true // Admin should always be active
+            is_active: true
         });
         showToast(`✅ ${username} is now an admin`, 'success');
         loadAgents();
@@ -1985,7 +2080,7 @@ function registerAgent(e) {
         role: role,
         createdAt: Date.now(),
         joinDate: new Date().toISOString().split('T')[0],
-        is_active: true  // 🔥 NEW: Default active
+        is_active: true
     };
     if (role === 'agent') {
         userData.salary = salary;
@@ -2177,13 +2272,12 @@ function viewAgentActivityWithPeriod(username, period) {
 function closeActivityModal() { document.getElementById('activityModal').style.display = 'none'; }
 
 // ================================================================
-// SECTION 24: ATTENDANCE SYSTEM (Updated: active agents only)
+// SECTION 24: ATTENDANCE (active agents only)
 // ================================================================
 async function generateOTPs() {
     const usersSnap = await db.ref('users').once('value');
     const users = usersSnap.val() || {};
     const today = new Date().toISOString().split('T')[0];
-    // 🔥 NEW: Only active agents
     const agents = Object.keys(users).filter(uname => {
         const u = users[uname];
         const role = u.role || 'agent';
@@ -2216,7 +2310,6 @@ async function loadAttendance() {
     try {
         const usersSnap = await db.ref('users').once('value');
         const users = usersSnap.val() || {};
-        // 🔥 NEW: Only active agents
         const agents = Object.fromEntries(
             Object.entries(users).filter(([_, u]) => 
                 (u.role || 'agent') === 'agent' && u.is_active !== false
@@ -2407,7 +2500,7 @@ async function blockAgent(username, date) {
 }
 
 // ================================================================
-// SECTION 25: SALARY / EARNINGS (Updated: active agents only)
+// SECTION 25: SALARY / EARNINGS (active agents only for current view)
 // ================================================================
 function setSalaryMode(mode) {
     currentSalaryMode = mode;
@@ -2441,7 +2534,6 @@ async function loadSalaryData() {
         ]);
 
         const users = usersSnap.val() || {};
-        // 🔥 NEW: Only active agents
         const agents = Object.fromEntries(
             Object.entries(users).filter(([_, u]) => 
                 (u.role || 'agent') === 'agent' && u.is_active !== false
@@ -2727,7 +2819,6 @@ async function openGlobalSearch() {
     results.innerHTML = `<div class="empty-state"><i data-lucide="inbox"></i><p class="text-sm font-medium">Type to start searching</p></div>`;
     setTimeout(() => input.focus(), 300);
 
-    // Ensure all global arrays are populated from Firebase before searching
     if (allOrders.length === 0) {
         try {
             const pickupSnap = await db.ref('pickups').once('value');
@@ -2774,7 +2865,6 @@ async function openGlobalSearch() {
         }
     }
 
-    // Remove existing listeners by replacing the function
     input.oninput = function() {
         const query = this.value.trim();
         if (!query) {
@@ -2782,25 +2872,20 @@ async function openGlobalSearch() {
             return;
         }
 
-        // Build combined data from ALL modules
         const allData = [];
 
-        // 1. Orders (all orders including pending, rejected, etc.)
         allOrders.forEach(item => {
             allData.push({ ...item, _category: 'Orders', _type: 'order' });
         });
 
-        // 2. Inventory (only unsold items)
         inventoryList.forEach(item => {
             allData.push({ ...item, _category: 'Inventory', _type: 'inventory' });
         });
 
-        // 3. Sales (sold items)
         salesList.forEach(item => {
             allData.push({ ...item, _category: 'Sales', _type: 'sale' });
         });
 
-        // 4. Agents
         agentsList.forEach(item => {
             allData.push({
                 name: item.name,
@@ -2808,11 +2893,10 @@ async function openGlobalSearch() {
                 mobile: item.mobile,
                 _category: 'Agents',
                 _type: 'agent',
-                id: item.username // for identification
+                id: item.username
             });
         });
 
-        // Create Fuse instance with broad keys for smart matching
         const fuse = new Fuse(allData, {
             keys: [
                 'orderId', 'phoneModel', 'imei', 'customerName',
@@ -2831,7 +2915,6 @@ async function openGlobalSearch() {
             return;
         }
 
-        // Group by category
         const groups = {};
         resultItems.forEach(r => {
             const cat = r.item._category || 'Other';
@@ -2866,7 +2949,6 @@ async function openGlobalSearch() {
                     else if (status === 'reschedule') { statusClass = 'reschedule'; statusDisplay = 'Pending'; }
                     else if (status === 'on_hold') { statusClass = 'on_hold'; statusDisplay = 'Hold'; }
                     badge = statusDisplay ? `<span class="badge-status ${statusClass}">${statusDisplay}</span>` : '';
-                    // Clicking result opens order detail on top, search modal stays open in background
                     onClick = `onclick="viewOrder('${orderId}')"`;
                     locateFn = `onclick="locateItem({id:'${orderId}', type:'${item._type}'})"`;
                 } else if (item._type === 'agent') {
@@ -2889,7 +2971,6 @@ async function openGlobalSearch() {
             });
             html += `</div>`;
 
-            // Add hidden items and show more button
             if (items.length > 10) {
                 html += `<div id="${catId}-hidden" style="display:none;">`;
                 items.slice(10).forEach(r => {
@@ -2949,7 +3030,6 @@ function closeGlobalSearch() {
     document.getElementById('globalSearchModalInput').value = '';
 }
 
-// Toggle show more for search results
 function toggleShowMore(catId, totalItems) {
     const hiddenDiv = document.getElementById(catId + '-hidden');
     const btn = event.target;
@@ -2963,17 +3043,14 @@ function toggleShowMore(catId, totalItems) {
 }
 
 // ================================================================
-// SECTION 27: LOCATE FEATURE
+// SECTION 27: LOCATE
 // ================================================================
 function locateItem(item) {
-    // Don't close the modal - keep it open for continued searching
-
     if (item.type === 'order' || item.type === 'inventory' || item.type === 'sale') {
         let page = 'orders';
         if (item.type === 'inventory') page = 'inventory';
         else if (item.type === 'sale') page = 'sales';
         navigate(page);
-        // After navigation, set the search input and trigger search
         setTimeout(() => {
             let searchInput = null;
             if (page === 'orders') searchInput = document.getElementById('orderSearch');
@@ -2981,7 +3058,6 @@ function locateItem(item) {
             else if (page === 'sales') searchInput = document.getElementById('salesSearch');
             if (searchInput) {
                 searchInput.value = item.id;
-                // Trigger the search function
                 if (page === 'orders') applyOrderSearch();
                 else if (page === 'inventory') applyInventorySearch();
                 else if (page === 'sales') applySalesFilters();
@@ -3087,7 +3163,6 @@ function setupLiveSearch(inputId, dropdownId, dataSource, fields) {
         dropdown.innerHTML = html;
         dropdown.classList.add('open');
 
-        // Click handler for dropdown items (already set via onclick, but also handle fallback)
         dropdown.querySelectorAll('.dropdown-item[data-id]').forEach(el => {
             if (!el.hasAttribute('onclick')) {
                 el.addEventListener('click', function(e) {
@@ -3173,6 +3248,7 @@ document.addEventListener('DOMContentLoaded', () => {
 document.getElementById('detailModal').addEventListener('click', function(e) { if (e.target === this) closeDetail(); });
 document.getElementById('sellModal').addEventListener('click', function(e) { if (e.target === this) closeSellModal(); });
 document.getElementById('activityModal').addEventListener('click', function(e) { if (e.target === this) closeActivityModal(); });
+document.getElementById('imgViewerModal').addEventListener('click', function(e) { if (e.target === this) closeImageViewer(); });
 
 document.getElementById('globalSearchModal').addEventListener('click', function(e) {
     if (e.target === this) closeGlobalSearch();
@@ -3185,6 +3261,7 @@ document.addEventListener('keydown', function(e) {
         closeActivityModal();
         closeSidebar();
         closeGlobalSearch();
+        closeImageViewer();
     }
 });
 
