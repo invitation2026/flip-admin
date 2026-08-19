@@ -1,7 +1,5 @@
-// ================================================================
-// File Name: script.js
-// Ultra Optimized Admin Panel Script
-// ================================================================
+// File: script.js
+// Admin Panel - Full Updated Script with Half Day Attendance Feature
 
 // ================================================================
 // FIREBASE CONFIG
@@ -22,7 +20,7 @@ const db = firebase.database();
 const storage = firebase.storage();
 
 // ================================================================
-// ULTRA HELPERS
+// HELPERS
 // ================================================================
 const $ = (id) => document.getElementById(id);
 
@@ -68,6 +66,10 @@ function esc(s) {
   }[c]));
 }
 
+function refreshIcons() {
+  if (window.lucide) lucide.createIcons();
+}
+
 function debounce(fn, delay = 250) {
   let t;
   return function (...args) {
@@ -76,8 +78,18 @@ function debounce(fn, delay = 250) {
   };
 }
 
-function refreshIcons() {
-  if (window.lucide) lucide.createIcons();
+function isAfter12Local(ts) {
+  const d = new Date(ts);
+  if (isNaN(d)) return false;
+
+  // 12:00:00 ke baad wala time half day trigger karega
+  return d.getHours() > 12 || (d.getHours() === 12 && (d.getMinutes() > 0 || d.getSeconds() > 0));
+}
+
+function formatAttTime(ts) {
+  const d = new Date(ts);
+  if (isNaN(d)) return '';
+  return d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
 }
 
 function getStatusClass(item) {
@@ -93,6 +105,7 @@ function getStatusDisplay(item) {
 
   if (status === 'pickup') return item.sold ? 'Sold' : 'Pickup';
   if (status === 'rejected') return 'Rejected';
+
   if (status === 'on_hold') {
     if (item.previous_status) {
       const prev = item.previous_status === 'pickup'
@@ -107,7 +120,7 @@ function getStatusDisplay(item) {
 }
 
 // ================================================================
-// SMART CACHE STORE
+// CACHE
 // ================================================================
 let cacheVersion = 0;
 const CACHE_TTL = 60000;
@@ -148,12 +161,12 @@ async function getData(node, force = false) {
 }
 
 // ================================================================
-// DOC / IMAGE CONSTANTS
+// DOC / IMAGE HELPERS
 // ================================================================
 const ADMIN_MAX_DOC_IMAGES = 3;
-const ADMIN_RAM_OPTIONS = ['1GB', '2GB', '3GB', '4GB', '6GB', '8GB', '12GB', '16GB', '18GB', '24GB'];
-const ADMIN_STORAGE_OPTIONS = ['8GB', '16GB', '32GB', '64GB', '128GB', '256GB', '512GB', '1TB', '2TB'];
-const ADMIN_NETWORK_OPTIONS = ['2G', '3G', '4G', '5G'];
+const ADMIN_RAM_OPTIONS = ['1GB','2GB','3GB','4GB','6GB','8GB','12GB','16GB','18GB','24GB'];
+const ADMIN_STORAGE_OPTIONS = ['8GB','16GB','32GB','64GB','128GB','256GB','512GB','1TB','2TB'];
+const ADMIN_NETWORK_OPTIONS = ['2G','3G','4G','5G'];
 
 function getRam(item) {
   if (!item) return '';
@@ -171,9 +184,9 @@ function getStorage(item) {
 
 function getRamStorageText(item) {
   const r = getRam(item);
-  const s = getStorage(item);
-  if (r && s) return r + ' / ' + s;
-  return r || s || (item && item.ramStorage) || '';
+  const st = getStorage(item);
+  if (r && st) return r + ' / ' + st;
+  return r || st || (item && item.ramStorage) || '';
 }
 
 function buildOptionList(options, current) {
@@ -185,10 +198,13 @@ function buildOptionList(options, current) {
 
 function getDocImages(item, which) {
   if (!item) return [];
+
   const arrField = which === 'bill' ? 'billImages' : 'aadhaarImages';
   const legacy = which === 'bill' ? 'billImage' : 'aadhaarImage';
+
   const arr = Array.isArray(item[arrField]) ? item[arrField].slice() : [];
   if (!arr.length && item[legacy]) arr.push(item[legacy]);
+
   return arr.filter(Boolean);
 }
 
@@ -222,6 +238,7 @@ function _compressImageFileAdmin(file, maxDimension = 800, quality = 0.55) {
         ctx.fillStyle = '#fff';
         ctx.fillRect(0, 0, width, height);
         ctx.drawImage(img, 0, 0, width, height);
+
         resolve(canvas.toDataURL('image/jpeg', quality));
       };
 
@@ -245,11 +262,13 @@ async function _uploadImageToStorageAdmin(file, orderId, docType, index) {
   const compressedDataUrl = await _compressImageFileAdmin(file, 800, 0.55);
   const blob = await (await fetch(compressedDataUrl)).blob();
   const snapshot = await storageRef.put(blob, { contentType: 'image/jpeg' });
+
   return snapshot.ref.getDownloadURL();
 }
 
 async function _deleteImageFromStorageAdmin(url) {
   if (!url) return;
+
   try {
     const ref = storage.refFromURL(url);
     await ref.delete();
@@ -314,6 +333,7 @@ async function adminUploadDocImage(which) {
   }
 
   const current = getDocImages(editData || {}, which);
+
   if (current.length >= ADMIN_MAX_DOC_IMAGES) {
     showToast(`Max ${ADMIN_MAX_DOC_IMAGES} images allowed`, 'error');
     return;
@@ -595,6 +615,7 @@ function navigate(page) {
   });
 
   const target = $('page-' + page);
+
   if (target) {
     target.style.display = 'block';
     target.classList.remove('fade-in');
@@ -680,6 +701,7 @@ async function loadDashboard(force = false) {
       const role = uData.role || 'agent';
       if (role === 'agent' && uData.is_active !== false) {
         totalAgents++;
+
         const att = attendance[uname] && attendance[uname][today];
         if (att && att.status === 'present') presentToday++;
       }
@@ -894,7 +916,6 @@ function renderOrdersTable() {
 
   const total = filteredOrders.length;
   const totalPages = Math.ceil(total / pageSize) || 1;
-
   if (currentPage > totalPages) currentPage = totalPages;
 
   const start = (currentPage - 1) * pageSize;
@@ -1070,8 +1091,10 @@ async function deletePending(orderId) {
 
   try {
     await db.ref('pending/' + orderId).remove();
+
     invalidate('pending');
     showToast('🗑️ Removed from pending', 'success');
+
     loadPendingAdmin(true);
     loadDashboard(true);
   } catch (e) {
@@ -1325,11 +1348,19 @@ async function loadSales(force = false) {
         while (currentDate <= today) {
           const dateStr = getLocalYMD(currentDate);
           const att = (allAttendance[uname] && allAttendance[uname][dateStr]) || {};
+
           const isPresent = att.status === 'present';
           const salaryCounted = att.salary_counted !== false;
 
           if (isPresent && salaryCounted) {
-            agentBaseSalary += perDaySalary;
+            let dayAmount = perDaySalary;
+
+            // HALF DAY: 12 baje ke baad admin ne Half Day select kiya hai to 50% salary
+            if (att.half_day === true) {
+              dayAmount = perDaySalary * 0.5;
+            }
+
+            agentBaseSalary += dayAmount;
           }
 
           currentDate.setDate(currentDate.getDate() + 1);
@@ -1431,7 +1462,6 @@ function clearSalesFilters() {
 
 function updateSalesSummary() {
   const total = filteredSales.length;
-
   let revenue = 0;
   let grossProfitTotal = 0;
   let finalProfitTotal = 0;
@@ -1813,6 +1843,7 @@ function renderDetailView(item) {
       commissionDisplay = formatINR(commission);
       grossProfitDisplay = formatINR(grossProfit);
       finalProfitDisplay = formatINR(finalProfit);
+
       profitClass = grossProfit >= 0 ? 'green' : 'red';
       finalProfitClass = finalProfit >= 0 ? 'green' : 'red';
     }
@@ -2169,6 +2200,7 @@ function toggleEditMode() {
           ${getDocImages(item, 'aadhaar').length ? `<div class="mt-2 grid grid-cols-3 gap-2">${getDocImages(item, 'aadhaar').map((im, i) => `<div class="relative"><img loading="lazy" src="${im}" onclick="openImageViewer('${esc(im)}','Aadhaar ${i + 1}')" class="w-full h-20 object-cover rounded-lg border cursor-zoom-in"><button type="button" onclick="adminDeleteDocImage('aadhaar',${i})" class="absolute -top-1.5 -right-1.5 w-6 h-6 rounded-full bg-red-600 text-white text-xs font-bold shadow-md">✕</button></div>`).join('')}</div>` : ''}
         </div>
       </div>
+    </div>
   `;
 
   if (item.sold) {
@@ -2182,8 +2214,6 @@ function toggleEditMode() {
       </div>
     `;
   }
-
-  html += `</div>`;
 
   content.innerHTML = html;
   refreshIcons();
@@ -2306,6 +2336,7 @@ function cancelEdit() {
 
         if (detailActions) detailActions.style.display = 'flex';
         if (detailSaveActions) detailSaveActions.style.display = 'none';
+
         setText('detailModalTitle', 'Order Details');
 
         if (detailEditBtn) {
@@ -2455,6 +2486,7 @@ async function saveEdit() {
 
       if (detailActions) detailActions.style.display = 'flex';
       if (detailSaveActions) detailSaveActions.style.display = 'none';
+
       setText('detailModalTitle', 'Order Details');
 
       if (detailEditBtn) {
@@ -2590,7 +2622,7 @@ async function loadDeposits(force = false) {
     allDeposits.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
 
     applyDepositFilters();
-    await updateDepositStats();
+    updateDepositStats();
   } catch (e) {
     console.error('Load deposits error:', e);
     showToast('Error loading deposits', 'error');
@@ -2603,13 +2635,8 @@ function applyDepositFilters() {
   const dateFrom = getVal('depositDateFrom');
   const dateTo = getVal('depositDateTo');
 
-  if (dateFrom) {
-    filtered = filtered.filter(item => item.date && item.date >= dateFrom);
-  }
-
-  if (dateTo) {
-    filtered = filtered.filter(item => item.date && item.date <= dateTo);
-  }
+  if (dateFrom) filtered = filtered.filter(item => item.date && item.date >= dateFrom);
+  if (dateTo) filtered = filtered.filter(item => item.date && item.date <= dateTo);
 
   filteredDeposits = filtered;
   depositCurrentPage = 1;
@@ -2665,7 +2692,6 @@ function renderDepositsTable() {
 
   const total = filteredDeposits.length;
   const totalPages = Math.ceil(total / depositPageSize) || 1;
-
   if (depositCurrentPage > totalPages) depositCurrentPage = totalPages;
 
   const start = (depositCurrentPage - 1) * depositPageSize;
@@ -3429,7 +3455,7 @@ function closeActivityModal() {
 }
 
 // ================================================================
-// ATTENDANCE
+// ATTENDANCE + HALF DAY FEATURE
 // ================================================================
 async function generateOTPs() {
   const users = await getData('users', true);
@@ -3526,18 +3552,73 @@ async function loadAttendance(force = false) {
 
       const otp = otpData.otp || '—';
 
+      const isPresent = status === 'present';
+      const isLate = isPresent && att.timestamp && isAfter12Local(att.timestamp);
+
+      let halfDayInfo = '';
+      let halfDayActions = '';
+
+      if (isLate) {
+        const attTime = formatAttTime(att.timestamp);
+
+        if (att.half_day === true) {
+          halfDayInfo = `
+            <div class="text-xs font-semibold text-red-600 mt-1">
+              🌗 Half Day (50% salary) — ${attTime}
+            </div>
+          `;
+
+          halfDayActions = `
+            <button onclick="markHalfDay('${uname}','${date}', false)" class="btn-action approve">
+              <i data-lucide="sun"></i> Full Day
+            </button>
+          `;
+        } else if (att.half_day === false) {
+          halfDayInfo = `
+            <div class="text-xs font-semibold text-green-600 mt-1">
+              ✅ Full Day (late arrival) — ${attTime}
+            </div>
+          `;
+
+          halfDayActions = `
+            <button onclick="markHalfDay('${uname}','${date}', true)" class="btn-action delete">
+              <i data-lucide="moon"></i> Half Day
+            </button>
+          `;
+        } else {
+          halfDayInfo = `
+            <div class="text-xs font-semibold text-amber-600 mt-1">
+              ⚠️ 12:00 ke baad present (${attTime}) — Half day?
+            </div>
+          `;
+
+          halfDayActions = `
+            <button onclick="markHalfDay('${uname}','${date}', true)" class="btn-action delete">
+              <i data-lucide="moon"></i> Half Day
+            </button>
+            <button onclick="markHalfDay('${uname}','${date}', false)" class="btn-action approve">
+              <i data-lucide="sun"></i> Full Day
+            </button>
+          `;
+        }
+      }
+
       html += `
         <div class="attendance-card glass rounded-xl p-4 shadow-sm border border-gray-100 flex flex-wrap items-center justify-between gap-2">
           <div>
             <span class="font-bold text-gray-800 cursor-pointer hover:text-indigo-600" onclick="viewAttendanceHistory('${uname}')">${uData.name}</span>
             <span class="text-xs text-gray-500">(${uname})</span><br>
             <span class="text-xs">OTP: <strong class="otp-display text-sm">${otp}</strong></span>
+            ${halfDayInfo}
           </div>
+
           <div class="text-sm">${statusHtml}</div>
+
           <div class="flex items-center gap-2 flex-wrap">
             ${att.status === 'absent' && isBlocked ? `<button onclick="unblockAgent('${uname}','${date}')" class="btn-action unblock"><i data-lucide="unlock"></i> Unblock</button>` : ''}
             ${att.status === 'absent' && !isBlocked ? `<button onclick="blockAgent('${uname}','${date}')" class="btn-action delete"><i data-lucide="lock"></i> Block</button>` : ''}
             ${!att.status || att.status === 'Not Marked' ? `<button onclick="markPresentManually('${uname}','${date}')" class="btn-action approve"><i data-lucide="check"></i> Mark Present</button>` : ''}
+            ${halfDayActions}
           </div>
         </div>
       `;
@@ -3551,6 +3632,52 @@ async function loadAttendance(force = false) {
     console.error(e);
     container.innerHTML = `<div class="empty-state"><i data-lucide="alert-circle"></i><p class="text-sm text-red-500">Error loading</p></div>`;
     showToast('Error loading attendance', 'error');
+  }
+}
+
+async function markHalfDay(username, date, isHalf) {
+  const title = isHalf ? 'Half Day (50% cut) lagana hai?' : 'Full Day lagana hai?';
+
+  const text = isHalf
+    ? `${username} - ${date}: is din ka salary 50% count hoga.`
+    : `${username} - ${date}: is din ka full salary count hoga.`;
+
+  const confirm = await Swal.fire({
+    title,
+    text,
+    icon: 'question',
+    showCancelButton: true,
+    confirmButtonColor: isHalf ? '#dc2626' : '#059669',
+    cancelButtonColor: '#64748b',
+    confirmButtonText: isHalf ? 'Yes, Half Day' : 'Yes, Full Day',
+    cancelButtonText: 'Cancel'
+  });
+
+  if (!confirm.isConfirmed) return;
+
+  try {
+    await db.ref('attendance/' + username + '/' + date).update({
+      half_day: isHalf,
+      half_day_decided: true,
+      half_day_decided_at: Date.now(),
+      half_day_decided_by: 'admin'
+    });
+
+    invalidate('attendance');
+
+    showToast(
+      isHalf ? '🌗 Half Day applied (50% salary)' : '✅ Full Day applied',
+      'success'
+    );
+
+    loadAttendance(true);
+    loadDashboard(true);
+
+    if (currentPageView === 'salary') loadSalaryData(true);
+    if (currentPageView === 'sales') loadSales(true);
+  } catch (e) {
+    showToast('Error updating half day', 'error');
+    console.error(e);
   }
 }
 
@@ -3592,9 +3719,21 @@ async function viewAttendanceHistory(username) {
       let statusClass = 'text-gray-400';
 
       if (status === 'present') {
-        statusDisplay = '✅ Present';
-        statusClass = 'text-green-600';
         presentCount++;
+
+        if (att.half_day === true) {
+          statusDisplay = '🌗 Present (Half Day)';
+          statusClass = 'text-red-600';
+        } else if (att.half_day === false && att.timestamp && isAfter12Local(att.timestamp)) {
+          statusDisplay = '✅ Present (Late, Full Day)';
+          statusClass = 'text-green-600';
+        } else if (att.timestamp && isAfter12Local(att.timestamp)) {
+          statusDisplay = '⚠️ Present (Late)';
+          statusClass = 'text-amber-600';
+        } else {
+          statusDisplay = '✅ Present';
+          statusClass = 'text-green-600';
+        }
       } else if (status === 'absent') {
         statusDisplay = '❌ Absent';
         statusClass = 'text-red-600';
@@ -3931,6 +4070,7 @@ async function loadSalaryData(force = false) {
       let agentPickupCount = 0;
       let agentRejectCount = 0;
       let agentPendingCount = 0;
+      let agentHalfDayCount = 0;
 
       let currentDate = new Date(startDate);
 
@@ -3943,11 +4083,20 @@ async function loadSalaryData(force = false) {
         }
 
         const att = userAttendance[dateStr] || {};
+
         const isPresent = att.status === 'present';
         const salaryCounted = att.salary_counted !== false;
 
         if (isPresent && salaryCounted) {
-          totalBaseSalary += perDaySalary;
+          let dayBaseSalary = perDaySalary;
+
+          // HALF DAY SALARY: admin ne Half Day select kiya hai to 50%
+          if (att.half_day === true) {
+            dayBaseSalary = perDaySalary * 0.5;
+            agentHalfDayCount++;
+          }
+
+          totalBaseSalary += dayBaseSalary;
         }
 
         const key = uname + '|' + dateStr;
@@ -3980,8 +4129,15 @@ async function loadSalaryData(force = false) {
         totalRejectIncentive += dayRejectInc;
 
         if (isPresent || att.status === 'absent') {
-          const statusIcon = isPresent ? '✅' : (att.blocked ? '🔒' : '❌');
-          detailsHtml += `<span class="text-xs mx-0.5" title="${dateStr}">${statusIcon}</span>`;
+          let statusIcon;
+
+          if (isPresent) {
+            statusIcon = att.half_day === true ? '🌗' : '✅';
+          } else {
+            statusIcon = att.blocked ? '🔒' : '❌';
+          }
+
+          detailsHtml += `<span class="text-xs mx-0.5" title="${dateStr}${att.half_day === true ? ' (Half Day)' : ''}">${statusIcon}</span>`;
         }
 
         currentDate.setDate(currentDate.getDate() + 1);
@@ -4035,7 +4191,7 @@ async function loadSalaryData(force = false) {
               <span class="text-sm text-gray-500">(${uname})</span>
               <span class="text-xs text-gray-400 ml-2">Joined: ${joinDateDisplay}</span>
               <button onclick="viewAgentActivityWithPeriod('${uname}', ${periodAttr})" class="btn-action activity text-xs ml-2"><i data-lucide="activity"></i> Activity</button>
-              <span class="text-xs text-gray-400 ml-2">📦 ${agentPickupCount} | ❌ ${agentRejectCount} | ⏳ ${agentPendingCount}</span>
+              <span class="text-xs text-gray-400 ml-2">📦 ${agentPickupCount} | ❌ ${agentRejectCount} | ⏳ ${agentPendingCount} | 🌗 ${agentHalfDayCount}</span>
             </div>
             <div class="text-sm font-bold text-indigo-600">${formatINR(total)}</div>
           </div>
@@ -4047,6 +4203,7 @@ async function loadSalaryData(force = false) {
           </div>
 
           <div class="mt-2 text-xs text-gray-400">Attendance: ${detailsHtml}</div>
+
           ${pendingRejectsHtml}
         </div>
       `;
@@ -4126,29 +4283,17 @@ async function openGlobalSearch() {
 
   setTimeout(() => input.focus(), 300);
 
-  const [pickups, users] = await Promise.all([
-    getData('pickups', false),
-    getData('users', false)
-  ]);
+  if (!allOrders.length) await loadOrders(false);
 
-  allOrders = Object.entries(pickups).map(([id, item]) => ({
-    id,
-    ...item,
-    billImages: undefined,
-    billImage: undefined,
-    aadhaarImages: undefined,
-    aadhaarImage: undefined
-  }));
+  if (!inventoryList.length) {
+    inventoryList = allOrders.filter(item => item.status === 'pickup' && !item.sold);
+  }
 
-  allOrders.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+  if (!salesList.length) {
+    salesList = allOrders.filter(item => item.sold === true && item.status !== 'on_hold');
+  }
 
-  inventoryList = allOrders.filter(item => item.status === 'pickup' && !item.sold);
-  salesList = allOrders.filter(item => item.sold === true && item.status !== 'on_hold');
-
-  agentsList = Object.entries(users).map(([username, item]) => {
-    if (!item.role) item.role = 'agent';
-    return { username, ...item };
-  });
+  if (!agentsList.length) await loadAgents(false);
 
   const allData = [];
 
@@ -4326,6 +4471,7 @@ function closeGlobalSearch() {
 
 function toggleShowMore(catId, totalItems, btn) {
   const hiddenDiv = $(catId + '-hidden');
+
   if (!hiddenDiv || !btn) return;
 
   if (hiddenDiv.style.display === 'none') {
@@ -4334,41 +4480,6 @@ function toggleShowMore(catId, totalItems, btn) {
   } else {
     hiddenDiv.style.display = 'none';
     btn.textContent = `+${totalItems - 10} more`;
-  }
-}
-
-// ================================================================
-// LOCATE
-// ================================================================
-function locateItem(item) {
-  if (item.type === 'order' || item.type === 'inventory' || item.type === 'sale') {
-    let page = 'orders';
-
-    if (item.type === 'inventory') page = 'inventory';
-    else if (item.type === 'sale') page = 'sales';
-
-    navigate(page);
-
-    setTimeout(() => {
-      let searchInput = null;
-
-      if (page === 'orders') searchInput = $('orderSearch');
-      else if (page === 'inventory') searchInput = $('inventorySearch');
-      else if (page === 'sales') searchInput = $('salesSearch');
-
-      if (searchInput) {
-        searchInput.value = item.id;
-
-        if (page === 'orders') applyOrderSearch();
-        else if (page === 'inventory') applyInventorySearch();
-        else if (page === 'sales') applySalesFilters();
-
-        showToast(`📍 Located in ${page}`, 'success');
-      }
-    }, 400);
-  } else if (item.type === 'agent') {
-    navigate('agents');
-    showToast(`📍 Agent ${item.username} found in Agents page`, 'success');
   }
 }
 
@@ -4383,7 +4494,6 @@ function setupLiveSearch(inputId, dropdownId, dataSource, fields) {
 
   input._lsData = dataSource;
   input._lsFields = fields;
-  input._lsVersion = cacheVersion;
 
   if (input._lsInit) return;
 
@@ -4555,7 +4665,7 @@ document.addEventListener('DOMContentLoaded', () => {
   toggleAdminFields();
   setSalaryMode('today');
 
-  // Ultra optimized auto refresh: only when tab visible
+  // Auto refresh only when tab visible
   setInterval(() => {
     if (document.hidden) return;
     refreshCurrentPage(true);
@@ -4568,6 +4678,7 @@ document.addEventListener('DOMContentLoaded', () => {
 // MODALS / KEYBOARD
 // ================================================================
 const detailModal = $('detailModal');
+
 if (detailModal) {
   detailModal.addEventListener('click', function (e) {
     if (e.target === this) closeDetail();
@@ -4575,6 +4686,7 @@ if (detailModal) {
 }
 
 const sellModal = $('sellModal');
+
 if (sellModal) {
   sellModal.addEventListener('click', function (e) {
     if (e.target === this) closeSellModal();
@@ -4582,6 +4694,7 @@ if (sellModal) {
 }
 
 const activityModal = $('activityModal');
+
 if (activityModal) {
   activityModal.addEventListener('click', function (e) {
     if (e.target === this) closeActivityModal();
@@ -4589,6 +4702,7 @@ if (activityModal) {
 }
 
 const imgViewerModal = $('imgViewerModal');
+
 if (imgViewerModal) {
   imgViewerModal.addEventListener('click', function (e) {
     if (e.target === this) closeImageViewer();
@@ -4596,6 +4710,7 @@ if (imgViewerModal) {
 }
 
 const globalSearchModal = $('globalSearchModal');
+
 if (globalSearchModal) {
   globalSearchModal.addEventListener('click', function (e) {
     if (e.target === this) closeGlobalSearch();
