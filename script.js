@@ -1,4 +1,9 @@
 // ================================================================
+// File Name: script.js
+// Ultra Optimized Admin Panel Script
+// ================================================================
+
+// ================================================================
 // FIREBASE CONFIG
 // ================================================================
 const firebaseConfig = {
@@ -17,8 +22,30 @@ const db = firebase.database();
 const storage = firebase.storage();
 
 // ================================================================
-// HELPERS
+// ULTRA HELPERS
 // ================================================================
+const $ = (id) => document.getElementById(id);
+
+const setText = (id, value) => {
+  const el = $(id);
+  if (el) el.textContent = value;
+};
+
+const setHTML = (id, value) => {
+  const el = $(id);
+  if (el) el.innerHTML = value;
+};
+
+const setVal = (id, value) => {
+  const el = $(id);
+  if (el) el.value = value;
+};
+
+const getVal = (id) => {
+  const el = $(id);
+  return el ? el.value : '';
+};
+
 const formatINR = (num) => {
   if (num === undefined || num === null || isNaN(num)) return '₹0';
   return '₹' + new Intl.NumberFormat('en-IN').format(Math.round(num));
@@ -32,16 +59,13 @@ function getLocalYMD(d = new Date()) {
 }
 
 function esc(s) {
-  return (s || '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
-
-function refreshIcons() {
-  if (window.lucide) lucide.createIcons();
+  return String(s ?? '').replace(/[&<>"']/g, (c) => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;'
+  }[c]));
 }
 
 function debounce(fn, delay = 250) {
@@ -52,10 +76,42 @@ function debounce(fn, delay = 250) {
   };
 }
 
+function refreshIcons() {
+  if (window.lucide) lucide.createIcons();
+}
+
+function getStatusClass(item) {
+  const status = item.status || 'unknown';
+  if (status === 'pickup') return item.sold ? 'sold' : 'pickup';
+  if (status === 'rejected') return 'rejected';
+  if (status === 'on_hold') return 'on_hold';
+  return 'reschedule';
+}
+
+function getStatusDisplay(item) {
+  const status = item.status || 'unknown';
+
+  if (status === 'pickup') return item.sold ? 'Sold' : 'Pickup';
+  if (status === 'rejected') return 'Rejected';
+  if (status === 'on_hold') {
+    if (item.previous_status) {
+      const prev = item.previous_status === 'pickup'
+        ? (item.sold ? 'Sold' : 'Pickup')
+        : item.previous_status;
+      return `Hold (was ${prev})`;
+    }
+    return 'Hold';
+  }
+
+  return 'Pending';
+}
+
 // ================================================================
-// OPTIMIZED DATA CACHE
+// SMART CACHE STORE
 // ================================================================
 let cacheVersion = 0;
+const CACHE_TTL = 60000;
+
 const cache = {
   pickups: null,
   pending: null,
@@ -64,25 +120,40 @@ const cache = {
   attendance: null
 };
 
+const cacheTime = {
+  pickups: 0,
+  pending: 0,
+  users: 0,
+  deposits: 0,
+  attendance: 0
+};
+
 function invalidate(...nodes) {
-  nodes.forEach(n => { cache[n] = null; });
+  nodes.forEach((n) => {
+    cache[n] = null;
+    cacheTime[n] = 0;
+  });
   cacheVersion++;
 }
 
 async function getData(node, force = false) {
-  if (!force && cache[node]) return cache[node];
+  const isFresh = cache[node] && (Date.now() - cacheTime[node] < CACHE_TTL);
+
+  if (!force && isFresh) return cache[node];
+
   const snap = await db.ref(node).once('value');
   cache[node] = snap.val() || {};
+  cacheTime[node] = Date.now();
   return cache[node];
 }
 
 // ================================================================
-// DOC / IMAGE HELPERS
+// DOC / IMAGE CONSTANTS
 // ================================================================
 const ADMIN_MAX_DOC_IMAGES = 3;
-const ADMIN_RAM_OPTIONS = ['1GB','2GB','3GB','4GB','6GB','8GB','12GB','16GB','18GB','24GB'];
-const ADMIN_STORAGE_OPTIONS = ['8GB','16GB','32GB','64GB','128GB','256GB','512GB','1TB','2TB'];
-const ADMIN_NETWORK_OPTIONS = ['2G','3G','4G','5G'];
+const ADMIN_RAM_OPTIONS = ['1GB', '2GB', '3GB', '4GB', '6GB', '8GB', '12GB', '16GB', '18GB', '24GB'];
+const ADMIN_STORAGE_OPTIONS = ['8GB', '16GB', '32GB', '64GB', '128GB', '256GB', '512GB', '1TB', '2TB'];
+const ADMIN_NETWORK_OPTIONS = ['2G', '3G', '4G', '5G'];
 
 function getRam(item) {
   if (!item) return '';
@@ -100,9 +171,9 @@ function getStorage(item) {
 
 function getRamStorageText(item) {
   const r = getRam(item);
-  const st = getStorage(item);
-  if (r && st) return r + ' / ' + st;
-  return r || st || (item && item.ramStorage) || '';
+  const s = getStorage(item);
+  if (r && s) return r + ' / ' + s;
+  return r || s || (item && item.ramStorage) || '';
 }
 
 function buildOptionList(options, current) {
@@ -117,15 +188,17 @@ function getDocImages(item, which) {
   const arrField = which === 'bill' ? 'billImages' : 'aadhaarImages';
   const legacy = which === 'bill' ? 'billImage' : 'aadhaarImage';
   const arr = Array.isArray(item[arrField]) ? item[arrField].slice() : [];
-  if (arr.length === 0 && item[legacy]) arr.push(item[legacy]);
+  if (!arr.length && item[legacy]) arr.push(item[legacy]);
   return arr.filter(Boolean);
 }
 
 function _compressImageFileAdmin(file, maxDimension = 800, quality = 0.55) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
+
     reader.onload = function (e) {
       const img = new Image();
+
       img.onload = function () {
         let width = img.width;
         let height = img.height;
@@ -149,12 +222,13 @@ function _compressImageFileAdmin(file, maxDimension = 800, quality = 0.55) {
         ctx.fillStyle = '#fff';
         ctx.fillRect(0, 0, width, height);
         ctx.drawImage(img, 0, 0, width, height);
-
         resolve(canvas.toDataURL('image/jpeg', quality));
       };
+
       img.onerror = reject;
       img.src = e.target.result;
     };
+
     reader.onerror = reject;
     reader.readAsDataURL(file);
   });
@@ -191,6 +265,7 @@ function _pickImageSource(useCamera) {
     input.accept = 'image/*';
     input.multiple = true;
     if (useCamera) input.capture = 'environment';
+
     input.onchange = () => resolve(input.files ? Array.from(input.files) : []);
     input.click();
   });
@@ -198,11 +273,11 @@ function _pickImageSource(useCamera) {
 
 function openImageViewer(src, title) {
   try {
-    const modal = document.getElementById('imgViewerModal');
+    const modal = $('imgViewerModal');
     if (!modal) return;
 
-    let img = document.getElementById('imgViewerImage');
-    let caption = document.getElementById('imgViewerCaption');
+    let img = $('imgViewerImage');
+    let caption = $('imgViewerCaption');
 
     if (!img) {
       modal.innerHTML = `
@@ -226,7 +301,7 @@ function openImageViewer(src, title) {
 
 function closeImageViewer() {
   try {
-    const modal = document.getElementById('imgViewerModal');
+    const modal = $('imgViewerModal');
     if (modal) modal.style.display = 'none';
     document.body.style.overflow = '';
   } catch (e) {}
@@ -276,6 +351,7 @@ async function adminUploadDocImage(which) {
     }
 
     const urls = await Promise.all(uploadPromises);
+
     if (!urls.length) {
       Swal.close();
       showToast('Upload failed', 'error');
@@ -297,6 +373,7 @@ async function adminUploadDocImage(which) {
 
     const snap = await db.ref('pickups/' + detailOrderId).once('value');
     const it = snap.val();
+
     if (it) {
       editData = { ...it, id: detailOrderId };
       renderDetailView(it);
@@ -320,7 +397,7 @@ async function adminDeleteDocImage(which, idx) {
 
   if (!current.length) return;
 
-  const isAll = (idx === undefined || idx === null);
+  const isAll = idx === undefined || idx === null;
 
   const confirm = await Swal.fire({
     title: isAll ? `Delete ALL ${label} Images?` : `Delete this ${label} image?`,
@@ -362,6 +439,7 @@ async function adminDeleteDocImage(which, idx) {
 
     const snap = await db.ref('pickups/' + detailOrderId).once('value');
     const it = snap.val();
+
     if (it) {
       editData = { ...it, id: detailOrderId };
       renderDetailView(it);
@@ -395,11 +473,13 @@ async function adminSaveDocNumber(which) {
 
   try {
     await db.ref('pickups/' + detailOrderId).update({ [field]: (v || '').trim() });
+
     invalidate('pickups');
     showToast('✅ Updated', 'success');
 
     const snap = await db.ref('pickups/' + detailOrderId).once('value');
     const it = snap.val();
+
     if (it) {
       editData = { ...it, id: detailOrderId };
       renderDetailView(it);
@@ -442,41 +522,50 @@ function calculateCommission(purchasePrice) {
 let allOrders = [];
 let filteredOrders = [];
 let ordersById = new Map();
+
 let currentPage = 1;
 const pageSize = 15;
 let currentOrderFilter = 'all';
 let currentPageView = 'dashboard';
+
 let detailOrderId = null;
 let isRefreshing = false;
 let isEditMode = false;
 let editData = {};
+
 let inventoryList = [];
 let salesList = [];
 let filteredInventory = [];
 let filteredSales = [];
 let sellOrderData = null;
+
 let agentsList = [];
 let passwordVisible = {};
+
 let allDeposits = [];
 let filteredDeposits = [];
 let depositCurrentPage = 1;
 const depositPageSize = 15;
+
 let currentSalaryMode = 'today';
 let currentSalaryPeriod = null;
+
 let overheadPerPhone = 0;
 let overheadCache = { version: -1, value: 0 };
 
 // ================================================================
 // TOAST
 // ================================================================
-const toastEl = document.getElementById('toast');
+const toastEl = $('toast');
 
 function showToast(msg, type = 'info', duration = 3000) {
   if (!toastEl) return;
+
   toastEl.textContent = msg;
   toastEl.className = 'toast-fixed ' + type;
   void toastEl.offsetWidth;
   toastEl.classList.add('show');
+
   clearTimeout(toastEl._timer);
   toastEl._timer = setTimeout(() => toastEl.classList.remove('show'), duration);
 }
@@ -485,13 +574,13 @@ function showToast(msg, type = 'info', duration = 3000) {
 // SIDEBAR / NAV
 // ================================================================
 function toggleSidebar() {
-  document.getElementById('sidebar').classList.toggle('open');
-  document.getElementById('sidebarOverlay').classList.toggle('open');
+  $('sidebar')?.classList.toggle('open');
+  $('sidebarOverlay')?.classList.toggle('open');
 }
 
 function closeSidebar() {
-  document.getElementById('sidebar').classList.remove('open');
-  document.getElementById('sidebarOverlay').classList.remove('open');
+  $('sidebar')?.classList.remove('open');
+  $('sidebarOverlay')?.classList.remove('open');
 }
 
 function navigate(page) {
@@ -505,7 +594,7 @@ function navigate(page) {
     el.style.display = 'none';
   });
 
-  const target = document.getElementById('page-' + page);
+  const target = $('page-' + page);
   if (target) {
     target.style.display = 'block';
     target.classList.remove('fade-in');
@@ -535,7 +624,7 @@ function refreshCurrentPage(force = false) {
 // ================================================================
 async function loadDashboard(force = false) {
   try {
-    const [pickups, pending, users, deposits, allAttendance] = await Promise.all([
+    const [pickups, pending, users, deposits, attendance] = await Promise.all([
       getData('pickups', force),
       getData('pending', force),
       getData('users', force),
@@ -543,8 +632,15 @@ async function loadDashboard(force = false) {
       getData('attendance', force)
     ]);
 
-    let total = 0, pickupCount = 0, rejectedCount = 0, rescheduleCount = 0;
-    let soldCount = 0, unsoldCount = 0, revenue = 0, profit = 0, totalCommission = 0;
+    let total = 0;
+    let pickupCount = 0;
+    let rejectedCount = 0;
+    let rescheduleCount = 0;
+    let soldCount = 0;
+    let unsoldCount = 0;
+    let revenue = 0;
+    let profit = 0;
+    let totalCommission = 0;
     let totalStockValue = 0;
 
     Object.values(pickups).forEach(item => {
@@ -565,7 +661,7 @@ async function loadDashboard(force = false) {
           profit += itemProfit;
         } else {
           unsoldCount++;
-          totalStockValue += (item.value || 0);
+          totalStockValue += item.value || 0;
         }
       } else if (item.status === 'rejected') {
         rejectedCount++;
@@ -575,15 +671,16 @@ async function loadDashboard(force = false) {
     });
 
     const pendingCount = Object.keys(pending).length;
+    const today = getLocalYMD();
+
     let totalAgents = 0;
     let presentToday = 0;
-    const today = getLocalYMD();
 
     for (const [uname, uData] of Object.entries(users)) {
       const role = uData.role || 'agent';
       if (role === 'agent' && uData.is_active !== false) {
         totalAgents++;
-        const att = allAttendance[uname] && allAttendance[uname][today];
+        const att = attendance[uname] && attendance[uname][today];
         if (att && att.status === 'present') presentToday++;
       }
     }
@@ -597,63 +694,45 @@ async function loadDashboard(force = false) {
     const dashOverheadPerPhone = soldCount > 0 ? totalOverhead / soldCount : 0;
     const finalNetProfit = profit - (dashOverheadPerPhone * soldCount);
 
-    document.getElementById('statTotal').textContent = total;
-    document.getElementById('statPickup').textContent = pickupCount;
-    document.getElementById('statRejected').textContent = rejectedCount;
-    document.getElementById('statPending').textContent = pendingCount;
-    document.getElementById('statInventory').textContent = unsoldCount;
-    document.getElementById('statSold').textContent = soldCount;
-    document.getElementById('statRevenue').textContent = formatINR(revenue);
-    document.getElementById('statProfit').textContent = formatINR(profit);
-    document.getElementById('statFinalProfit').textContent = formatINR(finalNetProfit);
-    document.getElementById('statStockValue').textContent = formatINR(totalStockValue);
-    document.getElementById('statAgents').textContent = totalAgents;
-    document.getElementById('statPresentToday').textContent = presentToday;
-    document.getElementById('statCommission').textContent = formatINR(totalCommission);
+    setText('statTotal', total);
+    setText('statPickup', pickupCount);
+    setText('statRejected', rejectedCount);
+    setText('statPending', pendingCount);
+    setText('statInventory', unsoldCount);
+    setText('statSold', soldCount);
+    setText('statRevenue', formatINR(revenue));
+    setText('statProfit', formatINR(profit));
+    setText('statFinalProfit', formatINR(finalNetProfit));
+    setText('statStockValue', formatINR(totalStockValue));
+    setText('statAgents', totalAgents);
+    setText('statPresentToday', presentToday);
+    setText('statCommission', formatINR(totalCommission));
 
-    document.getElementById('orderCountBadge').textContent = total;
-    document.getElementById('pendingBadge').textContent = pendingCount;
-    document.getElementById('rejectedBadge').textContent = rejectedCount;
-    document.getElementById('inventoryBadge').textContent = unsoldCount;
-    document.getElementById('salesBadge').textContent = soldCount;
-    document.getElementById('agentsBadge').textContent = totalAgents;
-    document.getElementById('attendanceBadge').textContent = presentToday + '/' + totalAgents;
-    document.getElementById('depositsBadge').textContent = Object.keys(deposits).length;
+    setText('orderCountBadge', total);
+    setText('pendingBadge', pendingCount);
+    setText('rejectedBadge', rejectedCount);
+    setText('inventoryBadge', unsoldCount);
+    setText('salesBadge', soldCount);
+    setText('agentsBadge', totalAgents);
+    setText('attendanceBadge', presentToday + '/' + totalAgents);
+    setText('depositsBadge', Object.keys(deposits).length);
 
     const recent = Object.entries(pickups)
       .sort((a, b) => (b[1].timestamp || 0) - (a[1].timestamp || 0))
       .slice(0, 10);
 
-    const container = document.getElementById('recentList');
+    const container = $('recentList');
 
-    if (recent.length === 0) {
-      container.innerHTML = `<div class="empty-state"><i data-lucide="inbox"></i><p class="text-sm font-medium">No activity yet</p></div>`;
+    if (!recent.length) {
+      setHTML('recentList', `<div class="empty-state"><i data-lucide="inbox"></i><p class="text-sm font-medium">No activity yet</p></div>`);
     } else {
       let html = '';
 
       recent.forEach(([id, item]) => {
-        const statusLabel = item.status || 'unknown';
-
-        const statusClass = statusLabel === 'pickup'
-          ? (item.sold ? 'sold' : 'pickup')
-          : statusLabel === 'rejected'
-            ? 'rejected'
-            : statusLabel === 'on_hold'
-              ? 'on_hold'
-              : 'reschedule';
-
-        const displayName = statusLabel === 'pickup'
-          ? (item.sold ? 'Sold' : 'Pickup')
-          : statusLabel === 'rejected'
-            ? 'Rejected'
-            : statusLabel === 'on_hold'
-              ? 'Hold'
-              : 'Pending';
-
         html += `
           <div class="flex items-center justify-between py-2.5 px-3 rounded-xl hover:bg-gray-50 transition cursor-pointer" onclick="viewOrder('${id}')">
             <div class="flex items-center gap-3 min-w-0">
-              <span class="badge-status ${statusClass}">${displayName}</span>
+              <span class="badge-status ${getStatusClass(item)}">${getStatusDisplay(item)}</span>
               <span class="font-mono font-bold text-gray-700 text-sm truncate">${id}</span>
               <span class="text-xs text-gray-400 hidden sm:inline">${item.phoneModel || '—'}</span>
               <span class="text-xs text-gray-400 hidden md:inline">(${item.agent || '—'})</span>
@@ -663,7 +742,7 @@ async function loadDashboard(force = false) {
         `;
       });
 
-      container.innerHTML = html;
+      setHTML('recentList', html);
     }
 
     refreshIcons();
@@ -713,7 +792,8 @@ function applyOrderFilter(filter) {
     filtered = filtered.filter(item => item.status === filter);
   }
 
-  const query = document.getElementById('orderSearch').value.trim();
+  const query = getVal('orderSearch').trim();
+
   if (query && window.Fuse) {
     const fuse = new Fuse(filtered, {
       keys: ['orderId', 'phoneModel', 'imei', 'customerName', 'agent', 'color'],
@@ -724,8 +804,8 @@ function applyOrderFilter(filter) {
     filtered = fuse.search(query).map(r => r.item);
   }
 
-  const dateFrom = document.getElementById('orderDateFrom').value;
-  const dateTo = document.getElementById('orderDateTo').value;
+  const dateFrom = getVal('orderDateFrom');
+  const dateTo = getVal('orderDateTo');
 
   if (dateFrom) {
     filtered = filtered.filter(item => {
@@ -741,7 +821,7 @@ function applyOrderFilter(filter) {
     });
   }
 
-  const agentFilter = document.getElementById('orderAgentFilter').value;
+  const agentFilter = getVal('orderAgentFilter');
   if (agentFilter !== 'all') {
     filtered = filtered.filter(item => (item.agent || '') === agentFilter);
   }
@@ -751,17 +831,19 @@ function applyOrderFilter(filter) {
   renderOrdersTable();
 }
 
-function applyOrderAgentFilter() { applyOrderFilter(currentOrderFilter); }
+function applyOrderAgentFilter() {
+  applyOrderFilter(currentOrderFilter);
+}
 
 function clearOrderAgentFilter() {
-  document.getElementById('orderAgentFilter').value = 'all';
+  setVal('orderAgentFilter', 'all');
   applyOrderFilter(currentOrderFilter);
 }
 
 async function loadAgentsForFilter(force = false) {
   try {
     const data = await getData('users', force);
-    const select = document.getElementById('orderAgentFilter');
+    const select = $('orderAgentFilter');
     if (!select) return;
 
     const currentVal = select.value;
@@ -782,39 +864,53 @@ async function loadAgentsForFilter(force = false) {
   }
 }
 
-function applyOrderDateFilter() { applyOrderFilter(currentOrderFilter); }
+function applyOrderDateFilter() {
+  applyOrderFilter(currentOrderFilter);
+}
 
 function clearOrderDateFilter() {
-  document.getElementById('orderDateFrom').value = '';
-  document.getElementById('orderDateTo').value = '';
+  setVal('orderDateFrom', '');
+  setVal('orderDateTo', '');
   applyOrderFilter(currentOrderFilter);
   showToast('Date filters cleared', 'info');
 }
 
-function setOrderFilter(filter) { applyOrderFilter(filter); }
-function applyOrderSearch() { applyOrderFilter(currentOrderFilter); }
+function setOrderFilter(filter) {
+  applyOrderFilter(filter);
+}
+
+function applyOrderSearch() {
+  applyOrderFilter(currentOrderFilter);
+}
 
 function clearOrderSearch() {
-  document.getElementById('orderSearch').value = '';
+  setVal('orderSearch', '');
   applyOrderFilter(currentOrderFilter);
 }
 
 function renderOrdersTable() {
-  const tbody = document.getElementById('ordersTableBody');
+  const tbody = $('ordersTableBody');
+  if (!tbody) return;
+
   const total = filteredOrders.length;
   const totalPages = Math.ceil(total / pageSize) || 1;
+
   if (currentPage > totalPages) currentPage = totalPages;
 
   const start = (currentPage - 1) * pageSize;
   const end = Math.min(start + pageSize, total);
   const pageItems = filteredOrders.slice(start, end);
 
-  document.getElementById('orderCountDisplay').textContent = total + ' orders';
-  document.getElementById('orderPageInfo').textContent = `${currentPage} / ${totalPages}`;
-  document.getElementById('prevOrderPageBtn').disabled = currentPage <= 1;
-  document.getElementById('nextOrderPageBtn').disabled = currentPage >= totalPages;
+  setText('orderCountDisplay', total + ' orders');
+  setText('orderPageInfo', `${currentPage} / ${totalPages}`);
 
-  if (pageItems.length === 0) {
+  const prevBtn = $('prevOrderPageBtn');
+  const nextBtn = $('nextOrderPageBtn');
+
+  if (prevBtn) prevBtn.disabled = currentPage <= 1;
+  if (nextBtn) nextBtn.disabled = currentPage >= totalPages;
+
+  if (!pageItems.length) {
     tbody.innerHTML = `<tr><td colspan="9"><div class="empty-state"><i data-lucide="inbox"></i><p class="text-sm font-medium">No orders match</p></div></td></tr>`;
     refreshIcons();
     return;
@@ -824,34 +920,12 @@ function renderOrdersTable() {
 
   pageItems.forEach((item, idx) => {
     const num = start + idx + 1;
-    const statusLabel = item.status || 'unknown';
-
-    const statusClass = statusLabel === 'pickup'
-      ? (item.sold ? 'sold' : 'pickup')
-      : statusLabel === 'rejected'
-        ? 'rejected'
-        : statusLabel === 'on_hold'
-          ? 'on_hold'
-          : 'reschedule';
-
-    let displayName = statusLabel === 'pickup'
-      ? (item.sold ? 'Sold' : 'Pickup')
-      : statusLabel === 'rejected'
-        ? 'Rejected'
-        : statusLabel === 'on_hold'
-          ? 'Hold'
-          : 'Pending';
-
-    if (statusLabel === 'on_hold' && item.previous_status) {
-      const prevDisplay = item.previous_status === 'pickup' ? (item.sold ? 'Sold' : 'Pickup') : item.previous_status;
-      displayName = `Hold (was ${prevDisplay})`;
-    }
 
     html += `
       <tr class="order-row border-b border-gray-50">
         <td class="py-3 px-4 text-gray-400 font-mono text-xs">${num}</td>
         <td class="py-3 px-4 font-mono font-bold text-gray-800 text-sm">${item.orderId || item.id}</td>
-        <td class="py-3 px-4"><span class="badge-status ${statusClass}">${displayName}</span></td>
+        <td class="py-3 px-4"><span class="badge-status ${getStatusClass(item)}">${getStatusDisplay(item)}</span></td>
         <td class="py-3 px-4 hidden sm:table-cell text-gray-600 text-sm">${item.phoneModel || '—'}</td>
         <td class="py-3 px-4 hidden md:table-cell font-mono text-xs text-gray-500">${item.imei || '—'}</td>
         <td class="py-3 px-4 hidden lg:table-cell font-bold text-gray-700">${item.value !== undefined && item.value !== null ? formatINR(item.value) : '—'}</td>
@@ -930,13 +1004,14 @@ function refreshOrders() {
 async function loadPendingAdmin(force = false) {
   try {
     const data = await getData('pending', force);
+
     const items = Object.entries(data).map(([id, item]) => ({ id, ...item }));
     items.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
 
-    const container = document.getElementById('pendingListAdmin');
+    const container = $('pendingListAdmin');
 
-    if (items.length === 0) {
-      container.innerHTML = `<div class="empty-state"><i data-lucide="inbox"></i><p class="text-sm font-medium">No pending orders</p></div>`;
+    if (!items.length) {
+      setHTML('pendingListAdmin', `<div class="empty-state"><i data-lucide="inbox"></i><p class="text-sm font-medium">No pending orders</p></div>`);
     } else {
       let html = '';
 
@@ -963,11 +1038,11 @@ async function loadPendingAdmin(force = false) {
         `;
       });
 
-      container.innerHTML = html;
+      setHTML('pendingListAdmin', html);
     }
 
     refreshIcons();
-    document.getElementById('pendingBadge').textContent = items.length;
+    setText('pendingBadge', items.length);
   } catch (e) {
     console.error(e);
     showToast('Error loading pending', 'error');
@@ -1018,10 +1093,10 @@ async function loadRejectedAdmin(force = false) {
 
     items.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
 
-    const tbody = document.getElementById('rejectedTableBody');
+    const tbody = $('rejectedTableBody');
 
-    if (items.length === 0) {
-      tbody.innerHTML = `<tr><td colspan="7"><div class="empty-state"><i data-lucide="inbox"></i><p class="text-sm font-medium">No rejected orders</p></div></td></tr>`;
+    if (!items.length) {
+      setHTML('rejectedTableBody', `<tr><td colspan="7"><div class="empty-state"><i data-lucide="inbox"></i><p class="text-sm font-medium">No rejected orders</p></div></td></tr>`);
     } else {
       let html = '';
 
@@ -1051,11 +1126,11 @@ async function loadRejectedAdmin(force = false) {
         `;
       });
 
-      tbody.innerHTML = html;
+      setHTML('rejectedTableBody', html);
     }
 
     refreshIcons();
-    document.getElementById('rejectedBadge').textContent = items.length;
+    setText('rejectedBadge', items.length);
   } catch (e) {
     console.error(e);
     showToast('Error loading rejected', 'error');
@@ -1094,12 +1169,18 @@ async function toggleRejectApproval(orderId, approve) {
       return;
     }
 
-    await db.ref('pickups/' + orderId + '/incentive_approved').set(approve);
-    await db.ref('pickups/' + orderId + '/incentive_paid').set(false);
+    const updates = {
+      incentive_approved: approve,
+      incentive_paid: false
+    };
 
     if (approve) {
-      await db.ref('pickups/' + orderId + '/incentive_approved_at').set(Date.now());
-    } else {
+      updates.incentive_approved_at = Date.now();
+    }
+
+    await db.ref('pickups/' + orderId).update(updates);
+
+    if (!approve) {
       await db.ref('pickups/' + orderId + '/incentive_approved_at').remove();
     }
 
@@ -1145,7 +1226,7 @@ async function loadInventory(force = false) {
 }
 
 function applyInventorySearch() {
-  const query = document.getElementById('inventorySearch').value.trim();
+  const query = getVal('inventorySearch').trim();
   let filtered = inventoryList;
 
   if (query && window.Fuse) {
@@ -1160,18 +1241,19 @@ function applyInventorySearch() {
 
   filteredInventory = filtered;
   renderInventoryTable();
-  document.getElementById('inventoryCount').textContent = filteredInventory.length + ' units';
+  setText('inventoryCount', filteredInventory.length + ' units');
 }
 
 function clearInventorySearch() {
-  document.getElementById('inventorySearch').value = '';
+  setVal('inventorySearch', '');
   applyInventorySearch();
 }
 
 function renderInventoryTable() {
-  const tbody = document.getElementById('inventoryTableBody');
+  const tbody = $('inventoryTableBody');
+  if (!tbody) return;
 
-  if (filteredInventory.length === 0) {
+  if (!filteredInventory.length) {
     tbody.innerHTML = `<tr><td colspan="8"><div class="empty-state"><i data-lucide="inbox"></i><p class="text-sm font-medium">No inventory available</p></div></td></tr>`;
     refreshIcons();
     return;
@@ -1269,9 +1351,9 @@ async function loadSales(force = false) {
         if (!uData || (uData.role || 'agent') !== 'agent') return;
 
         if (item.status === 'pickup') {
-          totalPickupIncentives += (uData.pickup_incentive || 0);
+          totalPickupIncentives += uData.pickup_incentive || 0;
         } else if (item.status === 'rejected' && Boolean(item.incentive_approved)) {
-          totalRejectIncentives += (uData.reject_incentive || 0);
+          totalRejectIncentives += uData.reject_incentive || 0;
         }
       });
 
@@ -1293,13 +1375,20 @@ async function loadSales(force = false) {
         const commission = item.commission !== undefined ? item.commission : calculateCommission(purchase);
         const grossProfit = (item.salePrice || 0) - purchase - commission;
         const finalNetProfit = grossProfit - overheadPerPhone;
-        return { id, ...item, commission, grossProfit, finalNetProfit };
+
+        return {
+          id,
+          ...item,
+          commission,
+          grossProfit,
+          finalNetProfit
+        };
       });
 
     salesList.sort((a, b) => (b.saleTimestamp || b.timestamp || 0) - (a.saleTimestamp || a.timestamp || 0));
 
     applySalesFilters();
-    document.getElementById('salesBadge').textContent = salesList.length;
+    setText('salesBadge', salesList.length);
 
     setupLiveSearch('salesSearch', 'salesSearchDropdown', salesList, ['orderId', 'phoneModel', 'buyerName', 'agent', 'color']);
   } catch (e) {
@@ -1309,9 +1398,9 @@ async function loadSales(force = false) {
 }
 
 function applySalesFilters() {
-  const query = document.getElementById('salesSearch').value.trim();
-  const dateFrom = document.getElementById('salesDateFrom').value;
-  const dateTo = document.getElementById('salesDateTo').value;
+  const query = getVal('salesSearch').trim();
+  const dateFrom = getVal('salesDateFrom');
+  const dateTo = getVal('salesDateTo');
 
   let filtered = salesList;
 
@@ -1334,15 +1423,18 @@ function applySalesFilters() {
 }
 
 function clearSalesFilters() {
-  document.getElementById('salesSearch').value = '';
-  document.getElementById('salesDateFrom').value = '';
-  document.getElementById('salesDateTo').value = '';
+  setVal('salesSearch', '');
+  setVal('salesDateFrom', '');
+  setVal('salesDateTo', '');
   applySalesFilters();
 }
 
 function updateSalesSummary() {
   const total = filteredSales.length;
-  let revenue = 0, grossProfitTotal = 0, finalProfitTotal = 0;
+
+  let revenue = 0;
+  let grossProfitTotal = 0;
+  let finalProfitTotal = 0;
 
   filteredSales.forEach(item => {
     const purchase = item.value || 0;
@@ -1357,18 +1449,19 @@ function updateSalesSummary() {
     finalProfitTotal += fp || 0;
   });
 
-  document.getElementById('salesTotalCount').textContent = total;
-  document.getElementById('salesTotalRevenue').textContent = formatINR(revenue);
-  document.getElementById('salesTotalGrossProfit').textContent = formatINR(grossProfitTotal);
-  document.getElementById('salesTotalFinalProfit').textContent = formatINR(finalProfitTotal);
-  document.getElementById('salesAvgProfit').textContent = total > 0 ? formatINR(grossProfitTotal / total) : '₹0';
-  document.getElementById('salesOverheadPerPhone').textContent = formatINR(overheadPerPhone);
+  setText('salesTotalCount', total);
+  setText('salesTotalRevenue', formatINR(revenue));
+  setText('salesTotalGrossProfit', formatINR(grossProfitTotal));
+  setText('salesTotalFinalProfit', formatINR(finalProfitTotal));
+  setText('salesAvgProfit', total > 0 ? formatINR(grossProfitTotal / total) : '₹0');
+  setText('salesOverheadPerPhone', formatINR(overheadPerPhone));
 }
 
 function renderSalesTable() {
-  const tbody = document.getElementById('salesTableBody');
+  const tbody = $('salesTableBody');
+  if (!tbody) return;
 
-  if (filteredSales.length === 0) {
+  if (!filteredSales.length) {
     tbody.innerHTML = `<tr><td colspan="13"><div class="empty-state"><i data-lucide="inbox"></i><p class="text-sm font-medium">No sales found</p></div></td></tr>`;
     refreshIcons();
     return;
@@ -1412,7 +1505,7 @@ function refreshSales() {
 }
 
 function exportSalesCSV() {
-  if (filteredSales.length === 0) {
+  if (!filteredSales.length) {
     showToast('No data', 'error');
     return;
   }
@@ -1443,6 +1536,7 @@ function exportSalesCSV() {
   });
 
   let csv = '\uFEFF' + headers.join(',') + '\n';
+
   rows.forEach(row => {
     csv += row.map(val => `"${String(val).replace(/"/g, '""')}"`).join(',') + '\n';
   });
@@ -1464,73 +1558,91 @@ function exportSalesCSV() {
 // ================================================================
 function openSellModal(orderId) {
   const order = inventoryList.find(item => item.id === orderId) || ordersById.get(orderId);
+
   if (!order) {
     showToast('Order not found', 'error');
     return;
   }
+
   openSellModalWithOrder(order);
 }
 
 function openSellModalWithOrder(order) {
   sellOrderData = order;
 
-  document.getElementById('sellOrderId').value = order.orderId || order.id;
-  document.getElementById('sellModel').value = order.phoneModel || '—';
-  document.getElementById('sellPurchasePrice').value = formatINR(order.value || 0);
-  document.getElementById('sellSalePrice').value = '';
-  document.getElementById('sellBuyerName').value = '';
-  document.getElementById('sellBuyerContact').value = '';
-  document.getElementById('sellSaleDate').value = getLocalYMD();
+  setVal('sellOrderId', order.orderId || order.id);
+  setVal('sellModel', order.phoneModel || '—');
+  setVal('sellPurchasePrice', formatINR(order.value || 0));
+  setVal('sellSalePrice', '');
+  setVal('sellBuyerName', '');
+  setVal('sellBuyerContact', '');
+  setVal('sellSaleDate', getLocalYMD());
 
-  document.getElementById('sellProfitPreview').className = 'profit-preview neutral';
-  document.getElementById('sellProfitPreview').textContent = 'Enter sale price to see profit (commission based on purchase price)';
+  const preview = $('sellProfitPreview');
+  if (preview) {
+    preview.className = 'profit-preview neutral';
+    preview.textContent = 'Enter sale price to see profit (commission based on purchase price)';
+  }
 
-  document.getElementById('sellModal').style.display = 'flex';
+  const modal = $('sellModal');
+  if (modal) modal.style.display = 'flex';
+
   refreshIcons();
 
-  document.getElementById('sellSalePrice').oninput = updateSellProfitPreview;
+  const salePriceInput = $('sellSalePrice');
+  if (salePriceInput) salePriceInput.oninput = updateSellProfitPreview;
+
   updateSellProfitPreview();
 
-  setTimeout(() => document.getElementById('sellSalePrice').focus(), 300);
+  setTimeout(() => {
+    if (salePriceInput) salePriceInput.focus();
+  }, 300);
 }
 
 function updateSellProfitPreview() {
   const purchase = sellOrderData ? (sellOrderData.value || 0) : 0;
-  const sale = parseFloat(document.getElementById('sellSalePrice').value) || 0;
+  const sale = parseFloat(getVal('sellSalePrice')) || 0;
   const commission = calculateCommission(purchase);
   const grossProfit = sale - purchase - commission;
   const finalProfit = grossProfit - overheadPerPhone;
 
-  const preview = document.getElementById('sellProfitPreview');
-  const breakdown = document.getElementById('sellProfitBreakdown');
+  const preview = $('sellProfitPreview');
+  const breakdown = $('sellProfitBreakdown');
 
   if (sale > 0) {
-    document.getElementById('sellGrossProfit').textContent = formatINR(grossProfit);
-    document.getElementById('sellOverhead').textContent = formatINR(overheadPerPhone);
-    document.getElementById('sellFinalProfit').textContent = formatINR(finalProfit);
+    setText('sellGrossProfit', formatINR(grossProfit));
+    setText('sellOverhead', formatINR(overheadPerPhone));
+    setText('sellFinalProfit', formatINR(finalProfit));
 
-    preview.textContent = `Commission: ${formatINR(commission)} | Gross: ${formatINR(grossProfit)} | Final: ${formatINR(finalProfit)}`;
-    preview.className = finalProfit >= 0 ? 'profit-preview positive' : 'profit-preview negative';
-    breakdown.style.display = 'block';
+    if (preview) {
+      preview.textContent = `Commission: ${formatINR(commission)} | Gross: ${formatINR(grossProfit)} | Final: ${formatINR(finalProfit)}`;
+      preview.className = finalProfit >= 0 ? 'profit-preview positive' : 'profit-preview negative';
+    }
+
+    if (breakdown) breakdown.style.display = 'block';
   } else {
-    preview.textContent = 'Enter sale price to see profit breakdown';
-    preview.className = 'profit-preview neutral';
-    breakdown.style.display = 'none';
+    if (preview) {
+      preview.textContent = 'Enter sale price to see profit breakdown';
+      preview.className = 'profit-preview neutral';
+    }
+
+    if (breakdown) breakdown.style.display = 'none';
   }
 }
 
 function closeSellModal() {
-  document.getElementById('sellModal').style.display = 'none';
+  const modal = $('sellModal');
+  if (modal) modal.style.display = 'none';
   sellOrderData = null;
 }
 
 async function confirmSell() {
   if (!sellOrderData) return;
 
-  const salePrice = parseFloat(document.getElementById('sellSalePrice').value);
-  const buyerName = document.getElementById('sellBuyerName').value.trim();
-  const buyerContact = document.getElementById('sellBuyerContact').value.trim();
-  const saleDate = document.getElementById('sellSaleDate').value;
+  const salePrice = parseFloat(getVal('sellSalePrice'));
+  const buyerName = getVal('sellBuyerName').trim();
+  const buyerContact = getVal('sellBuyerContact').trim();
+  const saleDate = getVal('sellSaleDate');
 
   if (!salePrice || salePrice <= 0) {
     showToast('Valid sale price required', 'error');
@@ -1611,21 +1723,36 @@ async function viewOrder(orderId) {
   detailOrderId = orderId;
   isEditMode = false;
 
-  document.getElementById('detailModalTitle').textContent = 'Order Details';
+  setText('detailModalTitle', 'Order Details');
 
-  const modal = document.getElementById('detailModal');
-  const content = document.getElementById('detailContent');
+  const modal = $('detailModal');
+  const content = $('detailContent');
+
+  if (!modal || !content) return;
 
   modal.style.display = 'flex';
   content.innerHTML = `<div class="text-center py-8"><span class="spinner-sm"></span><p class="text-sm text-gray-400 mt-2">Loading...</p></div>`;
 
-  document.getElementById('detailActions').style.display = 'flex';
-  document.getElementById('detailSaveActions').style.display = 'none';
-  document.getElementById('detailEditBtn').textContent = '✏️ Edit';
-  document.getElementById('detailEditBtn').onclick = toggleEditMode;
-  document.getElementById('detailHoldBtn').style.display = 'inline-flex';
-  document.getElementById('detailHoldBtn').onclick = holdOrderFromDetail;
-  document.getElementById('detailUnholdBtn').style.display = 'none';
+  const detailActions = $('detailActions');
+  const detailSaveActions = $('detailSaveActions');
+  const detailEditBtn = $('detailEditBtn');
+  const detailHoldBtn = $('detailHoldBtn');
+  const detailUnholdBtn = $('detailUnholdBtn');
+
+  if (detailActions) detailActions.style.display = 'flex';
+  if (detailSaveActions) detailSaveActions.style.display = 'none';
+
+  if (detailEditBtn) {
+    detailEditBtn.textContent = '✏️ Edit';
+    detailEditBtn.onclick = toggleEditMode;
+  }
+
+  if (detailHoldBtn) {
+    detailHoldBtn.style.display = 'inline-flex';
+    detailHoldBtn.onclick = holdOrderFromDetail;
+  }
+
+  if (detailUnholdBtn) detailUnholdBtn.style.display = 'none';
 
   try {
     const snap = await db.ref('pickups/' + orderId).once('value');
@@ -1651,12 +1778,14 @@ async function viewOrder(orderId) {
     renderDetailView(item);
 
     if (item.status === 'on_hold') {
-      document.getElementById('detailHoldBtn').style.display = 'none';
-      document.getElementById('detailUnholdBtn').style.display = 'inline-flex';
-      document.getElementById('detailUnholdBtn').onclick = unholdOrderFromDetail;
+      if (detailHoldBtn) detailHoldBtn.style.display = 'none';
+      if (detailUnholdBtn) {
+        detailUnholdBtn.style.display = 'inline-flex';
+        detailUnholdBtn.onclick = unholdOrderFromDetail;
+      }
     } else {
-      document.getElementById('detailHoldBtn').style.display = 'inline-flex';
-      document.getElementById('detailUnholdBtn').style.display = 'none';
+      if (detailHoldBtn) detailHoldBtn.style.display = 'inline-flex';
+      if (detailUnholdBtn) detailUnholdBtn.style.display = 'none';
     }
   } catch (err) {
     console.error(err);
@@ -1667,29 +1796,8 @@ async function viewOrder(orderId) {
 
 function renderDetailView(item) {
   try {
-    const content = document.getElementById('detailContent');
-    const statusLabel = item.status || 'unknown';
-
-    const statusClass = statusLabel === 'pickup'
-      ? (item.sold ? 'sold' : 'pickup')
-      : statusLabel === 'rejected'
-        ? 'rejected'
-        : statusLabel === 'on_hold'
-          ? 'on_hold'
-          : 'reschedule';
-
-    let displayName = statusLabel === 'pickup'
-      ? (item.sold ? 'Sold' : 'Pickup')
-      : statusLabel === 'rejected'
-        ? 'Rejected'
-        : statusLabel === 'on_hold'
-          ? 'Hold'
-          : 'Pending';
-
-    if (statusLabel === 'on_hold' && item.previous_status) {
-      const prevDisplay = item.previous_status === 'pickup' ? (item.sold ? 'Sold' : 'Pickup') : item.previous_status;
-      displayName = `Hold (was ${prevDisplay})`;
-    }
+    const content = $('detailContent');
+    if (!content) return;
 
     let commissionDisplay = '—';
     let grossProfitDisplay = '—';
@@ -1735,7 +1843,7 @@ function renderDetailView(item) {
 
     let html = `
       <div class="flex items-center gap-3 mb-4">
-        <span class="badge-status ${statusClass} text-sm px-4 py-1.5">${displayName}</span>
+        <span class="badge-status ${getStatusClass(item)} text-sm px-4 py-1.5">${getStatusDisplay(item)}</span>
         <span class="font-mono font-bold text-gray-800 text-sm">${item.orderId || item.id}</span>
         ${item.agent ? `<span class="text-xs text-gray-400">(Agent: ${item.agent})</span>` : ''}
       </div>
@@ -1749,7 +1857,7 @@ function renderDetailView(item) {
         <div class="detail-item"><div class="label">RAM / Storage</div><div class="value">${getRamStorageText(item) || '—'}</div></div>
         <div class="detail-item"><div class="label">Network</div><div class="value">${item.networkType || '—'}</div></div>
         <div class="detail-item"><div class="label">Reason</div><div class="value">${item.reason || '—'}</div></div>
-        <div class="detail-item"><div class="label">Status</div><div class="value">${displayName}</div></div>
+        <div class="detail-item"><div class="label">Status</div><div class="value">${getStatusDisplay(item)}</div></div>
         <div class="detail-item"><div class="label">Time (IST)</div><div class="value text-xs">${item.timestampIST || item.timestamp || '—'}</div></div>
         ${holdHtml}
         ${saleHtml}
@@ -1762,7 +1870,7 @@ function renderDetailView(item) {
     const docCard = (which, label, num, imgs, colorClass) => {
       let gallery;
 
-      if (imgs.length === 0) {
+      if (!imgs.length) {
         gallery = `<div class="w-full h-32 rounded-lg border-2 border-dashed border-gray-200 flex items-center justify-center text-gray-400 text-xs">No image</div>`;
       } else {
         gallery = `<div class="grid grid-cols-3 gap-2">` + imgs.map((img, i) => {
@@ -1770,7 +1878,7 @@ function renderDetailView(item) {
 
           return `
             <div class="relative group">
-              <img src="${img}" onclick="openImageViewer('${esc(img)}','${label} ${i + 1}')" class="w-full h-24 object-cover rounded-lg border border-gray-200 cursor-zoom-in hover:opacity-90 transition" alt="${label} ${i + 1}">
+              <img loading="lazy" src="${img}" onclick="openImageViewer('${esc(img)}','${label} ${i + 1}')" class="w-full h-24 object-cover rounded-lg border border-gray-200 cursor-zoom-in hover:opacity-90 transition" alt="${label} ${i + 1}">
               <button onclick="adminDeleteDocImage('${which}',${i})" class="absolute -top-1.5 -right-1.5 w-6 h-6 rounded-full bg-red-600 text-white text-xs font-bold shadow-md hover:bg-red-700" title="Delete">✕</button>
               <div class="absolute bottom-0 left-0 right-0 bg-black/50 text-white text-[9px] text-center rounded-b-lg">${kb}KB</div>
             </div>
@@ -1805,7 +1913,7 @@ function renderDetailView(item) {
     editData = { ...item };
   } catch (e) {
     console.error('renderDetailView error:', e);
-    document.getElementById('detailContent').innerHTML = `<div class="empty-state"><i data-lucide="alert-circle"></i><p class="text-sm font-medium text-red-500">Render error</p></div>`;
+    setHTML('detailContent', `<div class="empty-state"><i data-lucide="alert-circle"></i><p class="text-sm font-medium text-red-500">Render error</p></div>`);
     showToast('Error rendering details', 'error');
   }
 }
@@ -1957,23 +2065,26 @@ async function refreshOrderRelated() {
 // ================================================================
 function toggleEditMode() {
   if (isEditMode) return;
+
   isEditMode = true;
 
-  document.getElementById('detailModalTitle').textContent = 'Edit Order';
+  setText('detailModalTitle', 'Edit Order');
 
-  const actBar = document.getElementById('detailActions');
-  const saveBar = document.getElementById('detailSaveActions');
+  const actBar = $('detailActions');
+  const saveBar = $('detailSaveActions');
 
   if (actBar) actBar.style.display = 'none';
+
   if (saveBar) {
     saveBar.style.setProperty('display', 'flex', 'important');
     saveBar.style.zIndex = '20';
   }
 
-  const content = document.getElementById('detailContent');
+  const content = $('detailContent');
   const item = editData;
 
   let datetimeVal = '';
+
   if (item.timestamp) {
     const d = new Date(item.timestamp);
     if (!isNaN(d)) {
@@ -2045,7 +2156,7 @@ function toggleEditMode() {
           <button type="button" onclick="adminUploadDocImage('bill')" class="w-full py-2.5 rounded-lg border-2 border-dashed border-blue-300 bg-blue-50 text-blue-700 font-semibold text-sm">
             ${getDocImages(item, 'bill').length >= ADMIN_MAX_DOC_IMAGES ? '✅ Max reached' : '➕ Add Bill Image'}
           </button>
-          ${getDocImages(item, 'bill').length ? `<div class="mt-2 grid grid-cols-3 gap-2">${getDocImages(item, 'bill').map((im, i) => `<div class="relative"><img src="${im}" onclick="openImageViewer('${esc(im)}','Bill ${i + 1}')" class="w-full h-20 object-cover rounded-lg border cursor-zoom-in"><button type="button" onclick="adminDeleteDocImage('bill',${i})" class="absolute -top-1.5 -right-1.5 w-6 h-6 rounded-full bg-red-600 text-white text-xs font-bold shadow-md">✕</button></div>`).join('')}</div>` : ''}
+          ${getDocImages(item, 'bill').length ? `<div class="mt-2 grid grid-cols-3 gap-2">${getDocImages(item, 'bill').map((im, i) => `<div class="relative"><img loading="lazy" src="${im}" onclick="openImageViewer('${esc(im)}','Bill ${i + 1}')" class="w-full h-20 object-cover rounded-lg border cursor-zoom-in"><button type="button" onclick="adminDeleteDocImage('bill',${i})" class="absolute -top-1.5 -right-1.5 w-6 h-6 rounded-full bg-red-600 text-white text-xs font-bold shadow-md">✕</button></div>`).join('')}</div>` : ''}
         </div>
 
         <div class="mt-3"><label class="edit-label">Aadhaar Number</label><input type="text" id="edit-aadhaarNumber" value="${item.aadhaarNumber || ''}" class="edit-field font-mono" placeholder="Optional" maxlength="14"></div>
@@ -2055,7 +2166,7 @@ function toggleEditMode() {
           <button type="button" onclick="adminUploadDocImage('aadhaar')" class="w-full py-2.5 rounded-lg border-2 border-dashed border-indigo-300 bg-indigo-50 text-indigo-700 font-semibold text-sm">
             ${getDocImages(item, 'aadhaar').length >= ADMIN_MAX_DOC_IMAGES ? '✅ Max reached' : '➕ Add Aadhaar Image'}
           </button>
-          ${getDocImages(item, 'aadhaar').length ? `<div class="mt-2 grid grid-cols-3 gap-2">${getDocImages(item, 'aadhaar').map((im, i) => `<div class="relative"><img src="${im}" onclick="openImageViewer('${esc(im)}','Aadhaar ${i + 1}')" class="w-full h-20 object-cover rounded-lg border cursor-zoom-in"><button type="button" onclick="adminDeleteDocImage('aadhaar',${i})" class="absolute -top-1.5 -right-1.5 w-6 h-6 rounded-full bg-red-600 text-white text-xs font-bold shadow-md">✕</button></div>`).join('')}</div>` : ''}
+          ${getDocImages(item, 'aadhaar').length ? `<div class="mt-2 grid grid-cols-3 gap-2">${getDocImages(item, 'aadhaar').map((im, i) => `<div class="relative"><img loading="lazy" src="${im}" onclick="openImageViewer('${esc(im)}','Aadhaar ${i + 1}')" class="w-full h-20 object-cover rounded-lg border cursor-zoom-in"><button type="button" onclick="adminDeleteDocImage('aadhaar',${i})" class="absolute -top-1.5 -right-1.5 w-6 h-6 rounded-full bg-red-600 text-white text-xs font-bold shadow-md">✕</button></div>`).join('')}</div>` : ''}
         </div>
       </div>
   `;
@@ -2073,6 +2184,7 @@ function toggleEditMode() {
   }
 
   html += `</div>`;
+
   content.innerHTML = html;
   refreshIcons();
 
@@ -2080,7 +2192,7 @@ function toggleEditMode() {
     setupImeiValidation('edit-imei', 'imeiAllowBtn');
     setupImeiValidation('edit-imei2', 'imei2AllowBtn');
 
-    const saveBar = document.getElementById('detailSaveActions');
+    const saveBar = $('detailSaveActions');
     if (saveBar) {
       saveBar.style.setProperty('display', 'flex', 'important');
       try {
@@ -2091,8 +2203,9 @@ function toggleEditMode() {
 }
 
 function toggleImeiLimit(inputId, btnId) {
-  const input = document.getElementById(inputId);
-  const btn = document.getElementById(btnId);
+  const input = $(inputId);
+  const btn = $(btnId);
+
   if (!input || !btn) return;
 
   const currentMax = input.maxLength;
@@ -2136,8 +2249,9 @@ function toggleImeiLimit(inputId, btnId) {
 }
 
 function setupImeiValidation(inputId, btnId) {
-  const input = document.getElementById(inputId);
-  const btn = document.getElementById(btnId);
+  const input = $(inputId);
+  const btn = $(btnId);
+
   if (!input) return;
 
   input.addEventListener('input', function () {
@@ -2182,13 +2296,23 @@ function cancelEdit() {
   if (detailOrderId) {
     db.ref('pickups/' + detailOrderId).once('value').then(snap => {
       const item = snap.val();
+
       if (item) {
         renderDetailView(item);
-        document.getElementById('detailActions').style.display = 'flex';
-        document.getElementById('detailSaveActions').style.display = 'none';
-        document.getElementById('detailModalTitle').textContent = 'Order Details';
-        document.getElementById('detailEditBtn').textContent = '✏️ Edit';
-        document.getElementById('detailEditBtn').onclick = toggleEditMode;
+
+        const detailActions = $('detailActions');
+        const detailSaveActions = $('detailSaveActions');
+        const detailEditBtn = $('detailEditBtn');
+
+        if (detailActions) detailActions.style.display = 'flex';
+        if (detailSaveActions) detailSaveActions.style.display = 'none';
+        setText('detailModalTitle', 'Order Details');
+
+        if (detailEditBtn) {
+          detailEditBtn.textContent = '✏️ Edit';
+          detailEditBtn.onclick = toggleEditMode;
+        }
+
         editData = { ...item, id: detailOrderId };
       }
     });
@@ -2204,30 +2328,30 @@ async function saveEdit() {
     return;
   }
 
-  const orderId = document.getElementById('edit-orderId').value.trim();
-  const status = document.getElementById('edit-status').value;
-  const model = document.getElementById('edit-model').value.trim();
-  const imei = document.getElementById('edit-imei').value.trim();
-  const imei2 = document.getElementById('edit-imei2').value.trim();
-  const value = parseFloat(document.getElementById('edit-value').value) || 0;
-  const customer = document.getElementById('edit-customer').value.trim();
-  const reason = document.getElementById('edit-reason').value.trim();
-  const ramVal = document.getElementById('edit-ram')?.value || '';
-  const storageVal = document.getElementById('edit-storage')?.value || '';
-  const networkVal = document.getElementById('edit-network')?.value || '';
-  const datetimeVal = document.getElementById('edit-datetime').value;
-  const salePrice = parseFloat(document.getElementById('edit-salePrice')?.value) || 0;
-  const buyer = document.getElementById('edit-buyer')?.value.trim() || '';
-  const buyerContact = document.getElementById('edit-buyerContact')?.value.trim() || '';
-  const saleDate = document.getElementById('edit-saleDate')?.value || '';
+  const orderId = getVal('edit-orderId').trim();
+  const status = getVal('edit-status');
+  const model = getVal('edit-model').trim();
+  const imei = getVal('edit-imei').trim();
+  const imei2 = getVal('edit-imei2').trim();
+  const value = parseFloat(getVal('edit-value')) || 0;
+  const customer = getVal('edit-customer').trim();
+  const reason = getVal('edit-reason').trim();
+  const ramVal = getVal('edit-ram') || '';
+  const storageVal = getVal('edit-storage') || '';
+  const networkVal = getVal('edit-network') || '';
+  const datetimeVal = getVal('edit-datetime');
+  const salePrice = parseFloat(getVal('edit-salePrice')) || 0;
+  const buyer = getVal('edit-buyer').trim() || '';
+  const buyerContact = getVal('edit-buyerContact').trim() || '';
+  const saleDate = getVal('edit-saleDate') || '';
 
   if (!orderId) {
     showToast('Order ID required', 'error');
     return;
   }
 
-  const billNumberVal = (document.getElementById('edit-billNumber')?.value || '').trim();
-  const aadhaarNumberVal = (document.getElementById('edit-aadhaarNumber')?.value || '').trim();
+  const billNumberVal = getVal('edit-billNumber').trim();
+  const aadhaarNumberVal = getVal('edit-aadhaarNumber').trim();
 
   let updated = {
     orderId,
@@ -2250,6 +2374,7 @@ async function saveEdit() {
 
   if (datetimeVal) {
     const d = new Date(datetimeVal);
+
     if (!isNaN(d)) {
       updated.timestamp = d.toISOString();
 
@@ -2257,6 +2382,7 @@ async function saveEdit() {
       const istTime = new Date(d.getTime() + istOffset);
 
       const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
       const dd = String(istTime.getUTCDate()).padStart(2, '0');
       const mmm = months[istTime.getUTCMonth()];
       const yyyy = istTime.getUTCFullYear();
@@ -2265,6 +2391,7 @@ async function saveEdit() {
       const minutes = String(istTime.getUTCMinutes()).padStart(2, '0');
       const seconds = String(istTime.getUTCSeconds()).padStart(2, '0');
       const ampm = hours >= 12 ? 'PM' : 'AM';
+
       hours = hours % 12 || 12;
       const hh = String(hours).padStart(2, '0');
 
@@ -2310,6 +2437,7 @@ async function saveEdit() {
 
   try {
     await db.ref('pickups/' + detailOrderId).update(updated);
+
     invalidate('pickups');
     showToast('✅ Updated', 'success');
 
@@ -2320,11 +2448,20 @@ async function saveEdit() {
 
     if (item) {
       renderDetailView(item);
-      document.getElementById('detailActions').style.display = 'flex';
-      document.getElementById('detailSaveActions').style.display = 'none';
-      document.getElementById('detailModalTitle').textContent = 'Order Details';
-      document.getElementById('detailEditBtn').textContent = '✏️ Edit';
-      document.getElementById('detailEditBtn').onclick = toggleEditMode;
+
+      const detailActions = $('detailActions');
+      const detailSaveActions = $('detailSaveActions');
+      const detailEditBtn = $('detailEditBtn');
+
+      if (detailActions) detailActions.style.display = 'flex';
+      if (detailSaveActions) detailSaveActions.style.display = 'none';
+      setText('detailModalTitle', 'Order Details');
+
+      if (detailEditBtn) {
+        detailEditBtn.textContent = '✏️ Edit';
+        detailEditBtn.onclick = toggleEditMode;
+      }
+
       editData = { ...item, id: detailOrderId };
     }
 
@@ -2385,18 +2522,24 @@ function deleteOrderFromDetail() {
 }
 
 function closeDetail() {
-  document.getElementById('detailModal').style.display = 'none';
+  const modal = $('detailModal');
+  if (modal) modal.style.display = 'none';
+
   detailOrderId = null;
   isEditMode = false;
-  document.getElementById('detailActions').style.display = 'flex';
-  document.getElementById('detailSaveActions').style.display = 'none';
+
+  const detailActions = $('detailActions');
+  const detailSaveActions = $('detailSaveActions');
+
+  if (detailActions) detailActions.style.display = 'flex';
+  if (detailSaveActions) detailSaveActions.style.display = 'none';
 }
 
 // ================================================================
 // EXPORT ORDERS CSV
 // ================================================================
 function exportCSV() {
-  if (allOrders.length === 0) {
+  if (!allOrders.length) {
     showToast('No data', 'error');
     return;
   }
@@ -2419,6 +2562,7 @@ function exportCSV() {
   ]);
 
   let csv = '\uFEFF' + headers.join(',') + '\n';
+
   rows.forEach(row => {
     csv += row.map(val => `"${String(val).replace(/"/g, '""')}"`).join(',') + '\n';
   });
@@ -2446,7 +2590,7 @@ async function loadDeposits(force = false) {
     allDeposits.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
 
     applyDepositFilters();
-    updateDepositStats();
+    await updateDepositStats();
   } catch (e) {
     console.error('Load deposits error:', e);
     showToast('Error loading deposits', 'error');
@@ -2456,8 +2600,8 @@ async function loadDeposits(force = false) {
 function applyDepositFilters() {
   let filtered = [...allDeposits];
 
-  const dateFrom = document.getElementById('depositDateFrom').value;
-  const dateTo = document.getElementById('depositDateTo').value;
+  const dateFrom = getVal('depositDateFrom');
+  const dateTo = getVal('depositDateTo');
 
   if (dateFrom) {
     filtered = filtered.filter(item => item.date && item.date >= dateFrom);
@@ -2477,42 +2621,48 @@ function applyDepositDateFilter() {
 }
 
 function clearDepositDateFilter() {
-  document.getElementById('depositDateFrom').value = '';
-  document.getElementById('depositDateTo').value = '';
+  setVal('depositDateFrom', '');
+  setVal('depositDateTo', '');
   applyDepositFilters();
   showToast('Date filters cleared', 'info');
 }
 
 async function updateDepositStats() {
   let total = 0;
+
   allDeposits.forEach(d => {
     total += d.amount || 0;
   });
 
-  document.getElementById('depositTotal').textContent = formatINR(total);
-  document.getElementById('depositCount').textContent = allDeposits.length;
-  document.getElementById('depositCountDisplay').textContent = allDeposits.length + ' entries';
-  document.getElementById('depositsBadge').textContent = allDeposits.length;
+  setText('depositTotal', formatINR(total));
+  setText('depositCount', allDeposits.length);
+  setText('depositCountDisplay', allDeposits.length + ' entries');
+  setText('depositsBadge', allDeposits.length);
 
   let stockValue = 0;
   let totalCommission = 0;
 
-  const sourceOrders = allOrders.length ? allOrders : Object.entries(cache.pickups || {}).map(([id, item]) => ({ id, ...item }));
+  const pickups = cache.pickups || await getData('pickups', false);
 
-  sourceOrders.forEach(item => {
+  Object.values(pickups).forEach(item => {
     if (item.status === 'pickup') stockValue += item.value || 0;
+
     if (item.status !== 'on_hold') {
-      totalCommission += item.commission !== undefined ? item.commission : calculateCommission(item.value || 0);
+      totalCommission += item.commission !== undefined
+        ? item.commission
+        : calculateCommission(item.value || 0);
     }
   });
 
-  document.getElementById('depositStockValue').textContent = formatINR(stockValue);
-  document.getElementById('depositBalance').textContent = formatINR(total - stockValue);
-  document.getElementById('depositCommission').textContent = formatINR(totalCommission);
+  setText('depositStockValue', formatINR(stockValue));
+  setText('depositBalance', formatINR(total - stockValue));
+  setText('depositCommission', formatINR(totalCommission));
 }
 
 function renderDepositsTable() {
-  const tbody = document.getElementById('depositsTableBody');
+  const tbody = $('depositsTableBody');
+  if (!tbody) return;
+
   const total = filteredDeposits.length;
   const totalPages = Math.ceil(total / depositPageSize) || 1;
 
@@ -2522,12 +2672,16 @@ function renderDepositsTable() {
   const end = Math.min(start + depositPageSize, total);
   const pageItems = filteredDeposits.slice(start, end);
 
-  document.getElementById('depositCountDisplay').textContent = total + ' entries';
-  document.getElementById('depositPageInfo').textContent = `${depositCurrentPage} / ${totalPages}`;
-  document.getElementById('prevDepositPageBtn').disabled = depositCurrentPage <= 1;
-  document.getElementById('nextDepositPageBtn').disabled = depositCurrentPage >= totalPages;
+  setText('depositCountDisplay', total + ' entries');
+  setText('depositPageInfo', `${depositCurrentPage} / ${totalPages}`);
 
-  if (pageItems.length === 0) {
+  const prevBtn = $('prevDepositPageBtn');
+  const nextBtn = $('nextDepositPageBtn');
+
+  if (prevBtn) prevBtn.disabled = depositCurrentPage <= 1;
+  if (nextBtn) nextBtn.disabled = depositCurrentPage >= totalPages;
+
+  if (!pageItems.length) {
     tbody.innerHTML = `<tr><td colspan="6"><div class="empty-state"><i data-lucide="inbox"></i><p class="text-sm font-medium">No deposits found</p></div></td></tr>`;
     refreshIcons();
     return;
@@ -2565,6 +2719,7 @@ function prevDepositPage() {
 
 function nextDepositPage() {
   const totalPages = Math.ceil(filteredDeposits.length / depositPageSize);
+
   if (depositCurrentPage < totalPages) {
     depositCurrentPage++;
     renderDepositsTable();
@@ -2574,9 +2729,9 @@ function nextDepositPage() {
 function submitDeposit(e) {
   e.preventDefault();
 
-  const amount = parseFloat(document.getElementById('depositAmount').value);
-  const date = document.getElementById('depositDate').value || getLocalYMD();
-  const description = document.getElementById('depositDescription').value.trim();
+  const amount = parseFloat(getVal('depositAmount'));
+  const date = getVal('depositDate') || getLocalYMD();
+  const description = getVal('depositDescription').trim();
 
   if (!amount || amount <= 0) {
     showToast('Please enter a valid amount', 'error');
@@ -2597,6 +2752,7 @@ function submitDeposit(e) {
 
     try {
       const newRef = db.ref('deposits').push();
+
       await newRef.set({
         amount,
         date,
@@ -2607,9 +2763,9 @@ function submitDeposit(e) {
       invalidate('deposits');
       showToast('✅ Deposit added successfully!', 'success');
 
-      document.getElementById('depositAmount').value = '';
-      document.getElementById('depositDescription').value = '';
-      document.getElementById('depositDate').value = getLocalYMD();
+      setVal('depositAmount', '');
+      setVal('depositDescription', '');
+      setVal('depositDate', getLocalYMD());
 
       loadDeposits(true);
       loadDashboard(true);
@@ -2636,8 +2792,10 @@ async function deleteDeposit(depositId) {
 
   try {
     await db.ref('deposits/' + depositId).remove();
+
     invalidate('deposits');
     showToast('🗑️ Deposit deleted', 'success');
+
     loadDeposits(true);
     loadDashboard(true);
   } catch (e) {
@@ -2647,7 +2805,7 @@ async function deleteDeposit(depositId) {
 }
 
 function exportDepositsCSV() {
-  if (filteredDeposits.length === 0) {
+  if (!filteredDeposits.length) {
     showToast('No deposits to export', 'error');
     return;
   }
@@ -2662,6 +2820,7 @@ function exportDepositsCSV() {
   ]);
 
   let csv = '\uFEFF' + headers.join(',') + '\n';
+
   rows.forEach(row => {
     csv += row.map(val => `"${String(val).replace(/"/g, '""')}"`).join(',') + '\n';
   });
@@ -2698,7 +2857,8 @@ async function loadAgents(force = false) {
     agentsList.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
 
     renderAgentsTable();
-    document.getElementById('agentsBadge').textContent = agentsList.filter(u => u.role === 'agent' && u.is_active !== false).length;
+    setText('agentsBadge', agentsList.filter(u => u.role === 'agent' && u.is_active !== false).length);
+
     loadAgentsForFilter(force);
   } catch (e) {
     console.error(e);
@@ -2707,9 +2867,10 @@ async function loadAgents(force = false) {
 }
 
 function renderAgentsTable() {
-  const tbody = document.getElementById('agentsTableBody');
+  const tbody = $('agentsTableBody');
+  if (!tbody) return;
 
-  if (agentsList.length === 0) {
+  if (!agentsList.length) {
     tbody.innerHTML = `<tr><td colspan="11"><div class="empty-state"><i data-lucide="inbox"></i><p class="text-sm font-medium">No users</p></div></td></tr>`;
     refreshIcons();
     return;
@@ -2769,7 +2930,7 @@ function renderAgentsTable() {
   });
 
   tbody.innerHTML = html;
-  document.getElementById('agentsCount').textContent = agentsList.length + ' users';
+  setText('agentsCount', agentsList.length + ' users');
   refreshIcons();
 }
 
@@ -2928,8 +3089,10 @@ async function deleteAgent(username) {
 
   try {
     await db.ref('users/' + username).remove();
+
     invalidate('users');
     showToast('✅ Deleted', 'success');
+
     loadAgents(true);
   } catch (e) {
     showToast('Error', 'error');
@@ -2940,39 +3103,47 @@ async function deleteAgent(username) {
 function registerAgent(e) {
   e.preventDefault();
 
-  const name = document.getElementById('regName').value.trim();
-  const username = document.getElementById('regUsername').value.trim().toLowerCase();
-  const password = document.getElementById('regPassword').value.trim();
-  const mobile = document.getElementById('regMobile').value.trim();
-  const aadhar = document.getElementById('regAadhar').value.trim();
-  const alternate = document.getElementById('regAlternate').value.trim();
-  const role = document.querySelector('input[name="regRole"]:checked').value;
+  const name = getVal('regName').trim();
+  const username = getVal('regUsername').trim().toLowerCase();
+  const password = getVal('regPassword').trim();
+  const mobile = getVal('regMobile').trim();
+  const aadhar = getVal('regAadhar').trim();
+  const alternate = getVal('regAlternate').trim();
 
-  const salary = parseFloat(document.getElementById('regSalary').value.trim()) || 0;
-  const pickupIncentive = parseFloat(document.getElementById('regPickupIncentive').value.trim()) || 0;
-  const rejectIncentive = parseFloat(document.getElementById('regRejectIncentive').value.trim()) || 0;
+  const roleEl = document.querySelector('input[name="regRole"]:checked');
+  const role = roleEl ? roleEl.value : 'agent';
 
-  const errorEl = document.getElementById('agentError');
-  const successEl = document.getElementById('agentSuccess');
+  const salary = parseFloat(getVal('regSalary').trim()) || 0;
+  const pickupIncentive = parseFloat(getVal('regPickupIncentive').trim()) || 0;
+  const rejectIncentive = parseFloat(getVal('regRejectIncentive').trim()) || 0;
 
-  errorEl.style.display = 'none';
-  successEl.style.display = 'none';
+  const errorEl = $('agentError');
+  const successEl = $('agentSuccess');
+
+  if (errorEl) errorEl.style.display = 'none';
+  if (successEl) successEl.style.display = 'none';
 
   if (!name || !username || !password || !mobile) {
-    errorEl.textContent = 'Please fill Name, Username, Password, and Mobile.';
-    errorEl.style.display = 'block';
+    if (errorEl) {
+      errorEl.textContent = 'Please fill Name, Username, Password, and Mobile.';
+      errorEl.style.display = 'block';
+    }
     return;
   }
 
   if (username.length < 3 || password.length < 4 || mobile.length < 10) {
-    errorEl.textContent = 'Username (3+), Password (4+), Mobile (10 digits).';
-    errorEl.style.display = 'block';
+    if (errorEl) {
+      errorEl.textContent = 'Username (3+), Password (4+), Mobile (10 digits).';
+      errorEl.style.display = 'block';
+    }
     return;
   }
 
   if (role === 'agent' && (!salary || !pickupIncentive || !rejectIncentive)) {
-    errorEl.textContent = 'For Agent, Salary, Pickup Incentive and Reject Incentive are required.';
-    errorEl.style.display = 'block';
+    if (errorEl) {
+      errorEl.textContent = 'For Agent, Salary, Pickup Incentive and Reject Incentive are required.';
+      errorEl.style.display = 'block';
+    }
     return;
   }
 
@@ -2997,53 +3168,62 @@ function registerAgent(e) {
 
   db.ref('users/' + username).once('value').then(snap => {
     if (snap.exists()) {
-      errorEl.textContent = 'Username taken.';
-      errorEl.style.display = 'block';
+      if (errorEl) {
+        errorEl.textContent = 'Username taken.';
+        errorEl.style.display = 'block';
+      }
       return;
     }
 
     return db.ref('users/' + username).set(userData);
   }).then(() => {
-    successEl.textContent = '✅ User registered!';
-    successEl.style.display = 'block';
+    if (successEl) {
+      successEl.textContent = '✅ User registered!';
+      successEl.style.display = 'block';
+    }
 
-    document.getElementById('regName').value = '';
-    document.getElementById('regUsername').value = '';
-    document.getElementById('regPassword').value = '';
-    document.getElementById('regMobile').value = '';
-    document.getElementById('regAadhar').value = '';
-    document.getElementById('regAlternate').value = '';
-    document.getElementById('regSalary').value = '';
-    document.getElementById('regPickupIncentive').value = '';
-    document.getElementById('regRejectIncentive').value = '';
+    setVal('regName', '');
+    setVal('regUsername', '');
+    setVal('regPassword', '');
+    setVal('regMobile', '');
+    setVal('regAadhar', '');
+    setVal('regAlternate', '');
+    setVal('regSalary', '');
+    setVal('regPickupIncentive', '');
+    setVal('regRejectIncentive', '');
 
     invalidate('users');
     loadAgents(true);
 
     setTimeout(() => {
-      successEl.style.display = 'none';
+      if (successEl) successEl.style.display = 'none';
     }, 5000);
   }).catch(err => {
     console.error(err);
-    errorEl.textContent = 'Something went wrong.';
-    errorEl.style.display = 'block';
+    if (errorEl) {
+      errorEl.textContent = 'Something went wrong.';
+      errorEl.style.display = 'block';
+    }
   });
 }
 
 function toggleAdminFields() {
-  const role = document.querySelector('input[name="regRole"]:checked').value;
-  const agentFields = document.getElementById('agentFields');
+  const roleEl = document.querySelector('input[name="regRole"]:checked');
+  const role = roleEl ? roleEl.value : 'agent';
+  const agentFields = $('agentFields');
 
   if (role === 'admin') {
-    agentFields.style.display = 'none';
-    document.getElementById('regSalary').removeAttribute('required');
-    document.getElementById('regPickupIncentive').removeAttribute('required');
-    document.getElementById('regRejectIncentive').removeAttribute('required');
+    if (agentFields) agentFields.style.display = 'none';
+
+    $('regSalary')?.removeAttribute('required');
+    $('regPickupIncentive')?.removeAttribute('required');
+    $('regRejectIncentive')?.removeAttribute('required');
   } else {
-    agentFields.style.display = 'grid';
-    document.getElementById('regSalary').setAttribute('required', '');
-    document.getElementById('regPickupIncentive').setAttribute('required', '');
-    document.getElementById('regRejectIncentive').setAttribute('required', '');
+    if (agentFields) agentFields.style.display = 'grid';
+
+    $('regSalary')?.setAttribute('required', '');
+    $('regPickupIncentive')?.setAttribute('required', '');
+    $('regRejectIncentive')?.setAttribute('required', '');
   }
 }
 
@@ -3056,8 +3236,8 @@ function showChangePasswordModal(username) {
     cancelButtonText: 'Cancel',
     confirmButtonColor: '#4f46e5',
     preConfirm: () => {
-      const newPw = document.getElementById('newPassword').value;
-      const confirmPw = document.getElementById('confirmPassword').value;
+      const newPw = $('newPassword')?.value;
+      const confirmPw = $('confirmPassword')?.value;
 
       if (!newPw || newPw.length < 4) {
         Swal.showValidationMessage('Min 4 chars');
@@ -3075,8 +3255,10 @@ function showChangePasswordModal(username) {
     if (result.isConfirmed) {
       try {
         await db.ref('users/' + username + '/password').set(result.value);
+
         invalidate('users');
         showToast('✅ Password updated', 'success');
+
         loadAgents(true);
       } catch (e) {
         showToast('Error', 'error');
@@ -3095,11 +3277,14 @@ function viewAgentActivity(username) {
 }
 
 async function viewAgentActivityWithPeriod(username, period) {
-  const modal = document.getElementById('activityModal');
-  const content = document.getElementById('activityContent');
-  const title = document.getElementById('activityModalTitle');
+  const modal = $('activityModal');
+  const content = $('activityContent');
+  const title = $('activityModalTitle');
 
-  title.textContent = `Activity: ${username}`;
+  if (!modal || !content) return;
+
+  if (title) title.textContent = `Activity: ${username}`;
+
   modal.style.display = 'flex';
   content.innerHTML = `<div class="text-center py-8"><span class="spinner-sm"></span> Loading...</div>`;
 
@@ -3113,11 +3298,13 @@ async function viewAgentActivityWithPeriod(username, period) {
   } else if (period.mode === 'monthly') {
     const year = period.year;
     const month = period.month;
+
     filterFn = (ts) => {
       if (!ts) return false;
       const d = new Date(ts);
       return d.getFullYear() === year && (d.getMonth() + 1) === month;
     };
+
     periodLabel = `${String(month).padStart(2, '0')}-${year}`;
   } else if (period.mode === 'date') {
     const date = period.date;
@@ -3156,6 +3343,7 @@ async function viewAgentActivityWithPeriod(username, period) {
     Object.values(data).forEach(item => {
       if (filterFn(item.timestamp)) {
         allTotal++;
+
         if (item.status === 'pickup') allPickup++;
         else if (item.status === 'rejected') allReject++;
         else if (item.status === 'reschedule') allReschedule++;
@@ -3165,6 +3353,7 @@ async function viewAgentActivityWithPeriod(username, period) {
     let html = `
       <div class="mb-4">
         <p class="text-sm text-gray-500">Period: <strong>${periodLabel}</strong></p>
+
         <div class="activity-stats" style="display:flex;gap:12px;flex-wrap:wrap;margin-top:8px;">
           <div class="stat-box" style="background:#f8fafc;padding:8px 14px;border-radius:8px;border:1px solid #e2e8f0;"><div class="num text-green-600" style="font-size:18px;font-weight:700;">${pickupCount}</div><div class="label" style="font-size:10px;color:#94a3b8;">${username} Pickups</div></div>
           <div class="stat-box" style="background:#f8fafc;padding:8px 14px;border-radius:8px;border:1px solid #e2e8f0;"><div class="num text-red-600" style="font-size:18px;font-weight:700;">${rejectCount}</div><div class="label" style="font-size:10px;color:#94a3b8;">${username} Rejects</div></div>
@@ -3181,7 +3370,7 @@ async function viewAgentActivityWithPeriod(username, period) {
       </div>
     `;
 
-    if (orders.length === 0) {
+    if (!orders.length) {
       html += `<div class="empty-state"><i data-lucide="inbox"></i><p class="text-sm font-medium">No activity for this period</p></div>`;
       content.innerHTML = html;
       refreshIcons();
@@ -3191,27 +3380,9 @@ async function viewAgentActivityWithPeriod(username, period) {
     html += `<div class="space-y-2">`;
 
     orders.forEach(item => {
-      const statusLabel = item.status || 'unknown';
-
-      const statusClass = statusLabel === 'pickup'
-        ? (item.sold ? 'sold' : 'pickup')
-        : statusLabel === 'rejected'
-          ? 'rejected'
-          : statusLabel === 'on_hold'
-            ? 'on_hold'
-            : 'reschedule';
-
-      const displayName = statusLabel === 'pickup'
-        ? (item.sold ? 'Sold' : 'Pickup')
-        : statusLabel === 'rejected'
-          ? 'Rejected'
-          : statusLabel === 'on_hold'
-            ? 'Hold'
-            : 'Pending';
-
       let rejectActions = '';
 
-      if (statusLabel === 'rejected') {
+      if (item.status === 'rejected') {
         const approved = Boolean(item.incentive_approved);
         const statusText = approved ? '✅ Approved' : '⏳ Pending';
         const approvalTime = item.incentive_approved_at ? new Date(item.incentive_approved_at).toLocaleString() : '—';
@@ -3229,7 +3400,7 @@ async function viewAgentActivityWithPeriod(username, period) {
       html += `
         <div class="activity-item flex items-center justify-between py-2 px-3 rounded-xl hover:bg-gray-50 cursor-pointer" onclick="viewOrder('${item.id}')">
           <div class="flex items-center gap-3">
-            <span class="badge-status ${statusClass}">${displayName}</span>
+            <span class="badge-status ${getStatusClass(item)}">${getStatusDisplay(item)}</span>
             <span class="font-mono font-bold text-gray-700 text-sm">${item.orderId || item.id}</span>
             <span class="text-xs text-gray-400 hidden sm:inline">${item.phoneModel || '—'}</span>
             <span class="text-xs text-gray-400 hidden md:inline">${item.value !== undefined ? formatINR(item.value) : '—'}</span>
@@ -3243,6 +3414,7 @@ async function viewAgentActivityWithPeriod(username, period) {
     });
 
     html += `</div>`;
+
     content.innerHTML = html;
     refreshIcons();
   } catch (e) {
@@ -3252,11 +3424,12 @@ async function viewAgentActivityWithPeriod(username, period) {
 }
 
 function closeActivityModal() {
-  document.getElementById('activityModal').style.display = 'none';
+  const modal = $('activityModal');
+  if (modal) modal.style.display = 'none';
 }
 
 // ================================================================
-// ATTENDANCE (OPTIMIZED: parallel reads)
+// ATTENDANCE
 // ================================================================
 async function generateOTPs() {
   const users = await getData('users', true);
@@ -3268,7 +3441,7 @@ async function generateOTPs() {
     return role === 'agent' && u.is_active !== false;
   });
 
-  if (agents.length === 0) {
+  if (!agents.length) {
     showToast('No active agents to generate OTP for', 'error');
     return;
   }
@@ -3295,6 +3468,7 @@ async function generateOTPs() {
     }
 
     await db.ref().update(updates);
+
     showToast(`✅ OTPs generated for ${agents.length} agents`, 'success');
     loadAttendance(true);
   } catch (e) {
@@ -3304,14 +3478,17 @@ async function generateOTPs() {
 }
 
 async function loadAttendance(force = false) {
-  const dateInput = document.getElementById('attendanceDate');
+  const dateInput = $('attendanceDate');
 
-  if (!dateInput.value) {
+  if (dateInput && !dateInput.value) {
     dateInput.value = getLocalYMD();
   }
 
-  const date = dateInput.value;
-  const container = document.getElementById('attendanceList');
+  const date = dateInput ? dateInput.value : getLocalYMD();
+  const container = $('attendanceList');
+
+  if (!container) return;
+
   container.innerHTML = `<div class="text-center py-4"><span class="spinner-sm"></span></div>`;
 
   try {
@@ -3327,7 +3504,7 @@ async function loadAttendance(force = false) {
       Object.entries(users).filter(([_, u]) => (u.role || 'agent') === 'agent' && u.is_active !== false)
     );
 
-    if (Object.keys(agents).length === 0) {
+    if (!Object.keys(agents).length) {
       container.innerHTML = `<div class="empty-state"><i data-lucide="inbox"></i><p class="text-sm font-medium">No active agents</p></div>`;
       return;
     }
@@ -3367,6 +3544,7 @@ async function loadAttendance(force = false) {
     }
 
     html += `</div>`;
+
     container.innerHTML = html;
     refreshIcons();
   } catch (e) {
@@ -3377,7 +3555,7 @@ async function loadAttendance(force = false) {
 }
 
 async function viewAttendanceHistory(username) {
-  const monthInput = document.getElementById('salaryMonth');
+  const monthInput = $('salaryMonth');
   let monthVal = monthInput ? monthInput.value : '';
 
   if (!monthVal) {
@@ -3594,20 +3772,24 @@ async function blockAgent(username, date) {
 function setSalaryMode(mode) {
   currentSalaryMode = mode;
 
-  document.getElementById('salaryModeToday').classList.toggle('active', mode === 'today');
-  document.getElementById('salaryModeSinceJoin').classList.toggle('active', mode === 'since_join');
-  document.getElementById('salaryModeDate').classList.toggle('active', mode === 'date');
-  document.getElementById('salaryDateWrapper').style.display = mode === 'date' ? 'inline-block' : 'none';
+  $('salaryModeToday')?.classList.toggle('active', mode === 'today');
+  $('salaryModeSinceJoin')?.classList.toggle('active', mode === 'since_join');
+  $('salaryModeDate')?.classList.toggle('active', mode === 'date');
 
-  const label = document.getElementById('salaryModeLabel');
+  const wrapper = $('salaryDateWrapper');
+  if (wrapper) wrapper.style.display = mode === 'date' ? 'inline-block' : 'none';
 
-  if (mode === 'today') {
-    label.textContent = "Today's Earnings";
-  } else if (mode === 'since_join') {
-    label.textContent = "Earnings from Joining Date to Today";
-  } else if (mode === 'date') {
-    const dateVal = document.getElementById('salaryDate').value || 'selected date';
-    label.textContent = `Earnings for ${dateVal}`;
+  const label = $('salaryModeLabel');
+
+  if (label) {
+    if (mode === 'today') {
+      label.textContent = "Today's Earnings";
+    } else if (mode === 'since_join') {
+      label.textContent = "Earnings from Joining Date to Today";
+    } else if (mode === 'date') {
+      const dateVal = getVal('salaryDate') || 'selected date';
+      label.textContent = `Earnings for ${dateVal}`;
+    }
   }
 
   loadSalaryData(true);
@@ -3615,7 +3797,10 @@ function setSalaryMode(mode) {
 
 async function loadSalaryData(force = false) {
   const mode = currentSalaryMode || 'today';
-  const container = document.getElementById('salaryContainer');
+  const container = $('salaryContainer');
+
+  if (!container) return;
+
   container.innerHTML = `<div class="text-center py-4"><span class="spinner-sm"></span> Calculating...</div>`;
 
   try {
@@ -3629,12 +3814,14 @@ async function loadSalaryData(force = false) {
       Object.entries(users).filter(([_, u]) => (u.role || 'agent') === 'agent' && u.is_active !== false)
     );
 
-    if (Object.keys(agents).length === 0) {
+    if (!Object.keys(agents).length) {
       container.innerHTML = `<div class="empty-state"><i data-lucide="inbox"></i><p class="text-sm font-medium">No active agents</p></div>`;
-      document.getElementById('globalPickups').textContent = '0';
-      document.getElementById('globalRejects').textContent = '0';
-      document.getElementById('globalPending').textContent = '0';
-      document.getElementById('globalEarnings').textContent = '₹0';
+
+      setText('globalPickups', '0');
+      setText('globalRejects', '0');
+      setText('globalPending', '0');
+      setText('globalEarnings', '₹0');
+
       return;
     }
 
@@ -3649,12 +3836,12 @@ async function loadSalaryData(force = false) {
     } else if (mode === 'since_join') {
       periodInfo.mode = 'since_join';
     } else if (mode === 'date') {
-      const dateInput = document.getElementById('salaryDate');
-      let dateVal = dateInput.value;
+      const dateInput = $('salaryDate');
+      let dateVal = dateInput ? dateInput.value : '';
 
       if (!dateVal) {
         dateVal = today;
-        dateInput.value = dateVal;
+        if (dateInput) dateInput.value = dateVal;
       }
 
       dateFilterFn = (ordDate) => ordDate === dateVal;
@@ -3811,6 +3998,7 @@ async function loadSalaryData(force = false) {
       }
 
       const total = totalBaseSalary + totalPickupIncentive + totalRejectIncentive;
+
       grandTotal += total;
       globalEarnings += total;
       globalPickup += agentPickupCount;
@@ -3864,10 +4052,10 @@ async function loadSalaryData(force = false) {
       `;
     }
 
-    document.getElementById('globalPickups').textContent = globalPickup;
-    document.getElementById('globalRejects').textContent = globalReject;
-    document.getElementById('globalPending').textContent = globalPending;
-    document.getElementById('globalEarnings').textContent = formatINR(globalEarnings);
+    setText('globalPickups', globalPickup);
+    setText('globalRejects', globalReject);
+    setText('globalPending', globalPending);
+    setText('globalEarnings', formatINR(globalEarnings));
 
     const filteredAllPending = [];
     const seenAll = new Set();
@@ -3923,12 +4111,14 @@ async function recalculateAllSalary() {
 }
 
 // ================================================================
-// GLOBAL SEARCH (OPTIMIZED)
+// GLOBAL SEARCH
 // ================================================================
 async function openGlobalSearch() {
-  const modal = document.getElementById('globalSearchModal');
-  const input = document.getElementById('globalSearchModalInput');
-  const results = document.getElementById('globalSearchModalResults');
+  const modal = $('globalSearchModal');
+  const input = $('globalSearchModalInput');
+  const results = $('globalSearchModalResults');
+
+  if (!modal || !input || !results) return;
 
   modal.classList.add('open');
   input.value = '';
@@ -3936,13 +4126,42 @@ async function openGlobalSearch() {
 
   setTimeout(() => input.focus(), 300);
 
-  if (allOrders.length === 0) await loadOrders(false);
-  if (agentsList.length === 0) await loadAgents(false);
+  const [pickups, users] = await Promise.all([
+    getData('pickups', false),
+    getData('users', false)
+  ]);
+
+  allOrders = Object.entries(pickups).map(([id, item]) => ({
+    id,
+    ...item,
+    billImages: undefined,
+    billImage: undefined,
+    aadhaarImages: undefined,
+    aadhaarImage: undefined
+  }));
+
+  allOrders.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+
+  inventoryList = allOrders.filter(item => item.status === 'pickup' && !item.sold);
+  salesList = allOrders.filter(item => item.sold === true && item.status !== 'on_hold');
+
+  agentsList = Object.entries(users).map(([username, item]) => {
+    if (!item.role) item.role = 'agent';
+    return { username, ...item };
+  });
 
   const allData = [];
 
   allOrders.forEach(item => {
     allData.push({ ...item, _category: 'Orders', _type: 'order' });
+  });
+
+  inventoryList.forEach(item => {
+    allData.push({ ...item, _category: 'Inventory', _type: 'inventory' });
+  });
+
+  salesList.forEach(item => {
+    allData.push({ ...item, _category: 'Sales', _type: 'sale' });
   });
 
   agentsList.forEach(item => {
@@ -3985,13 +4204,25 @@ async function openGlobalSearch() {
       resultItems = modal._searchFuse.search(query);
     } else {
       const lower = query.toLowerCase();
+
       resultItems = allData.filter(item => {
-        const text = [item.orderId, item.phoneModel, item.imei, item.customerName, item.buyerName, item.agent, item.name, item.username, item.mobile].filter(Boolean).join(' ').toLowerCase();
+        const text = [
+          item.orderId,
+          item.phoneModel,
+          item.imei,
+          item.customerName,
+          item.buyerName,
+          item.agent,
+          item.name,
+          item.username,
+          item.mobile
+        ].filter(Boolean).join(' ').toLowerCase();
+
         return text.includes(lower);
       }).map(item => ({ item }));
     }
 
-    if (resultItems.length === 0) {
+    if (!resultItems.length) {
       results.innerHTML = `<div class="empty-state"><i data-lucide="search"></i><p class="text-sm font-medium">No results found</p></div>`;
       return;
     }
@@ -4019,10 +4250,10 @@ async function openGlobalSearch() {
         let badge = '';
         let onClick = '';
 
-        if (item._type === 'order') {
+        if (item._type === 'order' || item._type === 'inventory' || item._type === 'sale') {
           label = item.orderId || item.id;
           desc = item.phoneModel || '';
-          badge = `<span class="badge-status">${item.status || ''}</span>`;
+          badge = `<span class="badge-status ${getStatusClass(item)}">${getStatusDisplay(item)}</span>`;
           onClick = `onclick="viewOrder('${item.id || item.orderId}')"`;
         } else if (item._type === 'agent') {
           label = item.name || item.username;
@@ -4053,10 +4284,10 @@ async function openGlobalSearch() {
           let badge = '';
           let onClick = '';
 
-          if (item._type === 'order') {
+          if (item._type === 'order' || item._type === 'inventory' || item._type === 'sale') {
             label = item.orderId || item.id;
             desc = item.phoneModel || '';
-            badge = `<span class="badge-status">${item.status || ''}</span>`;
+            badge = `<span class="badge-status ${getStatusClass(item)}">${getStatusDisplay(item)}</span>`;
             onClick = `onclick="viewOrder('${item.id || item.orderId}')"`;
           } else if (item._type === 'agent') {
             label = item.name || item.username;
@@ -4089,12 +4320,12 @@ async function openGlobalSearch() {
 }
 
 function closeGlobalSearch() {
-  document.getElementById('globalSearchModal').classList.remove('open');
-  document.getElementById('globalSearchModalInput').value = '';
+  $('globalSearchModal')?.classList.remove('open');
+  setVal('globalSearchModalInput', '');
 }
 
 function toggleShowMore(catId, totalItems, btn) {
-  const hiddenDiv = document.getElementById(catId + '-hidden');
+  const hiddenDiv = $(catId + '-hidden');
   if (!hiddenDiv || !btn) return;
 
   if (hiddenDiv.style.display === 'none') {
@@ -4112,6 +4343,7 @@ function toggleShowMore(catId, totalItems, btn) {
 function locateItem(item) {
   if (item.type === 'order' || item.type === 'inventory' || item.type === 'sale') {
     let page = 'orders';
+
     if (item.type === 'inventory') page = 'inventory';
     else if (item.type === 'sale') page = 'sales';
 
@@ -4120,9 +4352,9 @@ function locateItem(item) {
     setTimeout(() => {
       let searchInput = null;
 
-      if (page === 'orders') searchInput = document.getElementById('orderSearch');
-      else if (page === 'inventory') searchInput = document.getElementById('inventorySearch');
-      else if (page === 'sales') searchInput = document.getElementById('salesSearch');
+      if (page === 'orders') searchInput = $('orderSearch');
+      else if (page === 'inventory') searchInput = $('inventorySearch');
+      else if (page === 'sales') searchInput = $('salesSearch');
 
       if (searchInput) {
         searchInput.value = item.id;
@@ -4141,17 +4373,20 @@ function locateItem(item) {
 }
 
 // ================================================================
-// LIVE SEARCH DROPDOWN (OPTIMIZED / NO DUPLICATE LISTENERS)
+// LIVE SEARCH DROPDOWN
 // ================================================================
 function setupLiveSearch(inputId, dropdownId, dataSource, fields) {
-  const input = document.getElementById(inputId);
-  const dropdown = document.getElementById(dropdownId);
+  const input = $(inputId);
+  const dropdown = $(dropdownId);
+
   if (!input || !dropdown) return;
 
   input._lsData = dataSource;
   input._lsFields = fields;
+  input._lsVersion = cacheVersion;
 
   if (input._lsInit) return;
+
   input._lsInit = true;
 
   const handleInput = debounce(function () {
@@ -4175,16 +4410,18 @@ function setupLiveSearch(inputId, dropdownId, dataSource, fields) {
         ignoreLocation: true,
         minMatchCharLength: 2
       });
+
       results = fuse.search(query);
     } else {
       const lower = query.toLowerCase();
+
       results = data.filter(item => {
         const text = searchFields.map(f => item[f]).filter(Boolean).join(' ').toLowerCase();
         return text.includes(lower);
       }).map(item => ({ item }));
     }
 
-    if (results.length === 0) {
+    if (!results.length) {
       dropdown.innerHTML = `<div class="empty-dropdown">No matches found</div>`;
       dropdown.classList.add('open');
       return;
@@ -4203,10 +4440,12 @@ function setupLiveSearch(inputId, dropdownId, dataSource, fields) {
 
       if (item.orderId) {
         primary = item.orderId;
+
         if (item.phoneModel) extra.push(item.phoneModel);
         if (item.imei) extra.push('IMEI: ' + item.imei);
         if (item.customerName) extra.push('Cust: ' + item.customerName);
         if (item.agent) extra.push('Agent: ' + item.agent);
+
         if (id) clickAction = `onclick="viewOrder('${id}')"`;
       } else if (item.name) {
         primary = item.name;
@@ -4254,8 +4493,8 @@ function setupLiveSearch(inputId, dropdownId, dataSource, fields) {
 // ================================================================
 async function refreshAll() {
   if (isRefreshing) return;
-  isRefreshing = true;
 
+  isRefreshing = true;
   showToast('🔄 Refreshing...', 'info');
 
   invalidate('pickups', 'pending', 'users', 'deposits', 'attendance');
@@ -4279,8 +4518,9 @@ async function refreshAll() {
 // LIVE CLOCK
 // ================================================================
 function updateClock() {
-  const el = document.getElementById('liveTime');
+  const el = $('liveTime');
   if (!el) return;
+
   const now = new Date();
   el.textContent = now.toTimeString().slice(0, 8);
 }
@@ -4293,21 +4533,20 @@ updateClock();
 // ================================================================
 document.addEventListener('DOMContentLoaded', () => {
   refreshIcons();
-
   loadDashboard(true);
 
-  const attendanceDate = document.getElementById('attendanceDate');
+  const attendanceDate = $('attendanceDate');
   if (attendanceDate) attendanceDate.value = getLocalYMD();
 
   const today = new Date();
 
-  const salaryMonth = document.getElementById('salaryMonth');
+  const salaryMonth = $('salaryMonth');
   if (salaryMonth) salaryMonth.value = today.getFullYear() + '-' + String(today.getMonth() + 1).padStart(2, '0');
 
-  const salaryDate = document.getElementById('salaryDate');
+  const salaryDate = $('salaryDate');
   if (salaryDate) salaryDate.value = getLocalYMD();
 
-  const depositDate = document.getElementById('depositDate');
+  const depositDate = $('depositDate');
   if (depositDate) depositDate.value = getLocalYMD();
 
   const agentRole = document.querySelector('input[name="regRole"][value="agent"]');
@@ -4316,7 +4555,7 @@ document.addEventListener('DOMContentLoaded', () => {
   toggleAdminFields();
   setSalaryMode('today');
 
-  // Optimized auto refresh: only when tab visible
+  // Ultra optimized auto refresh: only when tab visible
   setInterval(() => {
     if (document.hidden) return;
     refreshCurrentPage(true);
@@ -4328,35 +4567,35 @@ document.addEventListener('DOMContentLoaded', () => {
 // ================================================================
 // MODALS / KEYBOARD
 // ================================================================
-const detailModal = document.getElementById('detailModal');
+const detailModal = $('detailModal');
 if (detailModal) {
   detailModal.addEventListener('click', function (e) {
     if (e.target === this) closeDetail();
   });
 }
 
-const sellModal = document.getElementById('sellModal');
+const sellModal = $('sellModal');
 if (sellModal) {
   sellModal.addEventListener('click', function (e) {
     if (e.target === this) closeSellModal();
   });
 }
 
-const activityModal = document.getElementById('activityModal');
+const activityModal = $('activityModal');
 if (activityModal) {
   activityModal.addEventListener('click', function (e) {
     if (e.target === this) closeActivityModal();
   });
 }
 
-const imgViewerModal = document.getElementById('imgViewerModal');
+const imgViewerModal = $('imgViewerModal');
 if (imgViewerModal) {
   imgViewerModal.addEventListener('click', function (e) {
     if (e.target === this) closeImageViewer();
   });
 }
 
-const globalSearchModal = document.getElementById('globalSearchModal');
+const globalSearchModal = $('globalSearchModal');
 if (globalSearchModal) {
   globalSearchModal.addEventListener('click', function (e) {
     if (e.target === this) closeGlobalSearch();
