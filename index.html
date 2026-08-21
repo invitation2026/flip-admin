@@ -1,1764 +1,1526 @@
 <!DOCTYPE html>
+<!-- ================================================================ -->
+<!-- SECTION 1: HEAD - META, TITLE, SCRIPTS & STYLES                  -->
+<!-- ================================================================ -->
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Admin · Flipkart</title>
-
-  <script src="https://cdn.tailwindcss.com"></script>
-
-  <style>
-    body {
-      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      background: #eef2f7;
-      color: #0f172a;
-    }
-
-    .app-shell {
-      display: flex;
-      min-height: 100vh;
-    }
-
-    .sidebar {
-      width: 270px;
-      background: linear-gradient(180deg, #111827, #1f2937);
-      color: #fff;
-      position: fixed;
-      inset: 0 auto 0 0;
-      z-index: 40;
-      display: flex;
-      flex-direction: column;
-      transition: transform 0.25s ease;
-    }
-
-    .sidebar-overlay {
-      display: none;
-      position: fixed;
-      inset: 0;
-      background: rgba(0, 0, 0, 0.35);
-      z-index: 35;
-    }
-
-    .sidebar-overlay.open {
-      display: block;
-    }
-
-    .sidebar-link {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 10px;
-      padding: 11px 14px;
-      margin: 4px 12px;
-      border-radius: 12px;
-      color: #d1d5db;
-      cursor: pointer;
-      text-decoration: none;
-      transition: 0.18s ease;
-      font-size: 14px;
-    }
-
-    .sidebar-link:hover,
-    .sidebar-link.active {
-      background: rgba(255, 255, 255, 0.12);
-      color: #fff;
-    }
-
-    .sidebar-link i,
-    .sidebar-link svg {
-      width: 18px;
-      height: 18px;
-    }
-
-    .main {
-      flex: 1;
-      margin-left: 270px;
-      padding: 18px;
-    }
-
-    .glass {
-      background: rgba(255, 255, 255, 0.92);
-      border: 1px solid rgba(226, 232, 240, 0.95);
-      border-radius: 18px;
-      box-shadow: 0 10px 30px rgba(15, 23, 42, 0.06);
-    }
-
-    .page-title {
-      font-size: 28px;
-      font-weight: 800;
-      line-height: 1;
-    }
-
-    .page-subtitle {
-      color: #64748b;
-      margin-top: 5px;
-      font-size: 14px;
-    }
-
-    .stat-card {
-      padding: 16px;
-      border-radius: 16px;
-      background: #fff;
-      border: 1px solid #e2e8f0;
-      box-shadow: 0 8px 22px rgba(15, 23, 42, 0.04);
-    }
-
-    .stat-label {
-      font-size: 12px;
-      color: #64748b;
-      font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: 0.04em;
-    }
-
-    .stat-value {
-      font-size: 26px;
-      font-weight: 900;
-      margin-top: 7px;
-    }
-
-    .btn {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      gap: 8px;
-      border-radius: 12px;
-      padding: 10px 14px;
-      font-weight: 700;
-      font-size: 14px;
-      border: 1px solid transparent;
-      cursor: pointer;
-      transition: 0.18s ease;
-      white-space: nowrap;
-    }
-
-    .btn-primary {
-      background: #4f46e5;
-      color: #fff;
-    }
-
-    .btn-primary:hover {
-      background: #4338ca;
-    }
-
-    .btn-dark {
-      background: #111827;
-      color: #fff;
-    }
-
-    .btn-dark:hover {
-      background: #1f2937;
-    }
-
-    .btn-light {
-      background: #fff;
-      border-color: #e2e8f0;
-      color: #0f172a;
-    }
-
-    .btn-light:hover {
-      background: #f8fafc;
-    }
-
-    .btn-danger {
-      background: #dc2626;
-      color: #fff;
-    }
-
-    .btn-danger:hover {
-      background: #b91c1c;
-    }
-
-    .btn-success {
-      background: #059669;
-      color: #fff;
-    }
-
-    .btn-success:hover {
-      background: #047857;
-    }
-
-    .btn-warning {
-      background: #d97706;
-      color: #fff;
-    }
-
-    .btn-warning:hover {
-      background: #b45309;
-    }
-
-    .input-field,
-    input,
-    select,
-    textarea {
-      outline: none;
-    }
-
-    .input-field,
-    .input,
-    input[type="text"],
-    input[type="number"],
-    input[type="date"],
-    input[type="month"],
-    input[type="datetime-local"],
-    input[type="password"],
-    select,
-    textarea {
-      width: 100%;
-      border: 1px solid #cbd5e1;
-      border-radius: 12px;
-      padding: 10px 12px;
-      background: #fff;
-      font-size: 14px;
-    }
-
-    .input:focus,
-    input:focus,
-    select:focus,
-    textarea:focus {
-      border-color: #4f46e5;
-      box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.12);
-    }
-
-    .filter-chip {
-      padding: 8px 12px;
-      border-radius: 999px;
-      border: 1px solid #cbd5e1;
-      background: #fff;
-      font-size: 13px;
-      font-weight: 700;
-      cursor: pointer;
-      transition: 0.18s ease;
-    }
-
-    .filter-chip.active {
-      background: #111827;
-      color: #fff;
-      border-color: #111827;
-    }
-
-    .table-wrap {
-      overflow: auto;
-      border-radius: 16px;
-      border: 1px solid #e2e8f0;
-      background: #fff;
-    }
-
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      min-width: 860px;
-    }
-
-    thead th {
-      text-align: left;
-      font-size: 12px;
-      text-transform: uppercase;
-      letter-spacing: 0.05em;
-      color: #64748b;
-      background: #f8fafc;
-      padding: 12px 14px;
-      border-bottom: 1px solid #e2e8f0;
-      white-space: nowrap;
-    }
-
-    tbody td {
-      padding: 12px 14px;
-      border-bottom: 1px solid #f1f5f9;
-      vertical-align: middle;
-    }
-
-    tbody tr:hover {
-      background: #fafafa;
-    }
-
-    .badge-status {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      min-width: 68px;
-      padding: 5px 10px;
-      border-radius: 999px;
-      font-size: 12px;
-      font-weight: 800;
-      white-space: nowrap;
-    }
-
-    .badge-status.pickup,
-    .badge-status.approved {
-      background: #dcfce7;
-      color: #166534;
-    }
-
-    .badge-status.sold {
-      background: #dbeafe;
-      color: #1d4ed8;
-    }
-
-    .badge-status.rejected {
-      background: #fee2e2;
-      color: #b91c1c;
-    }
-
-    .badge-status.reschedule,
-    .badge-status.pending {
-      background: #fef3c7;
-      color: #92400e;
-    }
-
-    .badge-status.on_hold {
-      background: #e0e7ff;
-      color: #3730a3;
-    }
-
-    .badge-status.admin {
-      background: #ede9fe;
-      color: #5b21b6;
-    }
-
-    .badge-onway {
-      background: #cffafe;
-      color: #0e7490;
-      padding: 5px 10px;
-      border-radius: 999px;
-      font-size: 12px;
-      font-weight: 800;
-      white-space: nowrap;
-    }
-
-    .badge-pending {
-      background: #fef3c7;
-      color: #92400e;
-      padding: 5px 10px;
-      border-radius: 999px;
-      font-size: 12px;
-      font-weight: 800;
-      white-space: nowrap;
-    }
-
-    .btn-action {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      gap: 6px;
-      min-width: 34px;
-      min-height: 34px;
-      padding: 6px 9px;
-      border-radius: 10px;
-      border: 1px solid #e2e8f0;
-      background: #fff;
-      cursor: pointer;
-      transition: 0.18s ease;
-      font-size: 13px;
-      font-weight: 700;
-    }
-
-    .btn-action:hover {
-      background: #f8fafc;
-      transform: translateY(-1px);
-    }
-
-    .btn-action.view { color: #2563eb; }
-    .btn-action.sell { color: #059669; }
-    .btn-action.delete { color: #dc2626; }
-    .btn-action.approve { color: #059669; }
-    .btn-action.unblock { color: #0891b2; }
-    .btn-action.logout { color: #7c3aed; }
-    .btn-action.edit { color: #d97706; }
-    .btn-action.activity { color: #111827; }
-    .btn-action.promote { color: #4f46e5; }
-    .btn-action.show { color: #334155; }
-
-    .btn-action svg,
-    .btn-action i {
-      width: 16px;
-      height: 16px;
-    }
-
-    .empty-state {
-      padding: 34px 18px;
-      text-align: center;
-      color: #64748b;
-    }
-
-    .empty-state svg,
-    .empty-state i {
-      width: 42px;
-      height: 42px;
-      margin: 0 auto 10px;
-      opacity: 0.65;
-    }
-
-    .toast-fixed {
-      position: fixed;
-      top: 18px;
-      left: 50%;
-      transform: translateX(-50%) translateY(-16px);
-      z-index: 9999;
-      min-width: 260px;
-      max-width: calc(100vw - 32px);
-      padding: 13px 18px;
-      border-radius: 14px;
-      color: #fff;
-      font-weight: 800;
-      text-align: center;
-      opacity: 0;
-      pointer-events: none;
-      transition: 0.22s ease;
-      box-shadow: 0 16px 40px rgba(15, 23, 42, 0.22);
-      background: #334155;
-    }
-
-    .toast-fixed.show {
-      opacity: 1;
-      transform: translateX(-50%) translateY(0);
-    }
-
-    .toast-fixed.success { background: #059669; }
-    .toast-fixed.error { background: #dc2626; }
-    .toast-fixed.info { background: #2563eb; }
-
-    .modal {
-      display: none;
-      position: fixed;
-      inset: 0;
-      background: rgba(15, 23, 42, 0.55);
-      align-items: center;
-      justify-content: center;
-      padding: 16px;
-      z-index: 1000;
-    }
-
-    .modal-content {
-      background: #fff;
-      width: 100%;
-      max-width: 920px;
-      max-height: 92vh;
-      overflow: auto;
-      border-radius: 20px;
-      box-shadow: 0 25px 70px rgba(15, 23, 42, 0.28);
-      padding: 18px;
-    }
-
-    .modal-header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 12px;
-      margin-bottom: 14px;
-    }
-
-    .modal-title {
-      font-size: 22px;
-      font-weight: 900;
-    }
-
-    .modal-close {
-      width: 38px;
-      height: 38px;
-      border-radius: 12px;
-      border: 1px solid #e2e8f0;
-      background: #fff;
-      cursor: pointer;
-      font-weight: 900;
-    }
-
-    .modal-footer {
-      display: flex;
-      flex-wrap: wrap;
-      justify-content: flex-end;
-      gap: 10px;
-      padding-top: 15px;
-      margin-top: 15px;
-      border-top: 1px solid #e2e8f0;
-    }
-
-    .search-wrap {
-      position: relative;
-    }
-
-    .search-dropdown {
-      display: none;
-      position: absolute;
-      top: calc(100% + 8px);
-      left: 0;
-      right: 0;
-      z-index: 60;
-      background: #fff;
-      border: 1px solid #e2e8f0;
-      border-radius: 14px;
-      box-shadow: 0 18px 45px rgba(15, 23, 42, 0.14);
-      max-height: 340px;
-      overflow: auto;
-      padding: 6px;
-    }
-
-    .search-dropdown.open {
-      display: block;
-    }
-
-    .dropdown-item {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 10px;
-      padding: 10px 10px;
-      border-radius: 12px;
-      cursor: pointer;
-    }
-
-    .dropdown-item:hover {
-      background: #f8fafc;
-    }
-
-    .item-primary {
-      font-weight: 800;
-      font-size: 14px;
-    }
-
-    .item-secondary {
-      font-size: 12px;
-      color: #64748b;
-      margin-top: 3px;
-    }
-
-    .item-badge {
-      font-size: 12px;
-      font-weight: 800;
-      background: #eef2ff;
-      color: #4f46e5;
-      padding: 5px 8px;
-      border-radius: 999px;
-      white-space: nowrap;
-    }
-
-    .empty-dropdown {
-      padding: 14px;
-      text-align: center;
-      color: #64748b;
-      font-size: 14px;
-    }
-
-    .profit-preview {
-      padding: 12px 14px;
-      border-radius: 14px;
-      font-weight: 800;
-      background: #f8fafc;
-      border: 1px solid #e2e8f0;
-      color: #334155;
-    }
-
-    .profit-preview.positive {
-      background: #f0fdf4;
-      border-color: #bbf7d0;
-      color: #166534;
-    }
-
-    .profit-preview.negative {
-      background: #fef2f2;
-      border-color: #fecaca;
-      color: #b91c1c;
-    }
-
-    .profit-breakdown {
-      display: none;
-      margin-top: 12px;
-      padding: 12px 14px;
-      border-radius: 14px;
-      background: #f8fafc;
-      border: 1px solid #e2e8f0;
-    }
-
-    .detail-grid {
-      display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 12px;
-    }
-
-    @media (max-width: 768px) {
-      .detail-grid {
-        grid-template-columns: 1fr;
-      }
-    }
-
-    .detail-item {
-      padding: 12px 14px;
-      border-radius: 14px;
-      background: #f8fafc;
-      border: 1px solid #e2e8f0;
-    }
-
-    .detail-item .label {
-      font-size: 12px;
-      font-weight: 800;
-      color: #64748b;
-      text-transform: uppercase;
-      letter-spacing: 0.04em;
-    }
-
-    .detail-item .value {
-      margin-top: 6px;
-      font-weight: 800;
-      word-break: break-word;
-    }
-
-    .green { color: #166534; }
-    .red { color: #b91c1c; }
-    .amber { color: #b45309; }
-
-    .profit-green { color: #166534; }
-    .profit-red { color: #b91c1c; }
-
-    .commission-badge,
-    .commission-col {
-      display: inline-flex;
-      padding: 5px 8px;
-      border-radius: 999px;
-      background: #fff7ed;
-      color: #c2410c;
-      font-weight: 800;
-      font-size: 12px;
-      white-space: nowrap;
-    }
-
-    .attendance-card {
-      background: #fff;
-    }
-
-    .attendance-present,
-    .attendance-absent,
-    .attendance-blocked {
-      display: inline-flex;
-      padding: 6px 10px;
-      border-radius: 999px;
-      font-weight: 800;
-      font-size: 12px;
-      white-space: nowrap;
-    }
-
-    .attendance-present {
-      background: #dcfce7;
-      color: #166534;
-    }
-
-    .attendance-absent {
-      background: #fee2e2;
-      color: #b91c1c;
-    }
-
-    .attendance-blocked {
-      background: #e0e7ff;
-      color: #3730a3;
-    }
-
-    .otp-display {
-      display: inline-block;
-      padding: 3px 8px;
-      border-radius: 8px;
-      background: #eef2ff;
-      color: #4f46e5;
-      letter-spacing: 0.08em;
-    }
-
-    .admin-tag {
-      display: inline-flex;
-      padding: 5px 9px;
-      border-radius: 999px;
-      background: #ede9fe;
-      color: #5b21b6;
-      font-size: 12px;
-      font-weight: 800;
-      white-space: nowrap;
-    }
-
-    .pw-hidden {
-      letter-spacing: 0.08em;
-      font-weight: 800;
-    }
-
-    .promote-btn-wrap {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 6px;
-      align-items: center;
-    }
-
-    .mode-btn {
-      padding: 9px 13px;
-      border-radius: 12px;
-      border: 1px solid #cbd5e1;
-      background: #fff;
-      font-weight: 800;
-      cursor: pointer;
-    }
-
-    .mode-btn.active {
-      background: #111827;
-      color: #fff;
-      border-color: #111827;
-    }
-
-    .salary-summary-card {
-      background: #fff;
-    }
-
-    .modal-search {
-      display: none;
-      position: fixed;
-      inset: 0;
-      z-index: 1200;
-      background: rgba(15, 23, 42, 0.55);
-      align-items: flex-start;
-      justify-content: center;
-      padding: 18px;
-      overflow: auto;
-    }
-
-    .modal-search.open {
-      display: flex;
-    }
-
-    .modal-search .modal-content {
-      max-width: 860px;
-      margin-top: 4vh;
-    }
-
-    .category-group {
-      margin-top: 16px;
-    }
-
-    .category-title {
-      font-size: 13px;
-      font-weight: 900;
-      color: #475569;
-      text-transform: uppercase;
-      letter-spacing: 0.05em;
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      margin-bottom: 8px;
-    }
-
-    .count-badge {
-      display: inline-flex;
-      min-width: 24px;
-      height: 24px;
-      align-items: center;
-      justify-content: center;
-      border-radius: 999px;
-      background: #e2e8f0;
-      color: #334155;
-      font-size: 12px;
-      font-weight: 900;
-      padding: 0 7px;
-    }
-
-    .result-item {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 10px;
-      padding: 11px 10px;
-      border-radius: 14px;
-      cursor: pointer;
-      border: 1px solid transparent;
-    }
-
-    .result-item:hover {
-      background: #f8fafc;
-      border-color: #e2e8f0;
-    }
-
-    .text-mono {
-      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-      font-weight: 800;
-    }
-
-    .text-desc {
-      display: block;
-      color: #64748b;
-      font-size: 12px;
-      margin-top: 3px;
-    }
-
-    .action-buttons {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      flex-shrink: 0;
-    }
-
-    .locate-btn {
-      width: 34px;
-      height: 34px;
-      border-radius: 10px;
-      border: 1px solid #e2e8f0;
-      background: #fff;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      cursor: pointer;
-      color: #dc2626;
-    }
-
-    .locate-btn svg,
-    .locate-btn i {
-      width: 16px;
-      height: 16px;
-    }
-
-    .show-more-btn {
-      width: 100%;
-      margin-top: 8px;
-      padding: 9px 10px;
-      border-radius: 12px;
-      border: 1px dashed #cbd5e1;
-      background: #fff;
-      color: #334155;
-      font-weight: 800;
-      cursor: pointer;
-    }
-
-    .edit-label {
-      display: block;
-      font-size: 12px;
-      font-weight: 800;
-      color: #475569;
-      margin-bottom: 6px;
-      text-transform: uppercase;
-      letter-spacing: 0.04em;
-    }
-
-    .edit-field {
-      width: 100%;
-      border: 1px solid #cbd5e1;
-      border-radius: 12px;
-      padding: 10px 12px;
-      background: #fff;
-      font-size: 14px;
-    }
-
-    .status-select {
-      width: 100%;
-    }
-
-    .imei-wrap {
-      position: relative;
-    }
-
-    .imei-wrap input {
-      padding-right: 116px;
-    }
-
-    .imei-allow-btn {
-      position: absolute;
-      right: 8px;
-      top: 50%;
-      transform: translateY(-50%);
-      border-radius: 10px;
-      border: 1px solid #cbd5e1;
-      background: #fff;
-      padding: 7px 10px;
-      font-size: 12px;
-      font-weight: 800;
-      cursor: pointer;
-    }
-
-    .imei-allow-btn.allowed {
-      background: #dcfce7;
-      color: #166534;
-      border-color: #bbf7d0;
-    }
-
-    .sidebar-badge {
-      min-width: 24px;
-      height: 24px;
-      padding: 0 7px;
-      border-radius: 999px;
-      background: rgba(255, 255, 255, 0.16);
-      color: #fff;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 12px;
-      font-weight: 800;
-    }
-
-    .icon-btn {
-      width: 40px;
-      height: 40px;
-      border-radius: 12px;
-      border: 1px solid #e2e8f0;
-      background: #fff;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      cursor: pointer;
-    }
-
-    .icon-btn svg,
-    .icon-btn i {
-      width: 18px;
-      height: 18px;
-    }
-
-    .topbar {
-      display: flex;
-      align-items: center;
-      gap: 14px;
-      margin-bottom: 18px;
-    }
-
-    .topbar-right {
-      margin-left: auto;
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      flex-wrap: wrap;
-    }
-
-    .clock-pill {
-      padding: 9px 12px;
-      border-radius: 999px;
-      background: #111827;
-      color: #fff;
-      font-weight: 900;
-      font-size: 13px;
-      letter-spacing: 0.04em;
-    }
-
-    @media (max-width: 1024px) {
-      .sidebar {
-        transform: translateX(-105%);
-      }
-
-      .sidebar.open {
-        transform: translateX(0);
-      }
-
-      .main {
-        margin-left: 0;
-      }
-    }
-  </style>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <meta name="theme-color" content="#0f172a" />
+    <title>Admin · Flipkart</title>
+<!-- ============ 1.1: External Libraries ============ -->
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-app.js"></script>
+<script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-database.js"></script>
+<script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-storage.js"></script>   <!-- 🔥 NEW -->
+<script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+<script src="https://unpkg.com/lucide@latest"></script>
+<script src="https://cdn.jsdelivr.net/npm/fuse.js@7.0.0"></script>
+
+    <!-- ============ 1.2: All CSS Styles ============ -->
+    <style>
+        /* ===== ORIGINAL STYLES (unchanged) ===== */
+        * { -webkit-tap-highlight-color: transparent; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f1f5f9; min-height: 100vh; overscroll-behavior: none; }
+        .glass { background: rgba(255,255,255,0.8); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); }
+        .sidebar-link { transition: all 0.2s; border-left: 3px solid transparent; padding: 10px 16px; border-radius: 0 10px 10px 0; display: flex; align-items: center; gap: 12px; font-weight: 500; color: #64748b; cursor: pointer; }
+        .sidebar-link:hover { background: #f1f5f9; color: #0f172a; }
+        .sidebar-link.active { background: #eef2ff; color: #4f46e5; border-left-color: #4f46e5; }
+        .sidebar-link i { width: 20px; height: 20px; }
+        .stat-card { transition: all 0.2s; border: 1px solid #e2e8f0; }
+        .stat-card:hover { transform: translateY(-2px); box-shadow: 0 8px 25px rgba(0,0,0,0.06); }
+        .order-row { transition: background 0.15s; cursor: pointer; }
+        .order-row:hover { background: #f8fafc; }
+        .badge-status { padding: 3px 12px; border-radius: 20px; font-size: 11px; font-weight: 700; display: inline-block; letter-spacing: 0.3px; }
+        .badge-status.pickup { background: #d1fae5; color: #065f46; }
+        .badge-status.rejected { background: #fee2e2; color: #991b1b; }
+        .badge-status.reschedule { background: #fef3c7; color: #92400e; }
+        .badge-status.sold { background: #dbeafe; color: #1e40af; }
+        .badge-status.unsold { background: #fef3c7; color: #92400e; }
+        .badge-status.on_hold { background: #e0e7ff; color: #3730a3; }
+        .badge-status.approved { background: #d1fae5; color: #065f46; }
+        .badge-status.admin { background: #ede9fe; color: #5b21b6; }
+        .fade-in { animation: fadeIn 0.35s ease; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+        .modal-overlay { backdrop-filter: blur(6px); background: rgba(15,23,42,0.5); }
+        ::-webkit-scrollbar { width: 4px; height: 4px; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+        .filter-chip { padding: 4px 14px; border-radius: 20px; font-size: 12px; font-weight: 600; border: 2px solid #e2e8f0; background: #fff; cursor: pointer; transition: all 0.2s; color: #64748b; }
+        .filter-chip.active { border-color: #4f46e5; background: #eef2ff; color: #4f46e5; }
+        .filter-chip:active { transform: scale(0.95); }
+        .btn-action { padding: 6px 14px; border-radius: 8px; font-size: 12px; font-weight: 600; border: none; cursor: pointer; transition: all 0.2s; display: inline-flex; align-items: center; gap: 6px; }
+        .btn-action:active { transform: scale(0.94); }
+        .btn-action i { width: 16px; height: 16px; }
+        .btn-action.view { background: #eef2ff; color: #4f46e5; }
+        .btn-action.view:hover { background: #c7d2fe; }
+        .btn-action.edit { background: #fef3c7; color: #d97706; }
+        .btn-action.edit:hover { background: #fde68a; }
+        .btn-action.delete { background: #fee2e2; color: #dc2626; }
+        .btn-action.delete:hover { background: #fecaca; }
+        .btn-action.export { background: #d1fae5; color: #059669; }
+        .btn-action.export:hover { background: #a7f3d0; }
+        .btn-action.save { background: #dbeafe; color: #2563eb; }
+        .btn-action.save:hover { background: #bfdbfe; }
+        .btn-action.sell { background: #dbeafe; color: #1e40af; }
+        .btn-action.sell:hover { background: #bfdbfe; }
+        .btn-action.show { background: #fef3c7; color: #d97706; }
+        .btn-action.show:hover { background: #fde68a; }
+        .btn-action.activity { background: #e0e7ff; color: #4f46e5; }
+        .btn-action.activity:hover { background: #c7d2fe; }
+        .btn-action.logout { background: #fef3c7; color: #d97706; }
+        .btn-action.logout:hover { background: #fde68a; }
+        .btn-action.approve { background: #d1fae5; color: #065f46; }
+        .btn-action.approve:hover { background: #a7f3d0; }
+        .btn-action.hold { background: #e0e7ff; color: #3730a3; }
+        .btn-action.hold:hover { background: #c7d2fe; }
+        .btn-action.unhold { background: #fef3c7; color: #d97706; }
+        .btn-action.unhold:hover { background: #fde68a; }
+        .btn-action.unblock { background: #fef3c7; color: #d97706; }
+        .btn-action.unblock:hover { background: #fde68a; }
+        .btn-action.primary { background: #4f46e5; color: #fff; }
+        .btn-action.primary:hover { background: #4338ca; }
+        .btn-action.promote { background: #ede9fe; color: #5b21b6; }
+        .btn-action.promote:hover { background: #ddd6fe; }
+        .spinner-sm { border: 2px solid #e2e8f0; border-top: 2px solid #4f46e5; border-radius: 50%; width: 20px; height: 20px; animation: spin 0.7s linear infinite; display: inline-block; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        .sidebar-overlay { display: none; position: fixed; inset: 0; background: rgba(15,23,42,0.4); z-index: 40; backdrop-filter: blur(4px); }
+        .sidebar-overlay.open { display: block; }
+        @media (max-width: 768px) {
+            .sidebar { position: fixed; left: -280px; top: 0; bottom: 0; width: 280px; z-index: 50; transition: left 0.3s cubic-bezier(0.16,1,0.3,1); background: #fff; box-shadow: 4px 0 30px rgba(0,0,0,0.08); padding-top: 20px; }
+            .sidebar.open { left: 0; }
+            .sidebar-overlay.open { display: block; }
+        }
+        @media (min-width: 769px) {
+            .sidebar { position: sticky; top: 0; height: 100vh; width: 240px; flex-shrink: 0; background: #fff; border-right: 1px solid #e2e8f0; padding: 20px 12px; overflow-y: auto; }
+            .sidebar-overlay { display: none !important; }
+            .menu-toggle { display: none !important; }
+        }
+        .empty-state { text-align: center; padding: 48px 20px; color: #94a3b8; }
+        .empty-state i { width: 48px; height: 48px; margin-bottom: 12px; color: #cbd5e1; }
+        .detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+        @media (max-width: 500px) { .detail-grid { grid-template-columns: 1fr; } }
+        .detail-item { background: #f8fafc; border-radius: 10px; padding: 10px 14px; }
+        .detail-item .label { font-size: 10px; font-weight: 700; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.5px; }
+        .detail-item .value { font-size: 14px; font-weight: 600; color: #0f172a; word-break: break-all; margin-top: 2px; }
+        .detail-item .value.green { color: #059669; }
+        .detail-item .value.blue { color: #2563eb; }
+        .detail-item .value.red { color: #dc2626; }
+        .toast-fixed { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); background: #0f172a; color: #fff; padding: 12px 28px; border-radius: 14px; font-weight: 600; font-size: 14px; box-shadow: 0 10px 40px rgba(0,0,0,0.2); z-index: 999; opacity: 0; transition: opacity 0.3s, transform 0.3s; transform: translateX(-50%) translateY(20px); pointer-events: none; max-width: 90%; }
+        .toast-fixed.show { opacity: 1; transform: translateX(-50%) translateY(0); pointer-events: auto; }
+        .toast-fixed.success { background: #065f46; }
+        .toast-fixed.error { background: #991b1b; }
+        .toast-fixed.info { background: #1e40af; }
+        .edit-field { border: 2px solid #e2e8f0; border-radius: 10px; padding: 8px 12px; width: 100%; font-size: 14px; outline: none; transition: border 0.2s; background: #fff; }
+        .edit-field:focus { border-color: #4f46e5; box-shadow: 0 0 0 3px rgba(79,70,229,0.1); }
+        .edit-label { font-size: 10px; font-weight: 700; color: #64748b; text-transform: uppercase; letter-spacing: 0.5px; display: block; margin-bottom: 3px; }
+        .status-select { border: 2px solid #e2e8f0; border-radius: 10px; padding: 8px 12px; width: 100%; font-size: 14px; font-weight: 600; outline: none; background: #fff; }
+        .status-select:focus { border-color: #4f46e5; }
+        .badge-onway { background: #dbeafe; color: #1e40af; font-size: 10px; font-weight: 700; padding: 2px 10px; border-radius: 12px; display: inline-block; }
+        .badge-pending { background: #fef3c7; color: #92400e; font-size: 10px; font-weight: 700; padding: 2px 10px; border-radius: 12px; display: inline-block; }
+        .pending-item { border-left: 4px solid #f59e0b; transition: all 0.2s; }
+        .pending-item:active { transform: scale(0.99); }
+        .sell-modal .field-group { margin-bottom: 16px; }
+        .sell-modal label { font-size: 13px; font-weight: 600; color: #1e293b; display: block; margin-bottom: 4px; }
+        .sell-modal input { width: 100%; padding: 10px 14px; border: 2px solid #e2e8f0; border-radius: 10px; font-size: 15px; outline: none; transition: border 0.2s; background: #fff; }
+        .sell-modal input:focus { border-color: #4f46e5; box-shadow: 0 0 0 3px rgba(79,70,229,0.1); }
+        .sell-modal input:disabled { background: #f1f5f9; cursor: not-allowed; }
+        .sell-modal .hint { font-size: 12px; color: #94a3b8; margin-top: 4px; }
+        .profit-preview { padding: 10px 14px; border-radius: 10px; font-weight: 700; text-align: center; font-size: 16px; }
+        .profit-preview.positive { background: #d1fae5; color: #065f46; }
+        .profit-preview.negative { background: #fee2e2; color: #991b1b; }
+        .profit-preview.neutral { background: #f1f5f9; color: #64748b; }
+        .pulse-ring { animation: pulseRing 2s cubic-bezier(0.215,0.61,0.355,1) infinite; }
+        @keyframes pulseRing { 0% { box-shadow: 0 0 0 0 rgba(34,197,94,0.7); } 70% { box-shadow: 0 0 0 10px rgba(34,197,94,0); } 100% { box-shadow: 0 0 0 0 rgba(34,197,94,0); } }
+        .profit-green { color: #059669; font-weight: 700; }
+        .profit-red { color: #dc2626; font-weight: 700; }
+        .agent-form .field-group { margin-bottom: 14px; }
+        .agent-form label { font-size: 13px; font-weight: 600; color: #1e293b; display: block; margin-bottom: 3px; }
+        .agent-form input { width: 100%; padding: 10px 14px; border: 2px solid #e2e8f0; border-radius: 10px; font-size: 15px; outline: none; transition: border 0.2s; background: #fff; }
+        .agent-form input:focus { border-color: #4f46e5; box-shadow: 0 0 0 3px rgba(79,70,229,0.1); }
+        .agent-form select { width: 100%; padding: 10px 14px; border: 2px solid #e2e8f0; border-radius: 10px; font-size: 15px; outline: none; transition: border 0.2s; background: #fff; appearance: auto; }
+        .agent-form select:focus { border-color: #4f46e5; box-shadow: 0 0 0 3px rgba(79,70,229,0.1); }
+        .agent-form .btn-register { background: linear-gradient(135deg, #4f46e5, #7c3aed); color: #fff; border: none; padding: 12px 24px; border-radius: 12px; font-weight: 700; font-size: 16px; cursor: pointer; transition: 0.2s; width: 100%; }
+        .agent-form .btn-register:active { transform: scale(0.96); }
+        .agent-form .btn-register:hover { opacity: 0.9; }
+        .agent-error { color: #dc2626; font-size: 13px; margin-top: 4px; display: none; }
+        .agent-success { color: #059669; font-size: 13px; margin-top: 4px; display: none; }
+        .user-row { cursor: default; }
+        .user-row:hover { background: #f8fafc; }
+        .pw-hidden { font-family: monospace; letter-spacing: 2px; }
+        .activity-modal .activity-item { border-bottom: 1px solid #f1f5f9; padding: 10px 0; }
+        .activity-modal .activity-item:last-child { border-bottom: none; }
+        .attendance-present { color: #059669; font-weight: 700; }
+        .attendance-absent { color: #dc2626; font-weight: 700; }
+        .attendance-blocked { color: #d97706; font-weight: 700; }
+        .salary-summary-card { border-left: 4px solid #4f46e5; }
+        .attendance-card { transition: all 0.2s; }
+        .attendance-card:hover { background: #f8fafc; }
+        .otp-display { font-size: 24px; font-weight: 700; letter-spacing: 4px; color: #4f46e5; }
+        .attendance-name-click { cursor: pointer; transition: color 0.2s; }
+        .attendance-name-click:hover { color: #4f46e5; text-decoration: underline; }
+        .reject-modal .reject-item { border-bottom: 1px solid #f1f5f9; padding: 10px 0; }
+        .reject-modal .reject-item:last-child { border-bottom: none; }
+        .inline-flex { display: inline-flex; }
+        .admin-tag { background: #ede9fe; color: #5b21b6; font-size: 9px; font-weight: 700; padding: 1px 8px; border-radius: 10px; margin-left: 4px; }
+        .role-selector { display: flex; gap: 12px; align-items: center; padding: 8px 0; }
+        .role-selector label { display: flex; align-items: center; gap: 6px; cursor: pointer; font-size: 14px; font-weight: 500; color: #1e293b; }
+        .role-selector input[type="radio"] { width: 16px; height: 16px; accent-color: #4f46e5; cursor: pointer; }
+        .admin-fields-hidden { display: none !important; }
+        .promote-btn-wrap { display: inline-flex; gap: 4px; align-items: center; flex-wrap: wrap; }
+        .salary-toggle-btn { padding: 6px 16px; border: 1px solid #d1d5db; background: #fff; color: #374151; font-weight: 600; font-size: 13px; cursor: pointer; transition: all 0.2s; }
+        .salary-toggle-btn.active { background: #4f46e5; color: #fff; border-color: #4f46e5; }
+        .salary-toggle-btn:first-child { border-radius: 8px 0 0 8px; }
+        .salary-toggle-btn:last-child { border-radius: 0 8px 8px 0; }
+        .salary-toggle-btn:hover:not(.active) { background: #f3f4f6; }
+        .deposit-form .field-group { margin-bottom: 14px; }
+        .deposit-form label { font-size: 13px; font-weight: 600; color: #1e293b; display: block; margin-bottom: 3px; }
+        .deposit-form input, .deposit-form textarea { width: 100%; padding: 10px 14px; border: 2px solid #e2e8f0; border-radius: 10px; font-size: 15px; outline: none; transition: border 0.2s; background: #fff; font-family: inherit; }
+        .deposit-form input:focus, .deposit-form textarea:focus { border-color: #4f46e5; box-shadow: 0 0 0 3px rgba(79,70,229,0.1); }
+        .deposit-form textarea { resize: vertical; min-height: 60px; }
+        .deposit-form .btn-submit { background: linear-gradient(135deg, #059669, #10b981); color: #fff; border: none; padding: 12px 24px; border-radius: 12px; font-weight: 700; font-size: 16px; cursor: pointer; transition: 0.2s; width: 100%; }
+        .deposit-form .btn-submit:active { transform: scale(0.96); }
+        .deposit-form .btn-submit:hover { opacity: 0.9; }
+        .deposit-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(100px, 1fr)); gap: 10px; margin-bottom: 16px; }
+        .deposit-stats .stat-box { background: #f8fafc; padding: 12px 14px; border-radius: 10px; text-align: center; border: 1px solid #e2e8f0; }
+        .deposit-stats .stat-box .num { font-size: 22px; font-weight: 700; }
+        .deposit-stats .stat-box .num.green { color: #059669; }
+        .deposit-stats .stat-box .num.blue { color: #4f46e5; }
+        .deposit-stats .stat-box .num.amber { color: #d97706; }
+        .deposit-stats .stat-box .num.red { color: #dc2626; }
+        .deposit-stats .stat-box .num.purple { color: #7c3aed; }
+        .deposit-stats .stat-box .label { font-size: 10px; color: #94a3b8; text-transform: uppercase; font-weight: 600; }
+        .commission-badge { font-size: 10px; font-weight: 600; padding: 2px 8px; border-radius: 10px; background: #fef3c7; color: #92400e; }
+        .commission-col { font-size: 12px; font-weight: 600; color: #4f46e5; }
+        .commission-col.zero { color: #94a3b8; }
+        .salary-global-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; margin-bottom: 16px; }
+        .salary-global-stats .stat-box { background: #f8fafc; padding: 12px 14px; border-radius: 10px; text-align: center; border: 1px solid #e2e8f0; }
+        .salary-global-stats .stat-box .num { font-size: 22px; font-weight: 700; }
+        .salary-global-stats .stat-box .num.green { color: #059669; }
+        .salary-global-stats .stat-box .num.blue { color: #4f46e5; }
+        .salary-global-stats .stat-box .num.amber { color: #d97706; }
+        .salary-global-stats .stat-box .num.red { color: #dc2626; }
+        .salary-global-stats .stat-box .num.purple { color: #7c3aed; }
+        .salary-global-stats .stat-box .label { font-size: 10px; color: #94a3b8; text-transform: uppercase; font-weight: 600; }
+
+        /* ===== LIVE SEARCH DROPDOWN - Premium UI ===== */
+        .live-search-dropdown {
+            position: absolute;
+            top: calc(100% + 4px);
+            left: 0;
+            right: 0;
+            background: rgba(255, 255, 255, 0.96);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border-radius: 1rem;
+            box-shadow: 0 12px 40px rgba(0,0,0,0.12);
+            max-height: 280px;
+            overflow-y: auto;
+            z-index: 60;
+            display: none;
+            border: 1px solid rgba(226,232,240,0.6);
+            padding: 4px 0;
+        }
+        .live-search-dropdown.open { display: block; }
+        .live-search-dropdown .dropdown-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0.6rem 1rem;
+            cursor: pointer;
+            border-bottom: 1px solid #f1f5f9;
+            transition: background 0.12s;
+        }
+        .live-search-dropdown .dropdown-item:last-child { border-bottom: none; }
+        .live-search-dropdown .dropdown-item:hover { background: #f8fafc; }
+        .live-search-dropdown .dropdown-item:active { background: #eef2ff; }
+        .live-search-dropdown .dropdown-item .item-primary {
+            font-weight: 600;
+            color: #1e293b;
+            font-size: 0.9rem;
+        }
+        .live-search-dropdown .dropdown-item .item-secondary {
+            font-size: 0.75rem;
+            color: #64748b;
+            margin-top: 2px;
+        }
+        .live-search-dropdown .dropdown-item .item-badge {
+            font-size: 0.7rem;
+            font-weight: 700;
+            color: #4f46e5;
+            background: #eef2ff;
+            padding: 2px 10px;
+            border-radius: 12px;
+            white-space: nowrap;
+        }
+        .live-search-dropdown .empty-dropdown {
+            padding: 1.2rem 1rem;
+            text-align: center;
+            color: #94a3b8;
+            font-size: 0.85rem;
+        }
+
+        /* ===== GLOBAL SEARCH - PRO-TECH ===== */
+        #globalSearchModal {
+            display: none;
+            position: fixed;
+            inset: 0;
+            z-index: 9999;
+            background: rgba(8, 12, 24, 0.65);
+            backdrop-filter: blur(18px) saturate(1.2);
+            -webkit-backdrop-filter: blur(18px) saturate(1.2);
+            align-items: center;
+            justify-content: center;
+            padding: 1.5rem;
+            animation: modalReveal 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+        }
+        @keyframes modalReveal {
+            0% { opacity: 0; transform: scale(0.94) translateY(16px); }
+            100% { opacity: 1; transform: scale(1) translateY(0); }
+        }
+        #globalSearchModal.open { display: flex; }
+
+        #globalSearchModal .modal-box {
+            background: rgba(255,255,255,0.82);
+            backdrop-filter: blur(28px) saturate(1.3);
+            -webkit-backdrop-filter: blur(28px) saturate(1.3);
+            border-radius: 2rem;
+            max-width: 700px;
+            width: 100%;
+            padding: 1.8rem 2rem 2rem 2rem;
+            box-shadow: 0 40px 80px rgba(0,0,0,0.30), 0 0 0 1px rgba(255,255,255,0.25), inset 0 1px 0 rgba(255,255,255,0.5);
+            max-height: 90vh;
+            overflow-y: auto;
+            border: 1px solid rgba(255,255,255,0.20);
+            transition: box-shadow 0.3s ease;
+        }
+        #globalSearchModal .modal-box:hover {
+            box-shadow: 0 48px 96px rgba(0,0,0,0.35), 0 0 0 1px rgba(255,255,255,0.30), inset 0 1px 0 rgba(255,255,255,0.6);
+        }
+
+        #globalSearchModal .modal-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 1.2rem;
+        }
+        #globalSearchModal .modal-header h3 {
+            font-size: 1.15rem;
+            font-weight: 700;
+            color: #1e293b;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            letter-spacing: -0.3px;
+        }
+        #globalSearchModal .modal-header h3 i { color: #4f46e5; }
+        #globalSearchModal .modal-header .close-btn {
+            background: none;
+            border: none;
+            padding: 8px;
+            cursor: pointer;
+            color: #94a3b8;
+            transition: all 0.2s;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 36px;
+            height: 36px;
+        }
+        #globalSearchModal .modal-header .close-btn:hover {
+            color: #1e293b;
+            background: rgba(0,0,0,0.06);
+            transform: scale(1.04);
+        }
+
+        #globalSearchModal .search-input-wrap {
+            position: relative;
+            animation: searchSlide 0.4s cubic-bezier(0.16,1,0.3,1) forwards;
+        }
+        @keyframes searchSlide {
+            0% { transform: scaleX(0.92) translateY(-4px); opacity: 0; }
+            100% { transform: scaleX(1) translateY(0); opacity: 1; }
+        }
+        #globalSearchModal .search-input-wrap i {
+            position: absolute;
+            left: 1rem;
+            top: 50%;
+            transform: translateY(-50%);
+            color: #94a3b8;
+            pointer-events: none;
+            transition: color 0.2s;
+        }
+        #globalSearchModal .search-input-wrap input {
+            width: 100%;
+            padding: 0.85rem 1rem 0.85rem 3rem;
+            border: 2px solid rgba(226,232,240,0.6);
+            border-radius: 1.5rem;
+            font-size: 1.05rem;
+            outline: none;
+            transition: all 0.25s cubic-bezier(0.16,1,0.3,1);
+            background: rgba(255,255,255,0.5);
+            backdrop-filter: blur(4px);
+            -webkit-backdrop-filter: blur(4px);
+            color: #0f172a;
+            font-weight: 500;
+            letter-spacing: -0.2px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.02);
+        }
+        #globalSearchModal .search-input-wrap input::placeholder { color: #94a3b8; font-weight: 400; }
+        #globalSearchModal .search-input-wrap input:focus {
+            border-color: #4f46e5;
+            background: rgba(255,255,255,0.85);
+            box-shadow: 0 0 0 6px rgba(79,70,229,0.12), 0 4px 16px rgba(79,70,229,0.08);
+        }
+        #globalSearchModal .search-input-wrap input:focus + i,
+        #globalSearchModal .search-input-wrap input:focus ~ i { color: #4f46e5; }
+
+        #globalSearchModal .results-container {
+            margin-top: 1.2rem;
+            max-height: 460px;
+            overflow-y: auto;
+            padding-right: 4px;
+        }
+        #globalSearchModal .results-container::-webkit-scrollbar { width: 4px; }
+        #globalSearchModal .results-container::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+
+        #globalSearchModal .category-group {
+            margin-top: 1.2rem;
+            animation: resultFade 0.3s cubic-bezier(0.16,1,0.3,1) forwards;
+        }
+        #globalSearchModal .category-group:first-child { margin-top: 0; }
+        @keyframes resultFade {
+            0% { opacity: 0; transform: translateY(6px); }
+            100% { opacity: 1; transform: translateY(0); }
+        }
+        #globalSearchModal .category-title {
+            font-size: 0.7rem;
+            font-weight: 700;
+            color: #94a3b8;
+            text-transform: uppercase;
+            letter-spacing: 0.7px;
+            padding: 0.2rem 0.5rem 0.4rem 0.5rem;
+            border-bottom: 1.5px solid rgba(226,232,240,0.5);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        #globalSearchModal .category-title .count-badge {
+            font-size: 0.6rem;
+            background: rgba(226,232,240,0.5);
+            color: #64748b;
+            padding: 0 8px;
+            border-radius: 12px;
+            font-weight: 600;
+        }
+
+        #globalSearchModal .result-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0.65rem 0.9rem;
+            border-bottom: 1px solid rgba(241,245,249,0.5);
+            transition: all 0.15s cubic-bezier(0.16,1,0.3,1);
+            border-radius: 10px;
+            gap: 8px;
+            cursor: default;
+        }
+        #globalSearchModal .result-item:hover {
+            background: rgba(255,255,255,0.6);
+            transform: translateX(2px);
+        }
+        #globalSearchModal .result-item:active { transform: scale(0.99); }
+        #globalSearchModal .result-item .text-mono {
+            font-family: 'SF Mono','Menlo','Monaco','Cascadia Code',monospace;
+            font-weight: 700;
+            color: #1e293b;
+            font-size: 0.9rem;
+            letter-spacing: -0.2px;
+        }
+        #globalSearchModal .result-item .text-desc {
+            font-size: 0.78rem;
+            color: #64748b;
+            margin-left: 0.4rem;
+            font-weight: 400;
+        }
+        #globalSearchModal .result-item .badge-status {
+            font-size: 0.65rem;
+            padding: 2px 10px;
+            white-space: nowrap;
+            border-radius: 20px;
+        }
+        #globalSearchModal .result-item .action-buttons {
+            display: flex;
+            gap: 4px;
+            align-items: center;
+            flex-shrink: 0;
+        }
+        #globalSearchModal .result-item .action-buttons button {
+            background: none;
+            border: none;
+            cursor: pointer;
+            padding: 5px;
+            border-radius: 50%;
+            transition: all 0.15s;
+            color: #64748b;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        #globalSearchModal .result-item .action-buttons button:hover {
+            background: rgba(0,0,0,0.05);
+            color: #1e293b;
+        }
+        #globalSearchModal .result-item .action-buttons button.locate-btn { color: #4f46e5; }
+        #globalSearchModal .result-item .action-buttons button.locate-btn:hover {
+            background: rgba(79,70,229,0.10);
+            transform: scale(1.08);
+        }
+
+        #globalSearchModal .show-more-btn {
+            width: 100%;
+            padding: 0.6rem;
+            margin-top: 0.5rem;
+            background: rgba(79,70,229,0.08);
+            border: 1px solid rgba(79,70,229,0.15);
+            border-radius: 8px;
+            color: #4f46e5;
+            font-size: 0.8rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        #globalSearchModal .show-more-btn:hover {
+            background: rgba(79,70,229,0.12);
+            border-color: rgba(79,70,229,0.25);
+        }
+
+        #globalSearchModal .empty-state {
+            text-align: center;
+            padding: 2.5rem 1rem;
+            color: #94a3b8;
+        }
+        #globalSearchModal .empty-state i {
+            width: 40px;
+            height: 40px;
+            margin-bottom: 10px;
+            color: #cbd5e1;
+        }
+        #globalSearchModal .empty-state p {
+            font-size: 0.9rem;
+            font-weight: 500;
+        }
+
+        /* ===== MOBILE ADJUSTMENTS ===== */
+        @media (max-width: 480px) {
+            #globalSearchModal .modal-box {
+                padding: 1.2rem 1.2rem 1.5rem 1.2rem;
+                border-radius: 1.5rem;
+                max-width: 100%;
+                margin: 0 0.5rem;
+            }
+            #globalSearchModal .modal-header h3 { font-size: 1rem; }
+            #globalSearchModal .search-input-wrap input {
+                font-size: 0.95rem;
+                padding: 0.7rem 0.9rem 0.7rem 2.8rem;
+            }
+            #globalSearchModal .result-item {
+                flex-wrap: wrap;
+                padding: 0.5rem 0.6rem;
+            }
+            #globalSearchModal .result-item .text-desc { font-size: 0.7rem; }
+            #globalSearchModal .result-item .action-buttons button { padding: 4px; }
+            .live-search-dropdown {
+                max-height: 200px;
+                border-radius: 0.75rem;
+            }
+            .live-search-dropdown .dropdown-item {
+                padding: 0.5rem 0.75rem;
+                font-size: 0.85rem;
+                flex-wrap: wrap;
+            }
+        }
+
+        /* ===== SWEETALERT Z-INDEX FIX ===== */
+        .swal2-container { z-index: 99999 !important; }
+
+        /* ===== TABLE WRAP FOR MOBILE ===== */
+        .table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+
+        /* ===== IMEI OVERRIDE BUTTON ===== */
+        .imei-allow-btn {
+            font-size: 10px;
+            padding: 2px 8px;
+            border-radius: 6px;
+            border: 1px solid #e2e8f0;
+            background: #f8fafc;
+            color: #64748b;
+            cursor: pointer;
+            transition: all 0.2s;
+            white-space: nowrap;
+            margin-left: 4px;
+        }
+        .imei-allow-btn:hover { background: #e2e8f0; }
+        .imei-allow-btn.allowed {
+            background: #d1fae5;
+            border-color: #059669;
+            color: #065f46;
+        }
+        .imei-wrap { display: flex; align-items: center; gap: 4px; }
+        .imei-wrap input { flex: 1; }
+    </style>
 </head>
-
 <body>
-  <div id="toast" class="toast-fixed"></div>
 
-  <div class="app-shell">
-    <div id="sidebarOverlay" class="sidebar-overlay" onclick="closeSidebar()"></div>
+<!-- ================================================================ -->
+<!-- SECTION 2: TOAST NOTIFICATION                                    -->
+<!-- ================================================================ -->
+<div id="toast" class="toast-fixed"></div>
 
+<!-- ================================================================ -->
+<!-- SECTION 3: SIDEBAR OVERLAY (mobile)                              -->
+<!-- ================================================================ -->
+<div id="sidebarOverlay" class="sidebar-overlay" onclick="closeSidebar()"></div>
+
+<!-- ================================================================ -->
+<!-- SECTION 4: MAIN LAYOUT - SIDEBAR + CONTENT                      -->
+<!-- ================================================================ -->
+<div class="flex min-h-screen">
+
+    <!-- ============ 4.1: SIDEBAR ============ -->
     <aside id="sidebar" class="sidebar">
-      <div class="p-4 pb-2">
-        <div class="text-2xl font-black">Flipkart</div>
-        <div class="text-sm text-gray-300 mt-1">Admin Panel</div>
-      </div>
+        <div class="flex items-center gap-3 px-3 mb-6">
+            <div class="w-10 h-10 bg-gradient-to-br from-indigo-600 to-purple-600 rounded-xl flex items-center justify-center shadow-lg flex-shrink-0">
+                <i data-lucide="layout-dashboard" class="w-5 h-5 text-white"></i>
+            </div>
+            <div>
+                <h1 class="text-sm font-bold text-gray-800">Admin Panel</h1>
+                <p class="text-[10px] text-gray-400 font-medium">Flipkart</p>
+            </div>
+        </div>
 
-      <nav class="mt-2 flex-1 overflow-auto pb-4">
-        <a class="sidebar-link active" data-page="dashboard" onclick="navigate('dashboard')">
-          <span class="flex items-center gap-2"><i data-lucide="layout-dashboard"></i> Dashboard</span>
-        </a>
+        <nav class="space-y-0.5">
+            <div class="sidebar-link active" data-page="dashboard" onclick="navigate('dashboard')">
+                <i data-lucide="layout-dashboard"></i> Dashboard
+            </div>
+            <div class="sidebar-link" data-page="orders" onclick="navigate('orders')">
+                <i data-lucide="package"></i> All Orders
+                <span id="orderCountBadge" class="ml-auto text-xs bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full">0</span>
+            </div>
+            <div class="sidebar-link" data-page="pending" onclick="navigate('pending')">
+                <i data-lucide="clock"></i> Pending
+                <span id="pendingBadge" class="ml-auto text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full">0</span>
+            </div>
+            <div class="sidebar-link" data-page="rejected" onclick="navigate('rejected')">
+                <i data-lucide="x-circle"></i> Rejected
+                <span id="rejectedBadge" class="ml-auto text-xs bg-red-100 text-red-700 px-2 py-0.5 rounded-full">0</span>
+            </div>
+            <div class="sidebar-link" data-page="inventory" onclick="navigate('inventory')">
+                <i data-lucide="package-check"></i> Inventory
+                <span id="inventoryBadge" class="ml-auto text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full">0</span>
+            </div>
+            <div class="sidebar-link" data-page="sales" onclick="navigate('sales')">
+                <i data-lucide="trending-up"></i> Sales
+                <span id="salesBadge" class="ml-auto text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full">0</span>
+            </div>
+            <div class="sidebar-link" data-page="deposits" onclick="navigate('deposits')">
+                <i data-lucide="banknote"></i> Deposits
+                <span id="depositsBadge" class="ml-auto text-xs bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full">0</span>
+            </div>
+            <div class="sidebar-link" data-page="attendance" onclick="navigate('attendance')">
+                <i data-lucide="clipboard-check"></i> Attendance
+                <span id="attendanceBadge" class="ml-auto text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full">0</span>
+            </div>
+            <div class="sidebar-link" data-page="salary" onclick="navigate('salary')">
+                <i data-lucide="indian-rupee"></i> Salary/Earnings
+            </div>
+            <div class="sidebar-link" data-page="agents" onclick="navigate('agents')">
+                <i data-lucide="users"></i> Agents
+                <span id="agentsBadge" class="ml-auto text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full">0</span>
+            </div>
+        </nav>
 
-        <a class="sidebar-link" data-page="orders" onclick="navigate('orders')">
-          <span class="flex items-center gap-2"><i data-lucide="package"></i> All Orders</span>
-          <span id="orderCountBadge" class="sidebar-badge">0</span>
-        </a>
-
-        <a class="sidebar-link" data-page="pending" onclick="navigate('pending')">
-          <span class="flex items-center gap-2"><i data-lucide="clock"></i> Pending</span>
-          <span id="pendingBadge" class="sidebar-badge">0</span>
-        </a>
-
-        <a class="sidebar-link" data-page="rejected" onclick="navigate('rejected')">
-          <span class="flex items-center gap-2"><i data-lucide="x-circle"></i> Rejected</span>
-          <span id="rejectedBadge" class="sidebar-badge">0</span>
-        </a>
-
-        <a class="sidebar-link" data-page="inventory" onclick="navigate('inventory')">
-          <span class="flex items-center gap-2"><i data-lucide="boxes"></i> Inventory</span>
-          <span id="inventoryBadge" class="sidebar-badge">0</span>
-        </a>
-
-        <a class="sidebar-link" data-page="sales" onclick="navigate('sales')">
-          <span class="flex items-center gap-2"><i data-lucide="badge-dollar-sign"></i> Sales</span>
-          <span id="salesBadge" class="sidebar-badge">0</span>
-        </a>
-
-        <a class="sidebar-link" data-page="deposits" onclick="navigate('deposits')">
-          <span class="flex items-center gap-2"><i data-lucide="landmark"></i> Deposits</span>
-          <span id="depositsBadge" class="sidebar-badge">0</span>
-        </a>
-
-        <a class="sidebar-link" data-page="attendance" onclick="navigate('attendance')">
-          <span class="flex items-center gap-2"><i data-lucide="calendar-check"></i> Attendance</span>
-          <span id="attendanceBadge" class="sidebar-badge">0</span>
-        </a>
-
-        <a class="sidebar-link" data-page="salary" onclick="navigate('salary')">
-          <span class="flex items-center gap-2"><i data-lucide="wallet"></i> Salary / Earnings</span>
-        </a>
-
-        <a class="sidebar-link" data-page="agents" onclick="navigate('agents')">
-          <span class="flex items-center gap-2"><i data-lucide="users"></i> Agents</span>
-          <span id="agentsBadge" class="sidebar-badge">0</span>
-        </a>
-      </nav>
-
-      <div class="p-4 border-t border-white/10">
-        <div class="font-bold">Admin</div>
-        <div class="text-xs text-gray-300 mt-1">Supervisor</div>
-      </div>
+        <div class="mt-auto pt-6 border-t border-gray-100 px-3">
+            <div class="flex items-center gap-3">
+                <div class="w-8 h-8 bg-gray-200 rounded-full flex items-center justify-center">
+                    <i data-lucide="user" class="w-4 h-4 text-gray-600"></i>
+                </div>
+                <div>
+                    <p class="text-xs font-bold text-gray-800">Admin</p>
+                    <p class="text-[10px] text-gray-400">Supervisor</p>
+                </div>
+            </div>
+            <button onclick="refreshAll()" class="mt-3 w-full text-xs font-medium text-gray-500 hover:text-gray-800 flex items-center justify-center gap-1.5 py-2 rounded-lg hover:bg-gray-50 transition">
+                <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i> Refresh
+            </button>
+        </div>
     </aside>
 
-    <main class="main">
-      <header class="topbar">
-        <button class="icon-btn lg:hidden" onclick="toggleSidebar()" aria-label="Menu">☰</button>
+    <!-- ============ 4.2: MAIN CONTENT ============ -->
+    <main class="flex-1 min-w-0 px-4 sm:px-6 py-5 md:py-8">
 
-        <div>
-          <div class="text-xl md:text-2xl font-black">Admin Panel</div>
-          <div class="text-sm text-slate-500">Dashboard</div>
-        </div>
-
-        <div class="topbar-right">
-          <button class="btn btn-dark" onclick="openGlobalSearch()">
-            <i data-lucide="search"></i> Smart Search
-          </button>
-
-          <div id="liveTime" class="clock-pill">--:--:--</div>
-
-          <button class="btn btn-light" onclick="refreshAll()">
-            <i data-lucide="refresh-cw"></i> Refresh
-          </button>
-        </div>
-      </header>
-
-      <!-- ================= DASHBOARD ================= -->
-      <section id="page-dashboard" class="page-content">
-        <div class="mb-5">
-          <h1 class="page-title">Dashboard</h1>
-          <p class="page-subtitle">Real-time overview of all activity</p>
-        </div>
-
-        <div class="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-6 gap-3 mb-4">
-          <div class="stat-card"><div class="stat-label">Total Orders</div><div id="statTotal" class="stat-value">0</div></div>
-          <div class="stat-card"><div class="stat-label">Pickups</div><div id="statPickup" class="stat-value">0</div></div>
-          <div class="stat-card"><div class="stat-label">In Stock</div><div id="statInventory" class="stat-value">0</div></div>
-          <div class="stat-card"><div class="stat-label">Sold</div><div id="statSold" class="stat-value">0</div></div>
-          <div class="stat-card"><div class="stat-label">Rejected</div><div id="statRejected" class="stat-value">0</div></div>
-          <div class="stat-card"><div class="stat-label">Pending</div><div id="statPending" class="stat-value">0</div></div>
-        </div>
-
-        <div class="grid grid-cols-1 md:grid-cols-3 xl:grid-cols-6 gap-3 mb-4">
-          <div class="stat-card"><div class="stat-label">Revenue (After Commission)</div><div id="statRevenue" class="stat-value text-xl">₹0</div></div>
-          <div class="stat-card"><div class="stat-label">Total Profit</div><div id="statProfit" class="stat-value text-xl">₹0</div></div>
-          <div class="stat-card"><div class="stat-label">Final Net Profit</div><div id="statFinalProfit" class="stat-value text-xl">₹0</div></div>
-          <div class="stat-card"><div class="stat-label">Stock Value</div><div id="statStockValue" class="stat-value text-xl">₹0</div></div>
-          <div class="stat-card"><div class="stat-label">Total Agents</div><div id="statAgents" class="stat-value">0</div></div>
-          <div class="stat-card"><div class="stat-label">Present Today</div><div id="statPresentToday" class="stat-value">0</div></div>
-        </div>
-
-        <div class="grid grid-cols-1 xl:grid-cols-[1.2fr_0.8fr] gap-4">
-          <div class="glass p-4">
-            <div class="flex items-center justify-between gap-3 mb-3">
-              <h2 class="text-lg font-black">Recent Activity</h2>
-              <button class="btn btn-light" onclick="navigate('orders')">View all →</button>
-            </div>
-
-            <div id="recentList">
-              <div class="empty-state">
-                <i data-lucide="inbox"></i>
-                <p class="text-sm font-medium">No activity yet</p>
-              </div>
-            </div>
-          </div>
-
-          <div class="glass p-4">
-            <h2 class="text-lg font-black mb-3">Commission</h2>
-            <div class="stat-card">
-              <div class="stat-label">Total Commission</div>
-              <div id="statCommission" class="stat-value text-xl">₹0</div>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <!-- ================= ORDERS ================= -->
-      <section id="page-orders" class="page-content" style="display:none;">
-        <div class="mb-5">
-          <h1 class="page-title">All Orders</h1>
-          <p class="page-subtitle">Complete history of all pickups</p>
-        </div>
-
-        <div class="glass p-4 mb-4">
-          <div class="flex flex-wrap items-center gap-2 mb-3">
-            <button class="btn btn-dark" onclick="exportCSV()">
-              <i data-lucide="download"></i> Export CSV
+        <!-- Mobile Header -->
+        <div class="flex items-center justify-between mb-5 md:hidden">
+            <button onclick="toggleSidebar()" class="p-2 -ml-2 rounded-lg hover:bg-gray-100">
+                <i data-lucide="menu" class="w-6 h-6 text-gray-700"></i>
             </button>
-
-            <button class="btn btn-light" onclick="refreshOrders()">
-              <i data-lucide="refresh-cw"></i> Refresh
+            <h2 class="text-lg font-bold text-gray-800">Admin Panel</h2>
+            <button onclick="refreshAll()" class="p-2 rounded-lg hover:bg-gray-100">
+                <i data-lucide="refresh-cw" class="w-5 h-5 text-gray-500"></i>
             </button>
-
-            <span class="ml-auto text-sm font-bold text-slate-500" id="orderCountDisplay">0 orders</span>
-          </div>
-
-          <div class="flex flex-wrap gap-2 mb-3">
-            <button class="filter-chip active" data-filter="all" onclick="setOrderFilter('all')">All</button>
-            <button class="filter-chip" data-filter="pickup" onclick="setOrderFilter('pickup')">Pickup</button>
-            <button class="filter-chip" data-filter="rejected" onclick="setOrderFilter('rejected')">Rejected</button>
-            <button class="filter-chip" data-filter="reschedule" onclick="setOrderFilter('reschedule')">Pending</button>
-            <button class="filter-chip" data-filter="on_hold" onclick="setOrderFilter('on_hold')">Hold</button>
-          </div>
-
-          <div class="grid grid-cols-1 xl:grid-cols-[1.15fr_auto_auto] gap-3 items-start">
-            <div class="search-wrap">
-              <input id="orderSearch" type="text" placeholder="Search order id, model, IMEI, customer, agent..." />
-              <div id="orderSearchDropdown" class="search-dropdown"></div>
-            </div>
-
-            <div class="grid grid-cols-[auto_auto_auto_auto] gap-2 items-center">
-              <input type="date" id="orderDateFrom" />
-              <span class="text-slate-400 font-bold">to</span>
-              <input type="date" id="orderDateTo" />
-              <div class="flex gap-2">
-                <button class="btn btn-light" onclick="applyOrderDateFilter()">Apply</button>
-                <button class="btn btn-light" onclick="clearOrderDateFilter()">Clear</button>
-              </div>
-            </div>
-
-            <div class="grid grid-cols-[auto_auto_auto] gap-2 items-center">
-              <select id="orderAgentFilter">
-                <option value="all">All Agents</option>
-              </select>
-              <button class="btn btn-light" onclick="applyOrderAgentFilter()">Apply</button>
-              <button class="btn btn-light" onclick="clearOrderAgentFilter()">Clear</button>
-            </div>
-          </div>
         </div>
 
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>#</th>
-                <th>Order ID</th>
-                <th>Status</th>
-                <th>Model</th>
-                <th>IMEI</th>
-                <th>Value</th>
-                <th>Customer</th>
-                <th>Agent</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody id="ordersTableBody"></tbody>
-          </table>
-        </div>
-
-        <div class="flex items-center justify-between gap-3 mt-4">
-          <button id="prevOrderPageBtn" class="btn btn-light" onclick="prevOrderPage()">← Prev</button>
-          <div id="orderPageInfo" class="font-bold text-slate-500">1 / 1</div>
-          <button id="nextOrderPageBtn" class="btn btn-light" onclick="nextOrderPage()">Next →</button>
-        </div>
-      </section>
-
-      <!-- ================= PENDING ================= -->
-      <section id="page-pending" class="page-content" style="display:none;">
-        <div class="mb-5">
-          <h1 class="page-title">Pending Orders</h1>
-          <p class="page-subtitle">Orders that are rescheduled or on hold</p>
-        </div>
-
-        <div class="glass p-4 mb-4">
-          <button class="btn btn-light" onclick="refreshPending()">
-            <i data-lucide="refresh-cw"></i> Refresh
-          </button>
-        </div>
-
-        <div id="pendingListAdmin" class="space-y-3"></div>
-      </section>
-
-      <!-- ================= REJECTED ================= -->
-      <section id="page-rejected" class="page-content" style="display:none;">
-        <div class="mb-5">
-          <h1 class="page-title">Rejected Orders</h1>
-          <p class="page-subtitle">Orders that were not purchased</p>
-        </div>
-
-        <div class="glass p-4 mb-4">
-          <button class="btn btn-light" onclick="refreshRejected()">
-            <i data-lucide="refresh-cw"></i> Refresh
-          </button>
-        </div>
-
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>#</th>
-                <th>Order ID</th>
-                <th>Reason</th>
-                <th>Agent</th>
-                <th>Time</th>
-                <th>Status</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody id="rejectedTableBody"></tbody>
-          </table>
-        </div>
-      </section>
-
-      <!-- ================= INVENTORY ================= -->
-      <section id="page-inventory" class="page-content" style="display:none;">
-        <div class="mb-5">
-          <h1 class="page-title">Inventory</h1>
-          <p class="page-subtitle">All phones available for sale — Commission shown based on purchase price</p>
-        </div>
-
-        <div class="glass p-4 mb-4">
-          <div class="flex flex-wrap items-center gap-2 mb-3">
-            <span class="font-bold text-slate-500" id="inventoryCount">0 units</span>
-
-            <div class="ml-auto flex gap-2">
-              <button class="btn btn-light" onclick="refreshInventory()">
-                <i data-lucide="refresh-cw"></i> Refresh
-              </button>
-            </div>
-          </div>
-
-          <div class="search-wrap max-w-xl">
-            <input id="inventorySearch" type="text" placeholder="Search inventory..." />
-            <div id="inventorySearchDropdown" class="search-dropdown"></div>
-          </div>
-        </div>
-
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>#</th>
-                <th>Order ID</th>
-                <th>Model</th>
-                <th>IMEI</th>
-                <th>Purchase Price</th>
-                <th>Commission</th>
-                <th>Customer</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody id="inventoryTableBody"></tbody>
-          </table>
-        </div>
-      </section>
-
-      <!-- ================= SALES ================= -->
-      <section id="page-sales" class="page-content" style="display:none;">
-        <div class="mb-5">
-          <h1 class="page-title">Sales</h1>
-          <p class="page-subtitle">Complete sales history & profit tracking</p>
-        </div>
-
-        <div class="glass p-4 mb-4">
-          <div class="flex flex-wrap items-center gap-2 mb-3">
-            <button class="btn btn-dark" onclick="exportSalesCSV()">
-              <i data-lucide="download"></i> Export CSV
-            </button>
-
-            <button class="btn btn-light" onclick="refreshSales()">
-              <i data-lucide="refresh-cw"></i> Refresh
-            </button>
-          </div>
-
-          <div class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3 mb-4">
-            <div class="stat-card"><div class="stat-label">Total Sales</div><div id="salesTotalCount" class="stat-value text-xl">0</div></div>
-            <div class="stat-card"><div class="stat-label">Revenue (Net)</div><div id="salesTotalRevenue" class="stat-value text-xl">₹0</div></div>
-            <div class="stat-card"><div class="stat-label">Total Gross Profit</div><div id="salesTotalGrossProfit" class="stat-value text-xl">₹0</div></div>
-            <div class="stat-card"><div class="stat-label">Total Final Net Profit</div><div id="salesTotalFinalProfit" class="stat-value text-xl">₹0</div></div>
-            <div class="stat-card"><div class="stat-label">Avg. Gross Profit</div><div id="salesAvgProfit" class="stat-value text-xl">₹0</div></div>
-            <div class="stat-card"><div class="stat-label">Overhead / Phone</div><div id="salesOverheadPerPhone" class="stat-value text-xl">₹0</div></div>
-          </div>
-
-          <div class="grid grid-cols-1 xl:grid-cols-[1fr_auto_auto] gap-3 items-start">
-            <div class="search-wrap">
-              <input id="salesSearch" type="text" placeholder="Search sales..." />
-              <div id="salesSearchDropdown" class="search-dropdown"></div>
-            </div>
-
-            <div class="grid grid-cols-[auto_auto_auto] gap-2 items-center">
-              <input type="date" id="salesDateFrom" />
-              <span class="text-slate-400 font-bold">to</span>
-              <input type="date" id="salesDateTo" />
-            </div>
-
-            <div class="flex gap-2">
-              <button class="btn btn-light" onclick="applySalesFilters()">Apply</button>
-              <button class="btn btn-light" onclick="clearSalesFilters()">Clear</button>
-            </div>
-          </div>
-        </div>
-
-        <div class="table-wrap">
-          <table style="min-width:1200px;">
-            <thead>
-              <tr>
-                <th>#</th>
-                <th>Order ID</th>
-                <th>Model</th>
-                <th>IMEI</th>
-                <th>Purchase</th>
-                <th>Sale Price</th>
-                <th>Commission</th>
-                <th>Gross Profit</th>
-                <th>Overhead/Phone</th>
-                <th>Final Net Profit</th>
-                <th>Buyer</th>
-                <th>Sale Date</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody id="salesTableBody"></tbody>
-          </table>
-        </div>
-      </section>
-
-      <!-- ================= DEPOSITS ================= -->
-      <section id="page-deposits" class="page-content" style="display:none;">
-        <div class="mb-5">
-          <h1 class="page-title">Deposits</h1>
-          <p class="page-subtitle">Track your deposits & commission</p>
-        </div>
-
-        <div class="glass p-4 mb-4">
-          <div class="flex flex-wrap items-center gap-2 mb-4">
-            <button class="btn btn-dark" onclick="exportDepositsCSV()">
-              <i data-lucide="download"></i> Export CSV
-            </button>
-
-            <button class="btn btn-light" onclick="refreshDeposits()">
-              <i data-lucide="refresh-cw"></i> Refresh
-            </button>
-          </div>
-
-          <div class="grid grid-cols-2 md:grid-cols-5 gap-3 mb-4">
-            <div class="stat-card"><div class="stat-label">Total Deposits</div><div id="depositTotal" class="stat-value text-xl">₹0</div></div>
-            <div class="stat-card"><div class="stat-label">Stock Value</div><div id="depositStockValue" class="stat-value text-xl">₹0</div></div>
-            <div class="stat-card"><div class="stat-label">Balance</div><div id="depositBalance" class="stat-value text-xl">₹0</div></div>
-            <div class="stat-card"><div class="stat-label">Total Commission</div><div id="depositCommission" class="stat-value text-xl">₹0</div></div>
-            <div class="stat-card"><div class="stat-label">Total Entries</div><div id="depositCount" class="stat-value text-xl">0</div></div>
-          </div>
-
-          <div class="grid grid-cols-1 xl:grid-cols-[220px_180px_1fr_auto] gap-3 items-end mb-4">
-            <div>
-              <label class="edit-label">Amount (₹) *</label>
-              <input type="number" id="depositAmount" placeholder="0" />
-            </div>
-
-            <div>
-              <label class="edit-label">Date</label>
-              <input type="date" id="depositDate" />
-            </div>
-
-            <div>
-              <label class="edit-label">Description</label>
-              <input type="text" id="depositDescription" placeholder="Description" />
-            </div>
-
-            <button class="btn btn-success" onclick="submitDeposit(event)">Add Deposit</button>
-          </div>
-
-          <div class="grid grid-cols-1 xl:grid-cols-[1fr_auto_auto] gap-3 items-center">
-            <div class="text-sm font-bold text-slate-500" id="depositCountDisplay">0 entries</div>
-
-            <div class="grid grid-cols-[auto_auto_auto] gap-2 items-center">
-              <input type="date" id="depositDateFrom" />
-              <span class="text-slate-400 font-bold">to</span>
-              <input type="date" id="depositDateTo" />
-            </div>
-
-            <div class="flex gap-2">
-              <button class="btn btn-light" onclick="applyDepositDateFilter()">Apply</button>
-              <button class="btn btn-light" onclick="clearDepositDateFilter()">Clear</button>
-            </div>
-          </div>
-        </div>
-
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>#</th>
-                <th>Amount</th>
-                <th>Description</th>
-                <th>Date</th>
-                <th>Added On</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody id="depositsTableBody"></tbody>
-          </table>
-        </div>
-
-        <div class="flex items-center justify-between gap-3 mt-4">
-          <button id="prevDepositPageBtn" class="btn btn-light" onclick="prevDepositPage()">← Prev</button>
-          <div id="depositPageInfo" class="font-bold text-slate-500">1 / 1</div>
-          <button id="nextDepositPageBtn" class="btn btn-light" onclick="nextDepositPage()">Next →</button>
-        </div>
-      </section>
-
-      <!-- ================= ATTENDANCE ================= -->
-      <section id="page-attendance" class="page-content" style="display:none;">
-        <div class="mb-5">
-          <h1 class="page-title">Attendance</h1>
-          <p class="page-subtitle">Daily agent attendance & OTP — Click agent name to view & approve rejects</p>
-        </div>
-
-        <div class="glass p-4 mb-4">
-          <div class="grid grid-cols-1 md:grid-cols-[220px_auto_auto] gap-3 items-end">
-            <div>
-              <label class="edit-label">Date</label>
-              <input type="date" id="attendanceDate" />
-            </div>
-
-            <button class="btn btn-light" onclick="loadAttendance(true)">
-              <i data-lucide="refresh-cw"></i> Load
-            </button>
-
-            <button class="btn btn-primary" onclick="generateOTPs()">
-              <i data-lucide="shield-check"></i> Generate OTPs
-            </button>
-          </div>
-        </div>
-
-        <div id="attendanceList" class="space-y-3"></div>
-      </section>
-
-      <!-- ================= SALARY ================= -->
-      <section id="page-salary" class="page-content" style="display:none;">
-        <div class="mb-5">
-          <h1 class="page-title">Salary & Earnings</h1>
-          <p class="page-subtitle" id="salaryModeLabel">Today's Earnings</p>
-        </div>
-
-        <div class="glass p-4 mb-4">
-          <div class="flex flex-wrap items-center gap-2 mb-4">
-            <button id="salaryModeToday" class="mode-btn active" onclick="setSalaryMode('today')">Today</button>
-            <button id="salaryModeSinceJoin" class="mode-btn" onclick="setSalaryMode('since_join')">Since Join</button>
-            <button id="salaryModeDate" class="mode-btn" onclick="setSalaryMode('date')">Date</button>
-
-            <span id="salaryDateWrapper" style="display:none;" class="ml-2">
-              <input type="date" id="salaryDate" style="min-width:190px;" />
-            </span>
-
-            <span class="ml-2">
-              <input type="month" id="salaryMonth" style="min-width:180px;" />
-            </span>
-
-            <div class="ml-auto flex gap-2">
-              <button class="btn btn-light" onclick="loadSalaryData(true)">
-                <i data-lucide="refresh-cw"></i> Load
-              </button>
-
-              <button class="btn btn-dark" onclick="recalculateAllSalary()">
-                <i data-lucide="calculator"></i> Recalculate
-              </button>
-            </div>
-          </div>
-
-          <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
-            <div class="stat-card"><div class="stat-label">Total Pickups</div><div id="globalPickups" class="stat-value text-xl">0</div></div>
-            <div class="stat-card"><div class="stat-label">Total Rejects</div><div id="globalRejects" class="stat-value text-xl">0</div></div>
-            <div class="stat-card"><div class="stat-label">Total Pending</div><div id="globalPending" class="stat-value text-xl">0</div></div>
-            <div class="stat-card"><div class="stat-label">Grand Earnings</div><div id="globalEarnings" class="stat-value text-xl">₹0</div></div>
-          </div>
-        </div>
-
-        <div id="salaryContainer" class="space-y-4"></div>
-      </section>
-
-      <!-- ================= AGENTS ================= -->
-      <section id="page-agents" class="page-content" style="display:none;">
-        <div class="mb-5">
-          <h1 class="page-title">Agent Management</h1>
-          <p class="page-subtitle">Register and manage pickup agents</p>
-        </div>
-
-        <div class="glass p-4 mb-4">
-          <div class="flex items-center justify-between gap-3 mb-4">
-            <h2 class="text-lg font-black">Register New User</h2>
-
-            <button class="btn btn-light" onclick="loadAgents(true)">
-              <i data-lucide="refresh-cw"></i> Refresh
-            </button>
-          </div>
-
-          <form onsubmit="registerAgent(event)">
-            <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3 mb-3">
-              <div>
-                <label class="edit-label">Full Name *</label>
-                <input type="text" id="regName" required />
-              </div>
-
-              <div>
-                <label class="edit-label">Username *</label>
-                <input type="text" id="regUsername" required />
-              </div>
-
-              <div>
-                <label class="edit-label">Password *</label>
-                <input type="password" id="regPassword" required />
-              </div>
-
-              <div>
-                <label class="edit-label">Mobile Number *</label>
-                <input type="text" id="regMobile" required />
-              </div>
-
-              <div>
-                <label class="edit-label">Aadhar Card</label>
-                <input type="text" id="regAadhar" />
-              </div>
-
-              <div>
-                <label class="edit-label">Alternate Number</label>
-                <input type="text" id="regAlternate" />
-              </div>
-
-              <div>
-                <label class="edit-label">Role *</label>
-                <div class="flex gap-4 items-center h-[42px]">
-                  <label class="flex items-center gap-2 font-bold">
-                    <input type="radio" name="regRole" value="agent" checked onchange="toggleAdminFields()" />
-                    Agent
-                  </label>
-
-                  <label class="flex items-center gap-2 font-bold">
-                    <input type="radio" name="regRole" value="admin" onchange="toggleAdminFields()" />
-                    Admin
-                  </label>
+        <!-- ============================================================ -->
+        <!-- SECTION 5: DASHBOARD PAGE                                    -->
+        <!-- ============================================================ -->
+        <div id="page-dashboard" class="page-content fade-in">
+            <div class="flex items-center justify-between mb-5 flex-wrap gap-2">
+                <div>
+                    <h2 class="text-2xl font-bold text-gray-800">Dashboard</h2>
+                    <p class="text-sm text-gray-500">Real-time overview of all activity</p>
                 </div>
-              </div>
+                <div class="flex items-center gap-2">
+                    <button onclick="openGlobalSearch()" class="global-search-btn">
+                        <i data-lucide="search"></i> Smart Search
+                    </button>
+                    <div class="flex items-center gap-2 text-xs text-gray-400">
+                        <i data-lucide="clock" class="w-3.5 h-3.5"></i>
+                        <span id="liveTime">--:--:--</span>
+                    </div>
+                </div>
             </div>
 
-            <div id="agentFields" class="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
-              <div>
-                <label class="edit-label">Monthly Salary (₹) *</label>
-                <input type="number" id="regSalary" required />
-              </div>
-
-              <div>
-                <label class="edit-label">Pickup Incentive (₹) *</label>
-                <input type="number" id="regPickupIncentive" required />
-              </div>
-
-              <div>
-                <label class="edit-label">Reject Incentive (₹) *</label>
-                <input type="number" id="regRejectIncentive" required />
-              </div>
+            <!-- ===== 5.1: Stats Grid (Row 1) ===== -->
+            <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4 mb-6">
+                <div class="stat-card glass rounded-2xl p-4 shadow-sm">
+                    <div class="flex items-center gap-3">
+                        <div class="w-10 h-10 bg-indigo-100 rounded-xl flex items-center justify-center">
+                            <i data-lucide="shopping-bag" class="w-5 h-5 text-indigo-600"></i>
+                        </div>
+                        <div>
+                            <p class="text-2xl font-bold text-gray-800" id="statTotal">0</p>
+                            <p class="text-xs text-gray-500 font-medium">Total Orders</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="stat-card glass rounded-2xl p-4 shadow-sm">
+                    <div class="flex items-center gap-3">
+                        <div class="w-10 h-10 bg-green-100 rounded-xl flex items-center justify-center">
+                            <i data-lucide="check-circle" class="w-5 h-5 text-green-600"></i>
+                        </div>
+                        <div>
+                            <p class="text-2xl font-bold text-gray-800" id="statPickup">0</p>
+                            <p class="text-xs text-gray-500 font-medium">Pickups</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="stat-card glass rounded-2xl p-4 shadow-sm">
+                    <div class="flex items-center gap-3">
+                        <div class="w-10 h-10 bg-blue-100 rounded-xl flex items-center justify-center">
+                            <i data-lucide="package-check" class="w-5 h-5 text-blue-600"></i>
+                        </div>
+                        <div>
+                            <p class="text-2xl font-bold text-gray-800" id="statInventory">0</p>
+                            <p class="text-xs text-gray-500 font-medium">In Stock</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="stat-card glass rounded-2xl p-4 shadow-sm">
+                    <div class="flex items-center gap-3">
+                        <div class="w-10 h-10 bg-purple-100 rounded-xl flex items-center justify-center">
+                            <i data-lucide="trending-up" class="w-5 h-5 text-purple-600"></i>
+                        </div>
+                        <div>
+                            <p class="text-2xl font-bold text-gray-800" id="statSold">0</p>
+                            <p class="text-xs text-gray-500 font-medium">Sold</p>
+                        </div>
+                    </div>
+                </div>
             </div>
 
-            <div id="agentError" style="display:none;" class="mb-3 p-3 rounded-xl bg-red-50 border border-red-200 text-red-700 font-bold"></div>
-            <div id="agentSuccess" style="display:none;" class="mb-3 p-3 rounded-xl bg-green-50 border border-green-200 text-green-700 font-bold"></div>
+            <!-- ===== 5.2: Stats Grid (Row 2) ===== -->
+            <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4 mb-6">
+                <div class="stat-card glass rounded-2xl p-4 shadow-sm">
+                    <div class="flex items-center gap-3">
+                        <div class="w-10 h-10 bg-red-100 rounded-xl flex items-center justify-center">
+                            <i data-lucide="x-circle" class="w-5 h-5 text-red-600"></i>
+                        </div>
+                        <div>
+                            <p class="text-2xl font-bold text-gray-800" id="statRejected">0</p>
+                            <p class="text-xs text-gray-500 font-medium">Rejected</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="stat-card glass rounded-2xl p-4 shadow-sm">
+                    <div class="flex items-center gap-3">
+                        <div class="w-10 h-10 bg-amber-100 rounded-xl flex items-center justify-center">
+                            <i data-lucide="clock" class="w-5 h-5 text-amber-600"></i>
+                        </div>
+                        <div>
+                            <p class="text-2xl font-bold text-gray-800" id="statPending">0</p>
+                            <p class="text-xs text-gray-500 font-medium">Pending</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="stat-card glass rounded-2xl p-4 shadow-sm">
+                    <div class="flex items-center gap-3">
+                        <div class="w-10 h-10 bg-emerald-100 rounded-xl flex items-center justify-center">
+                            <i data-lucide="indian-rupee" class="w-5 h-5 text-emerald-600"></i>
+                        </div>
+                        <div>
+                            <p class="text-2xl font-bold text-gray-800" id="statRevenue">₹0</p>
+                            <p class="text-xs text-gray-500 font-medium">Revenue (After Commission)</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="stat-card glass rounded-2xl p-4 shadow-sm">
+                    <div class="flex items-center gap-3">
+                        <div class="w-10 h-10 bg-amber-100 rounded-xl flex items-center justify-center">
+                            <i data-lucide="badge-dollar-sign" class="w-5 h-5 text-amber-600"></i>
+                        </div>
+                        <div>
+                            <p class="text-2xl font-bold text-gray-800" id="statProfit">₹0</p>
+                            <p class="text-xs text-gray-500 font-medium">Total Profit</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
 
-            <button class="btn btn-primary" type="submit">
-              <i data-lucide="user-plus"></i> Register
-            </button>
-          </form>
+            <!-- ===== 5.3: Stats Grid (Row 3 - Final Net Profit & more) ===== -->
+            <div class="grid grid-cols-1 sm:grid-cols-5 gap-3 sm:gap-4 mb-6">
+                <div class="stat-card glass rounded-2xl p-4 shadow-sm col-span-1 sm:col-span-2 md:col-span-1">
+                    <div class="flex items-center gap-3">
+                        <div class="w-10 h-10 bg-teal-100 rounded-xl flex items-center justify-center">
+                            <i data-lucide="wallet" class="w-5 h-5 text-teal-600"></i>
+                        </div>
+                        <div>
+                            <p class="text-2xl font-bold text-gray-800" id="statFinalProfit">₹0</p>
+                            <p class="text-xs text-gray-500 font-medium">Final Net Profit</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="stat-card glass rounded-2xl p-4 shadow-sm">
+                    <div class="flex items-center gap-3">
+                        <div class="w-10 h-10 bg-indigo-100 rounded-xl flex items-center justify-center">
+                            <i data-lucide="indian-rupee" class="w-5 h-5 text-indigo-600"></i>
+                        </div>
+                        <div>
+                            <p class="text-2xl font-bold text-gray-800" id="statStockValue">₹0</p>
+                            <p class="text-xs text-gray-500 font-medium">Stock Value</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="stat-card glass rounded-2xl p-4 shadow-sm">
+                    <div class="flex items-center gap-3">
+                        <div class="w-10 h-10 bg-purple-100 rounded-xl flex items-center justify-center">
+                            <i data-lucide="users" class="w-5 h-5 text-purple-600"></i>
+                        </div>
+                        <div>
+                            <p class="text-2xl font-bold text-gray-800" id="statAgents">0</p>
+                            <p class="text-xs text-gray-500 font-medium">Total Agents</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="stat-card glass rounded-2xl p-4 shadow-sm">
+                    <div class="flex items-center gap-3">
+                        <div class="w-10 h-10 bg-green-100 rounded-xl flex items-center justify-center">
+                            <i data-lucide="clipboard-check" class="w-5 h-5 text-green-600"></i>
+                        </div>
+                        <div>
+                            <p class="text-2xl font-bold text-gray-800" id="statPresentToday">0</p>
+                            <p class="text-xs text-gray-500 font-medium">Present Today</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="stat-card glass rounded-2xl p-4 shadow-sm">
+                    <div class="flex items-center gap-3">
+                        <div class="w-10 h-10 bg-red-100 rounded-xl flex items-center justify-center">
+                            <i data-lucide="indian-rupee" class="w-5 h-5 text-red-600"></i>
+                        </div>
+                        <div>
+                            <p class="text-2xl font-bold text-gray-800" id="statCommission">₹0</p>
+                            <p class="text-xs text-gray-500 font-medium">Total Commission</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ===== 5.4: Recent Activity ===== -->
+            <div class="glass rounded-2xl p-5 shadow-sm border border-gray-100">
+                <div class="flex items-center justify-between mb-4">
+                    <h3 class="font-bold text-gray-800 flex items-center gap-2">
+                        <i data-lucide="activity" class="w-4 h-4 text-indigo-600"></i>
+                        Recent Activity
+                    </h3>
+                    <button onclick="navigate('orders')" class="text-xs text-indigo-600 font-semibold hover:underline">View all →</button>
+                </div>
+                <div id="recentList" class="space-y-2 max-h-[340px] overflow-y-auto no-scrollbar">
+                    <div class="empty-state"><i data-lucide="inbox"></i><p class="text-sm font-medium">No activity yet</p></div>
+                </div>
+            </div>
         </div>
 
-        <div class="glass p-4 mb-4">
-          <div class="flex items-center justify-between gap-3 mb-3">
-            <h2 class="text-lg font-black">Users</h2>
-            <span id="agentsCount" class="font-bold text-slate-500">0 users</span>
-          </div>
+        <!-- ============================================================ -->
+        <!-- SECTION 6: ORDERS PAGE                                       -->
+        <!-- ============================================================ -->
+        <div id="page-orders" class="page-content fade-in" style="display:none;">
+            <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+                <div>
+                    <h2 class="text-2xl font-bold text-gray-800">All Orders</h2>
+                    <p class="text-sm text-gray-500">Complete history of all pickups</p>
+                </div>
+                <div class="flex items-center gap-2">
+                    <button onclick="exportCSV()" class="btn-action export"><i data-lucide="download"></i> Export CSV</button>
+                    <button onclick="refreshOrders()" class="btn-action view"><i data-lucide="refresh-cw"></i></button>
+                </div>
+            </div>
 
-          <div class="table-wrap">
-            <table style="min-width:1250px;">
-              <thead>
-                <tr>
-                  <th>#</th>
-                  <th>Name</th>
-                  <th>Username</th>
-                  <th>Role</th>
-                  <th>Status</th>
-                  <th>Salary</th>
-                  <th>Pickup Inc</th>
-                  <th>Reject Inc</th>
-                  <th>Mobile</th>
-                  <th>Password</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody id="agentsTableBody"></tbody>
+            <!-- ===== 6.1: Filters & Search ===== -->
+            <div class="glass rounded-2xl p-4 shadow-sm border border-gray-100 mb-4">
+                <div class="flex flex-wrap items-center gap-2">
+                    <span class="text-xs font-bold text-gray-500 mr-1">Filter:</span>
+                    <button class="filter-chip active" data-filter="all" onclick="setOrderFilter('all')">All</button>
+                    <button class="filter-chip" data-filter="pickup" onclick="setOrderFilter('pickup')">Pickup</button>
+                    <button class="filter-chip" data-filter="rejected" onclick="setOrderFilter('rejected')">Rejected</button>
+                    <button class="filter-chip" data-filter="reschedule" onclick="setOrderFilter('reschedule')">Pending</button>
+                    <button class="filter-chip" data-filter="on_hold" onclick="setOrderFilter('on_hold')">Hold</button>
+                </div>
+                <div class="flex flex-wrap items-center gap-2 mt-3">
+                    <div class="search-wrapper w-full sm:w-auto flex-1">
+                        <input type="text" id="orderSearch" placeholder="🔍 Smart search: Model, IMEI, Customer, Agent…" class="w-full px-4 py-2 border border-gray-200 rounded-xl text-sm outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100" autocomplete="off" />
+                        <div id="orderSearchDropdown" class="search-dropdown live-search-dropdown"></div>
+                    </div>
+                    <button onclick="applyOrderSearch()" class="px-4 py-2 bg-indigo-600 text-white rounded-xl text-sm font-semibold hover:bg-indigo-700 transition">Search</button>
+                    <button onclick="clearOrderSearch()" class="px-4 py-2 bg-gray-100 text-gray-600 rounded-xl text-sm font-semibold hover:bg-gray-200 transition">Clear</button>
+                </div>
+                <div class="flex flex-wrap items-center gap-2 mt-3 border-t border-gray-200 pt-3">
+                    <span class="text-xs font-bold text-gray-500 mr-1">Date Range:</span>
+                    <input type="date" id="orderDateFrom" class="px-4 py-2 border border-gray-200 rounded-xl text-sm outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100" />
+                    <span class="text-xs text-gray-400">to</span>
+                    <input type="date" id="orderDateTo" class="px-4 py-2 border border-gray-200 rounded-xl text-sm outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100" />
+                    <button onclick="applyOrderDateFilter()" class="px-4 py-2 bg-indigo-600 text-white rounded-xl text-sm font-semibold hover:bg-indigo-700 transition">Apply</button>
+                    <button onclick="clearOrderDateFilter()" class="px-4 py-2 bg-gray-100 text-gray-600 rounded-xl text-sm font-semibold hover:bg-gray-200 transition">Clear</button>
+                </div>
+                <div class="flex flex-wrap items-center gap-2 mt-3 border-t border-gray-200 pt-3">
+                    <span class="text-xs font-bold text-gray-500 mr-1">Agent:</span>
+                    <select id="orderAgentFilter" class="px-4 py-2 border border-gray-200 rounded-xl text-sm outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100">
+                        <option value="all">All Agents</option>
+                    </select>
+                    <button onclick="applyOrderAgentFilter()" class="px-4 py-2 bg-indigo-600 text-white rounded-xl text-sm font-semibold hover:bg-indigo-700 transition">Apply</button>
+                    <button onclick="clearOrderAgentFilter()" class="px-4 py-2 bg-gray-100 text-gray-600 rounded-xl text-sm font-semibold hover:bg-gray-200 transition">Clear</button>
+                </div>
+            </div>
+
+            <!-- ===== 6.2: Orders Table ===== -->
+            <div class="glass rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+                <div class="table-wrap">
+                    <table class="w-full text-sm">
+                        <thead>
+                            <tr class="bg-gray-50 border-b border-gray-100">
+                                <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">#</th>
+                                <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">Order ID</th>
+                                <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">Status</th>
+                                <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase hidden sm:table-cell">Model</th>
+                                <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase hidden md:table-cell">IMEI</th>
+                                <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase hidden lg:table-cell">Value</th>
+                                <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase hidden xl:table-cell">Customer</th>
+                                <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase hidden sm:table-cell">Agent</th>
+                                <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="ordersTableBody">
+                            <tr><td colspan="9"><div class="empty-state"><i data-lucide="inbox"></i><p class="text-sm font-medium">No orders found</p></div></td></tr>
+                        </tbody>
+                    </table>
+                </div>
+                <div class="flex items-center justify-between px-4 py-3 border-t border-gray-100 text-xs text-gray-500">
+                    <span id="orderCountDisplay">0 orders</span>
+                    <div class="flex items-center gap-2">
+                        <button onclick="prevOrderPage()" class="px-3 py-1 rounded-lg bg-gray-100 hover:bg-gray-200 transition disabled:opacity-40" id="prevOrderPageBtn">← Prev</button>
+                        <span id="orderPageInfo">1 / 1</span>
+                        <button onclick="nextOrderPage()" class="px-3 py-1 rounded-lg bg-gray-100 hover:bg-gray-200 transition disabled:opacity-40" id="nextOrderPageBtn">Next →</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ============================================================ -->
+        <!-- SECTION 7: PENDING PAGE                                      -->
+        <!-- ============================================================ -->
+        <div id="page-pending" class="page-content fade-in" style="display:none;">
+            <div class="flex items-center justify-between mb-4">
+                <div>
+                    <h2 class="text-2xl font-bold text-gray-800">Pending Orders</h2>
+                    <p class="text-sm text-gray-500">Orders that are rescheduled or on hold</p>
+                </div>
+                <button onclick="refreshPending()" class="btn-action view"><i data-lucide="refresh-cw"></i> Refresh</button>
+            </div>
+            <div class="glass rounded-2xl shadow-sm border border-gray-100 p-4">
+                <div id="pendingListAdmin" class="space-y-3 max-h-[600px] overflow-y-auto no-scrollbar">
+                    <div class="empty-state"><i data-lucide="inbox"></i><p class="text-sm font-medium">No pending orders</p></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ============================================================ -->
+        <!-- SECTION 8: REJECTED PAGE                                     -->
+        <!-- ============================================================ -->
+        <div id="page-rejected" class="page-content fade-in" style="display:none;">
+            <div class="flex items-center justify-between mb-4">
+                <div>
+                    <h2 class="text-2xl font-bold text-gray-800">Rejected Orders</h2>
+                    <p class="text-sm text-gray-500">Orders that were not purchased</p>
+                </div>
+                <button onclick="refreshRejected()" class="btn-action view"><i data-lucide="refresh-cw"></i> Refresh</button>
+            </div>
+            <div class="glass rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+                <div class="table-wrap">
+                    <table class="w-full text-sm">
+                        <thead>
+                            <tr class="bg-gray-50 border-b border-gray-100">
+                                <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">#</th>
+                                <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">Order ID</th>
+                                <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">Reason</th>
+                                <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase hidden sm:table-cell">Agent</th>
+                                <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase hidden sm:table-cell">Time</th>
+                                <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">Status</th>
+                                <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="rejectedTableBody">
+                            <tr><td colspan="7"><div class="empty-state"><i data-lucide="inbox"></i><p class="text-sm font-medium">No rejected orders</p></div></td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- ============================================================ -->
+        <!-- SECTION 9: INVENTORY PAGE                                    -->
+        <!-- ============================================================ -->
+        <div id="page-inventory" class="page-content fade-in" style="display:none;">
+            <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+                <div>
+                    <h2 class="text-2xl font-bold text-gray-800">Inventory</h2>
+                    <p class="text-sm text-gray-500">All phones available for sale — Commission shown based on purchase price</p>
+                </div>
+                <div class="flex items-center gap-2">
+                    <span class="text-sm font-semibold text-gray-600" id="inventoryCount">0 units</span>
+                    <button onclick="refreshInventory()" class="btn-action view"><i data-lucide="refresh-cw"></i></button>
+                </div>
+            </div>
+
+            <!-- ===== 9.1: Inventory Search ===== -->
+            <div class="glass rounded-2xl p-4 shadow-sm border border-gray-100 mb-4">
+                <div class="flex flex-wrap items-center gap-2">
+                    <div class="search-wrapper w-full sm:w-auto flex-1">
+                        <input type="text" id="inventorySearch" placeholder="🔍 Smart search: Model, IMEI, Customer…" class="w-full px-4 py-2 border border-gray-200 rounded-xl text-sm outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100" autocomplete="off" />
+                        <div id="inventorySearchDropdown" class="search-dropdown live-search-dropdown"></div>
+                    </div>
+                    <button onclick="applyInventorySearch()" class="px-4 py-2 bg-indigo-600 text-white rounded-xl text-sm font-semibold hover:bg-indigo-700 transition">Search</button>
+                    <button onclick="clearInventorySearch()" class="px-4 py-2 bg-gray-100 text-gray-600 rounded-xl text-sm font-semibold hover:bg-gray-200 transition">Clear</button>
+                </div>
+            </div>
+
+            <!-- ===== 9.2: Inventory Table ===== -->
+            <div class="glass rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+                <div class="table-wrap">
+                    <table class="w-full text-sm">
+                        <thead>
+                            <tr class="bg-gray-50 border-b border-gray-100">
+                                <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">#</th>
+                                <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">Order ID</th>
+                                <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">Model</th>
+                                <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase hidden md:table-cell">IMEI</th>
+                                <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">Purchase Price</th>
+                                <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">Commission</th>
+                                <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase hidden lg:table-cell">Customer</th>
+                                <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="inventoryTableBody">
+                            <tr><td colspan="8"><div class="empty-state"><i data-lucide="inbox"></i><p class="text-sm font-medium">No inventory</p></div></td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- ============================================================ -->
+        <!-- SECTION 10: SALES PAGE                                       -->
+        <!-- ============================================================ -->
+        <div id="page-sales" class="page-content fade-in" style="display:none;">
+            <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+                <div>
+                    <h2 class="text-2xl font-bold text-gray-800">Sales</h2>
+                    <p class="text-sm text-gray-500">Complete sales history & profit tracking</p>
+                </div>
+                <div class="flex items-center gap-2">
+                    <button onclick="exportSalesCSV()" class="btn-action export"><i data-lucide="download"></i> Export CSV</button>
+                    <button onclick="refreshSales()" class="btn-action view"><i data-lucide="refresh-cw"></i></button>
+                </div>
+            </div>
+
+            <!-- ===== 10.1: Sales Summary Cards ===== -->
+            <div class="grid grid-cols-2 sm:grid-cols-6 gap-3 mb-4">
+                <div class="glass rounded-xl p-3 shadow-sm border border-gray-100 text-center">
+                    <p class="text-xs text-gray-500">Total Sales</p>
+                    <p class="text-lg font-bold text-gray-800" id="salesTotalCount">0</p>
+                </div>
+                <div class="glass rounded-xl p-3 shadow-sm border border-gray-100 text-center">
+                    <p class="text-xs text-gray-500">Revenue (Net)</p>
+                    <p class="text-lg font-bold text-gray-800" id="salesTotalRevenue">₹0</p>
+                </div>
+                <div class="glass rounded-xl p-3 shadow-sm border border-gray-100 text-center">
+                    <p class="text-xs text-gray-500">Total Gross Profit</p>
+                    <p class="text-lg font-bold text-green-600" id="salesTotalGrossProfit">₹0</p>
+                </div>
+                <div class="glass rounded-xl p-3 shadow-sm border border-gray-100 text-center">
+                    <p class="text-xs text-gray-500">Total Final Net Profit</p>
+                    <p class="text-lg font-bold text-blue-600" id="salesTotalFinalProfit">₹0</p>
+                </div>
+                <div class="glass rounded-xl p-3 shadow-sm border border-gray-100 text-center">
+                    <p class="text-xs text-gray-500">Avg. Gross Profit</p>
+                    <p class="text-lg font-bold text-indigo-600" id="salesAvgProfit">₹0</p>
+                </div>
+                <div class="glass rounded-xl p-3 shadow-sm border border-gray-100 text-center">
+                    <p class="text-xs text-gray-500">Overhead / Phone</p>
+                    <p class="text-lg font-bold text-amber-600" id="salesOverheadPerPhone">₹0</p>
+                </div>
+            </div>
+
+            <!-- ===== 10.2: Sales Filters ===== -->
+            <div class="glass rounded-2xl p-4 shadow-sm border border-gray-100 mb-4">
+                <div class="flex flex-wrap items-center gap-2">
+                    <div class="search-wrapper w-full sm:w-auto flex-1">
+                        <input type="text" id="salesSearch" placeholder="🔍 Smart search: Model, Buyer, Agent…" class="w-full px-4 py-2 border border-gray-200 rounded-xl text-sm outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100" autocomplete="off" />
+                        <div id="salesSearchDropdown" class="search-dropdown live-search-dropdown"></div>
+                    </div>
+                    <input type="date" id="salesDateFrom" class="px-4 py-2 border border-gray-200 rounded-xl text-sm outline-none focus:border-indigo-400" />
+                    <input type="date" id="salesDateTo" class="px-4 py-2 border border-gray-200 rounded-xl text-sm outline-none focus:border-indigo-400" />
+                    <button onclick="applySalesFilters()" class="px-4 py-2 bg-indigo-600 text-white rounded-xl text-sm font-semibold hover:bg-indigo-700 transition">Apply</button>
+                    <button onclick="clearSalesFilters()" class="px-4 py-2 bg-gray-100 text-gray-600 rounded-xl text-sm font-semibold hover:bg-gray-200 transition">Clear</button>
+                </div>
+            </div>
+
+            <!-- ===== 10.3: Sales Table ===== -->
+            <div class="glass rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+                <div class="table-wrap">
+                    <table class="w-full text-sm">
+                        <thead>
+                            <tr class="bg-gray-50 border-b border-gray-100">
+                                <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">#</th>
+                                <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">Order ID</th>
+                                <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">Model</th>
+                                <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase hidden md:table-cell">IMEI</th>
+                                <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">Purchase</th>
+                                <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">Sale Price</th>
+                                <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">Commission</th>
+                                <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">Gross Profit</th>
+                                <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">Overhead/Phone</th>
+                                <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">Final Net Profit</th>
+                                <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase hidden lg:table-cell">Buyer</th>
+                                <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">Sale Date</th>
+                                <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="salesTableBody">
+                            <tr><td colspan="13"><div class="empty-state"><i data-lucide="inbox"></i><p class="text-sm font-medium">No sales yet</p></div></td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- ============================================================ -->
+        <!-- SECTION 11: DEPOSITS PAGE                                    -->
+        <!-- ============================================================ -->
+        <div id="page-deposits" class="page-content fade-in" style="display:none;">
+            <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+                <div>
+                    <h2 class="text-2xl font-bold text-gray-800">Deposits</h2>
+                    <p class="text-sm text-gray-500">Track your deposits & commission</p>
+                </div>
+                <div class="flex items-center gap-2">
+                    <button onclick="exportDepositsCSV()" class="btn-action export"><i data-lucide="download"></i> Export CSV</button>
+                    <button onclick="refreshDeposits()" class="btn-action view"><i data-lucide="refresh-cw"></i></button>
+                </div>
+            </div>
+
+            <!-- ===== 11.1: Deposit Stats ===== -->
+            <div class="deposit-stats" id="depositStats">
+                <div class="stat-box"><div class="num green" id="depositTotal">₹0</div><div class="label">Total Deposits</div></div>
+                <div class="stat-box"><div class="num blue" id="depositStockValue">₹0</div><div class="label">Stock Value</div></div>
+                <div class="stat-box"><div class="num amber" id="depositBalance">₹0</div><div class="label">Balance</div></div>
+                <div class="stat-box"><div class="num red" id="depositCommission">₹0</div><div class="label">Total Commission</div></div>
+                <div class="stat-box"><div class="num" id="depositCount">0</div><div class="label">Total Entries</div></div>
+            </div>
+
+            <!-- ===== 11.2: Add Deposit Form ===== -->
+            <div class="glass rounded-2xl p-5 shadow-sm border border-gray-100 mb-6">
+                <h3 class="font-bold text-gray-800 mb-4 flex items-center gap-2">
+                    <i data-lucide="plus-circle" class="w-5 h-5 text-emerald-600"></i>
+                    Add Deposit
+                </h3>
+                <form id="depositForm" class="deposit-form grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div class="field-group">
+                        <label>Amount (₹) <span class="text-red-500">*</span></label>
+                        <input type="number" id="depositAmount" placeholder="Enter amount" step="1" min="1" required />
+                    </div>
+                    <div class="field-group">
+                        <label>Date</label>
+                        <input type="date" id="depositDate" />
+                    </div>
+                    <div class="field-group sm:col-span-2">
+                        <label>Description</label>
+                        <textarea id="depositDescription" placeholder="What is this deposit for? (optional)" rows="2"></textarea>
+                    </div>
+                    <div class="sm:col-span-2">
+                        <button type="submit" class="btn-submit" onclick="submitDeposit(event)">
+                            <i data-lucide="plus" class="w-4 h-4 inline mr-2"></i> Add Deposit
+                        </button>
+                    </div>
+                </form>
+            </div>
+
+            <!-- ===== 11.3: Deposits Table ===== -->
+            <div class="glass rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+                <div class="p-4 border-b border-gray-100">
+                    <div class="flex flex-wrap items-center gap-2">
+                        <span class="text-xs font-bold text-gray-500 mr-1">Filter:</span>
+                        <button class="filter-chip active" data-filter="all" onclick="setDepositFilter('all')">All</button>
+                        <input type="date" id="depositDateFrom" class="px-4 py-2 border border-gray-200 rounded-xl text-sm outline-none focus:border-indigo-400" />
+                        <span class="text-xs text-gray-400">to</span>
+                        <input type="date" id="depositDateTo" class="px-4 py-2 border border-gray-200 rounded-xl text-sm outline-none focus:border-indigo-400" />
+                        <button onclick="applyDepositDateFilter()" class="px-4 py-2 bg-indigo-600 text-white rounded-xl text-sm font-semibold hover:bg-indigo-700 transition">Apply</button>
+                        <button onclick="clearDepositDateFilter()" class="px-4 py-2 bg-gray-100 text-gray-600 rounded-xl text-sm font-semibold hover:bg-gray-200 transition">Clear</button>
+                    </div>
+                </div>
+                <div class="table-wrap">
+                    <table class="w-full text-sm">
+                        <thead>
+                            <tr class="bg-gray-50 border-b border-gray-100">
+                                <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">#</th>
+                                <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">Amount</th>
+                                <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">Description</th>
+                                <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase hidden sm:table-cell">Date</th>
+                                <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase hidden md:table-cell">Added On</th>
+                                <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="depositsTableBody">
+                            <tr><td colspan="6"><div class="empty-state"><i data-lucide="inbox"></i><p class="text-sm font-medium">No deposits yet</p></div></td></tr>
+                        </tbody>
+                    </table>
+                </div>
+                <div class="flex items-center justify-between px-4 py-3 border-t border-gray-100 text-xs text-gray-500">
+                    <span id="depositCountDisplay">0 entries</span>
+                    <div class="flex items-center gap-2">
+                        <button onclick="prevDepositPage()" class="px-3 py-1 rounded-lg bg-gray-100 hover:bg-gray-200 transition disabled:opacity-40" id="prevDepositPageBtn">← Prev</button>
+                        <span id="depositPageInfo">1 / 1</span>
+                        <button onclick="nextDepositPage()" class="px-3 py-1 rounded-lg bg-gray-100 hover:bg-gray-200 transition disabled:opacity-40" id="nextDepositPageBtn">Next →</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ============================================================ -->
+        <!-- SECTION 12: ATTENDANCE PAGE                                  -->
+        <!-- ============================================================ -->
+        <div id="page-attendance" class="page-content fade-in" style="display:none;">
+            <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+                <div>
+                    <h2 class="text-2xl font-bold text-gray-800">Attendance</h2>
+                    <p class="text-sm text-gray-500">Daily agent attendance & OTP — <span class="text-indigo-600 font-semibold">Click agent name to view & approve rejects</span></p>
+                </div>
+                <div class="flex items-center gap-2 flex-wrap">
+                    <input type="date" id="attendanceDate" class="px-4 py-2 border border-gray-200 rounded-xl text-sm outline-none focus:border-indigo-400" />
+                    <button onclick="loadAttendance()" class="btn-action view"><i data-lucide="refresh-cw"></i> Load</button>
+                    <button onclick="generateOTPs()" class="btn-action primary"><i data-lucide="key"></i> Generate OTPs</button>
+                </div>
+            </div>
+            <div class="glass rounded-2xl p-5 shadow-sm border border-gray-100">
+                <div id="attendanceList" class="space-y-3 max-h-[600px] overflow-y-auto no-scrollbar">
+                    <div class="empty-state"><i data-lucide="inbox"></i><p class="text-sm font-medium">No data</p></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ============================================================ -->
+        <!-- SECTION 13: SALARY / EARNINGS PAGE                           -->
+        <!-- ============================================================ -->
+        <div id="page-salary" class="page-content fade-in" style="display:none;">
+            <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+                <div>
+                    <h2 class="text-2xl font-bold text-gray-800">Salary & Earnings</h2>
+                    <p class="text-sm text-gray-500" id="salaryModeLabel">Today's Earnings</p>
+                </div>
+                <div class="flex items-center gap-2 flex-wrap">
+                    <div class="flex rounded-lg overflow-hidden border border-gray-300">
+                        <button id="salaryModeToday" class="salary-toggle-btn active" onclick="setSalaryMode('today')">Today</button>
+                        <button id="salaryModeSinceJoin" class="salary-toggle-btn" onclick="setSalaryMode('since_join')">Since Join</button>
+                        <button id="salaryModeDate" class="salary-toggle-btn" onclick="setSalaryMode('date')">Date</button>
+                    </div>
+                    <div id="salaryDateWrapper" style="display:none;">
+                        <input type="date" id="salaryDate" class="px-4 py-2 border border-gray-200 rounded-xl text-sm outline-none focus:border-indigo-400" />
+                    </div>
+                    <button onclick="loadSalaryData()" id="salaryLoadBtn" class="btn-action view"><i data-lucide="refresh-cw"></i> Load</button>
+                    <button onclick="recalculateAllSalary()" class="btn-action edit"><i data-lucide="calculator"></i> Recalculate</button>
+                </div>
+            </div>
+
+            <!-- ===== 13.1: Global Stats ===== -->
+            <div id="salaryGlobalStats" class="salary-global-stats">
+                <div class="stat-box"><div class="num green" id="globalPickups">0</div><div class="label">Total Pickups</div></div>
+                <div class="stat-box"><div class="num red" id="globalRejects">0</div><div class="label">Total Rejects</div></div>
+                <div class="stat-box"><div class="num amber" id="globalPending">0</div><div class="label">Total Pending</div></div>
+                <div class="stat-box"><div class="num purple" id="globalEarnings">₹0</div><div class="label">Grand Earnings</div></div>
+            </div>
+
+            <!-- ===== 13.2: Salary Container ===== -->
+            <div id="salaryContainer" class="space-y-4">
+                <div class="empty-state"><i data-lucide="inbox"></i><p class="text-sm font-medium">Select a view and click Load</p></div>
+            </div>
+        </div>
+
+      <!-- ============================================================ -->
+<!-- SECTION 14: AGENTS PAGE                                      -->
+<!-- ============================================================ -->
+<div id="page-agents" class="page-content fade-in" style="display:none;">
+    <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+        <div>
+            <h2 class="text-2xl font-bold text-gray-800">Agent Management</h2>
+            <p class="text-sm text-gray-500">Register and manage pickup agents</p>
+        </div>
+        <button onclick="loadAgents()" class="btn-action view"><i data-lucide="refresh-cw"></i> Refresh</button>
+    </div>
+
+    <!-- ===== 14.1: Register Agent Form ===== -->
+    <div class="glass rounded-2xl p-5 shadow-sm border border-gray-100 mb-6">
+        <h3 class="font-bold text-gray-800 mb-4 flex items-center gap-2">
+            <i data-lucide="user-plus" class="w-5 h-5 text-indigo-600"></i>
+            Register New User
+        </h3>
+        <form id="agentForm" class="agent-form grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div class="field-group">
+                <label>Full Name <span class="text-red-500">*</span></label>
+                <input type="text" id="regName" placeholder="Enter full name" required />
+            </div>
+            <div class="field-group">
+                <label>Username <span class="text-red-500">*</span></label>
+                <input type="text" id="regUsername" placeholder="Choose username" required />
+            </div>
+            <div class="field-group">
+                <label>Password <span class="text-red-500">*</span></label>
+                <input type="password" id="regPassword" placeholder="Create password" required />
+            </div>
+            <div class="field-group">
+                <label>Mobile Number <span class="text-red-500">*</span></label>
+                <input type="tel" id="regMobile" placeholder="10-digit mobile" required />
+            </div>
+            <div class="field-group">
+                <label>Aadhar Card</label>
+                <input type="text" id="regAadhar" placeholder="12-digit Aadhar (optional)" maxlength="12" />
+            </div>
+            <div class="field-group">
+                <label>Alternate Number</label>
+                <input type="tel" id="regAlternate" placeholder="Alternate number (optional)" />
+            </div>
+            <div class="field-group sm:col-span-2">
+                <label>Role <span class="text-red-500">*</span></label>
+                <div class="role-selector">
+                    <label><input type="radio" name="regRole" value="agent" checked onchange="toggleAdminFields()" /> Agent</label>
+                    <label><input type="radio" name="regRole" value="admin" onchange="toggleAdminFields()" /> Admin</label>
+                </div>
+            </div>
+            <div id="agentFields" class="sm:col-span-2 grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div class="field-group">
+                    <label>Monthly Salary (₹) <span class="text-red-500">*</span></label>
+                    <input type="number" id="regSalary" placeholder="e.g., 15000" required />
+                </div>
+                <div class="field-group">
+                    <label>Pickup Incentive (₹) <span class="text-red-500">*</span></label>
+                    <input type="number" id="regPickupIncentive" placeholder="e.g., 50" required />
+                </div>
+                <div class="field-group">
+                    <label>Reject Incentive (₹) <span class="text-red-500">*</span></label>
+                    <input type="number" id="regRejectIncentive" placeholder="e.g., 20" required />
+                </div>
+            </div>
+            <div class="sm:col-span-2">
+                <div id="agentError" class="agent-error"></div>
+                <div id="agentSuccess" class="agent-success"></div>
+                <button type="submit" class="btn-register" onclick="registerAgent(event)">
+                    <i data-lucide="user-plus" class="w-4 h-4 inline mr-2"></i> Register
+                </button>
+            </div>
+        </form>
+    </div>
+
+    <!-- ===== 14.2: Agents Table ===== -->
+    <div class="glass rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+        <div class="table-wrap">
+            <table class="w-full text-sm">
+                <thead>
+                    <tr class="bg-gray-50 border-b border-gray-100">
+                        <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">#</th>
+                        <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">Name</th>
+                        <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">Username</th>
+                        <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase hidden sm:table-cell">Role</th>
+                        <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase hidden sm:table-cell">Status</th>
+                        <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase hidden sm:table-cell">Salary</th>
+                        <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase hidden md:table-cell">Pickup Inc</th>
+                        <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase hidden lg:table-cell">Reject Inc</th>
+                        <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase hidden sm:table-cell">Mobile</th>
+                        <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">Password</th>
+                        <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="agentsTableBody">
+                    <tr><td colspan="11"><div class="empty-state"><i data-lucide="inbox"></i><p class="text-sm font-medium">No users registered</p></div></td></tr>
+                </tbody>
             </table>
-          </div>
         </div>
-      </section>
-    </main>
-  </div>
-
-  <!-- ================= GLOBAL SEARCH MODAL ================= -->
-  <div id="globalSearchModal" class="modal-search">
-    <div class="modal-content">
-      <div class="modal-header">
-        <div>
-          <div class="modal-title">Smart Search</div>
-          <div class="text-sm text-slate-500 mt-1">Type to start searching across all modules</div>
+        <div class="flex items-center justify-between px-4 py-3 border-t border-gray-100 text-xs text-gray-500">
+            <span id="agentsCount">0 users</span>
         </div>
-
-        <button class="modal-close" onclick="closeGlobalSearch()">✕</button>
-      </div>
-
-      <input id="globalSearchModalInput" type="text" placeholder="Search..." />
-
-      <div id="globalSearchModalResults" class="mt-3">
-        <div class="empty-state">
-          <i data-lucide="inbox"></i>
-          <p class="text-sm font-medium">Type to start searching across all modules</p>
-        </div>
-      </div>
     </div>
-  </div>
+</div>
 
-  <!-- ================= SELL MODAL ================= -->
-  <div id="sellModal" class="modal">
-    <div class="modal-content max-w-xl">
-      <div class="modal-header">
-        <div>
-          <div class="modal-title">Sell Phone</div>
-          <div class="text-sm text-slate-500 mt-1">Complete sale entry</div>
+<!-- ================================================================ -->
+<!-- SECTION 15: GLOBAL SEARCH MODAL                                  -->
+<!-- ================================================================ -->
+<div id="globalSearchModal">
+    <div class="modal-box">
+        <div class="modal-header">
+            <h3>
+                <i data-lucide="search" class="w-5 h-5 text-indigo-600"></i>
+                Smart Search
+                <span class="text-xs font-normal text-gray-400 font-mono ml-1">⌘K</span>
+            </h3>
+            <button class="close-btn" onclick="closeGlobalSearch()" aria-label="Close search">
+                <i data-lucide="x" class="w-5 h-5"></i>
+            </button>
         </div>
-
-        <button class="modal-close" onclick="closeSellModal()">✕</button>
-      </div>
-
-      <div class="space-y-3">
-        <div>
-          <label class="edit-label">Order ID</label>
-          <input type="text" id="sellOrderId" readonly style="background:#f8fafc;" />
+        <div class="search-input-wrap">
+            <i data-lucide="search" class="w-4 h-4"></i>
+            <input type="text" id="globalSearchModalInput" placeholder="Search orders, inventory, sales, agents…" autofocus />
         </div>
-
-        <div>
-          <label class="edit-label">Phone Model</label>
-          <input type="text" id="sellModel" readonly style="background:#f8fafc;" />
+        <div class="results-container" id="globalSearchModalResults">
+            <div class="empty-state">
+                <i data-lucide="inbox"></i>
+                <p class="text-sm font-medium">Type to start searching across all modules</p>
+            </div>
         </div>
-
-        <div>
-          <label class="edit-label">Purchase Price (₹)</label>
-          <input type="text" id="sellPurchasePrice" readonly style="background:#f8fafc;" />
-        </div>
-
-        <div>
-          <label class="edit-label">Sale Price (₹) *</label>
-          <input type="number" id="sellSalePrice" placeholder="0" />
-          <div class="text-xs text-slate-400 mt-1">Profit will be calculated automatically</div>
-        </div>
-
-        <div>
-          <label class="edit-label">Buyer Name *</label>
-          <input type="text" id="sellBuyerName" placeholder="Buyer name" />
-        </div>
-
-        <div>
-          <label class="edit-label">Buyer Contact (optional)</label>
-          <input type="text" id="sellBuyerContact" placeholder="Buyer contact" />
-        </div>
-
-        <div>
-          <label class="edit-label">Sale Date</label>
-          <input type="date" id="sellSaleDate" />
-        </div>
-
-        <div id="sellProfitPreview" class="profit-preview neutral">
-          Enter sale price to see profit (commission based on purchase price)
-        </div>
-
-        <div id="sellProfitBreakdown" class="profit-breakdown">
-          <div class="text-xs font-black text-slate-500 uppercase mb-2">Profit Breakdown</div>
-
-          <div class="flex items-center justify-between py-1">
-            <span class="text-sm font-bold text-slate-500">Gross Profit</span>
-            <span id="sellGrossProfit" class="font-black">₹0</span>
-          </div>
-
-          <div class="flex items-center justify-between py-1">
-            <span class="text-sm font-bold text-slate-500">Overhead Cost / Phone</span>
-            <span id="sellOverhead" class="font-black">₹0</span>
-          </div>
-
-          <div class="flex items-center justify-between py-1">
-            <span class="text-sm font-bold text-slate-500">Final Net Profit</span>
-            <span id="sellFinalProfit" class="font-black">₹0</span>
-          </div>
-        </div>
-      </div>
-
-      <div class="modal-footer">
-        <button class="btn btn-light" onclick="closeSellModal()">Cancel</button>
-        <button class="btn btn-success" onclick="confirmSell()">Confirm Sale</button>
-      </div>
     </div>
-  </div>
+</div>
 
-  <!-- ================= ORDER DETAIL MODAL ================= -->
-  <div id="detailModal" class="modal">
-    <div class="modal-content">
-      <div class="modal-header">
-        <div>
-          <div id="detailModalTitle" class="modal-title">Order Details</div>
-          <div class="text-sm text-slate-500 mt-1">Loading...</div>
+<!-- ================================================================ -->
+<!-- SECTION 16: SELL MODAL                                           -->
+<!-- ================================================================ -->
+<div id="sellModal" class="fixed inset-0 z-50 modal-overlay flex items-center justify-center p-4" style="display:none;">
+    <div class="bg-white rounded-3xl w-full max-w-md shadow-2xl slide-up sell-modal max-h-[95vh] overflow-y-auto">
+        <div class="sticky top-0 bg-white z-10 p-5 border-b border-gray-100 flex items-center justify-between rounded-t-3xl">
+            <h3 class="font-bold text-lg flex items-center gap-2"><i data-lucide="badge-dollar-sign" class="w-5 h-5 text-green-600"></i> Sell Phone</h3>
+            <button onclick="closeSellModal()" class="p-2 hover:bg-gray-100 rounded-full transition"><i data-lucide="x" class="w-5 h-5 text-gray-500"></i></button>
         </div>
-
-        <button class="modal-close" onclick="closeDetail()">✕</button>
-      </div>
-
-      <div id="detailContent"></div>
-
-      <div id="detailActions" class="modal-footer">
-        <button class="btn btn-light" onclick="closeDetail()">Close</button>
-        <button id="detailEditBtn" class="btn btn-warning">Edit</button>
-        <button id="detailHoldBtn" class="btn btn-dark">Hold</button>
-        <button id="detailUnholdBtn" class="btn btn-primary" style="display:none;">Unhold</button>
-        <button class="btn btn-light" onclick="revertSale()">Revert Sale</button>
-        <button class="btn btn-danger" onclick="deleteOrderFromDetail()">Delete</button>
-      </div>
-
-      <div id="detailSaveActions" class="modal-footer" style="display:none;">
-        <button class="btn btn-light" onclick="cancelEdit()">Cancel</button>
-        <button class="btn btn-primary" onclick="saveEdit()">Save Changes</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- ================= ACTIVITY MODAL ================= -->
-  <div id="activityModal" class="modal">
-    <div class="modal-content">
-      <div class="modal-header">
-        <div>
-          <div id="activityModalTitle" class="modal-title">Agent Activity</div>
-          <div class="text-sm text-slate-500 mt-1">Loading...</div>
+        <div class="p-5 space-y-4">
+            <div class="field-group"><label>Order ID</label><input type="text" id="sellOrderId" readonly /></div>
+            <div class="field-group"><label>Phone Model</label><input type="text" id="sellModel" readonly /></div>
+            <div class="field-group"><label>Purchase Price (₹)</label><input type="text" id="sellPurchasePrice" readonly /></div>
+            <div class="field-group"><label>Sale Price (₹) <span class="text-red-500">*</span></label><input type="number" id="sellSalePrice" placeholder="Enter sale price" step="1" min="0" /><div class="hint">Profit will be calculated automatically</div></div>
+            <div class="field-group"><label>Buyer Name <span class="text-red-500">*</span></label><input type="text" id="sellBuyerName" placeholder="Enter buyer name" /></div>
+            <div class="field-group"><label>Buyer Contact <span class="text-gray-400">(optional)</span></label><input type="text" id="sellBuyerContact" placeholder="Phone number" /></div>
+            <div class="field-group"><label>Sale Date</label><input type="date" id="sellSaleDate" /></div>
+            <div id="sellProfitBreakdown" class="bg-gray-50 rounded-xl p-4 border border-gray-200 space-y-1">
+                <p class="text-xs font-bold text-gray-500 uppercase tracking-wide">Profit Breakdown</p>
+                <div class="flex justify-between"><span class="text-sm">Gross Profit</span><span class="font-bold" id="sellGrossProfit">₹0</span></div>
+                <div class="flex justify-between"><span class="text-sm">Overhead Cost / Phone</span><span class="font-bold text-amber-600" id="sellOverhead">₹0</span></div>
+                <div class="flex justify-between border-t border-gray-200 pt-1 mt-1"><span class="text-sm font-semibold">Final Net Profit</span><span class="font-bold text-green-600" id="sellFinalProfit">₹0</span></div>
+            </div>
+            <div id="sellProfitPreview" class="profit-preview neutral">Enter sale price to see profit (commission based on purchase price)</div>
         </div>
-
-        <button class="modal-close" onclick="closeActivityModal()">✕</button>
-      </div>
-
-      <div id="activityContent"></div>
+        <div class="sticky bottom-0 bg-white p-5 border-t border-gray-100 flex gap-2 rounded-b-3xl">
+            <button onclick="closeSellModal()" class="flex-1 py-3 rounded-xl bg-gray-100 text-gray-700 font-semibold hover:bg-gray-200 transition">Cancel</button>
+            <button onclick="confirmSell()" class="flex-1 py-3 rounded-xl bg-green-600 text-white font-semibold hover:bg-green-700 transition flex items-center justify-center gap-2"><i data-lucide="check-circle" class="w-4 h-4"></i> Confirm Sale</button>
+        </div>
     </div>
-  </div>
+</div>
 
-  <!-- ================= IMAGE VIEWER MODAL ================= -->
-  <div id="imgViewerModal" class="modal"></div>
+<!-- ================================================================ -->
+<!-- SECTION 17: ORDER DETAIL MODAL                                   -->
+<!-- ================================================================ -->
+<div id="detailModal" class="fixed inset-0 z-[10000] modal-overlay flex items-center justify-center p-4" style="display:none;">
+    <div class="bg-white rounded-3xl w-full max-w-2xl max-h-[95vh] overflow-y-auto shadow-2xl animate-[fadeIn_0.25s_ease]">
+        <div class="sticky top-0 bg-white z-10 flex items-center justify-between p-5 border-b border-gray-100">
+            <h3 class="font-bold text-lg flex items-center gap-2"><i data-lucide="file-text" class="w-5 h-5 text-indigo-600"></i> <span id="detailModalTitle">Order Details</span></h3>
+            <button onclick="closeDetail()" class="p-2 hover:bg-gray-100 rounded-full transition"><i data-lucide="x" class="w-5 h-5 text-gray-500"></i></button>
+        </div>
+        <div class="p-5 space-y-4" id="detailContent"><div class="text-center py-8 text-gray-400"><span class="spinner-sm"></span> Loading...</div></div>
+        <div class="sticky bottom-0 bg-white border-t border-gray-100 p-4 flex flex-wrap gap-2 justify-end" id="detailActions">
+            <button onclick="closeDetail()" class="px-5 py-2.5 rounded-xl bg-gray-100 text-gray-700 font-semibold hover:bg-gray-200 transition">Close</button>
+            <button id="detailEditBtn" onclick="toggleEditMode()" class="px-5 py-2.5 rounded-xl bg-amber-100 text-amber-700 font-semibold hover:bg-amber-200 transition flex items-center gap-2"><i data-lucide="pencil" class="w-4 h-4"></i> Edit</button>
+            <button id="detailHoldBtn" onclick="holdOrderFromDetail()" class="px-5 py-2.5 rounded-xl bg-blue-100 text-blue-700 font-semibold hover:bg-blue-200 transition flex items-center gap-2"><i data-lucide="pause-circle" class="w-4 h-4"></i> Hold</button>
+            <button id="detailUnholdBtn" onclick="unholdOrderFromDetail()" class="px-5 py-2.5 rounded-xl bg-amber-100 text-amber-700 font-semibold hover:bg-amber-200 transition flex items-center gap-2" style="display:none;"><i data-lucide="play-circle" class="w-4 h-4"></i> Unhold</button>
+            <button id="detailRevertBtn" onclick="revertSoldOrder(detailOrderId)" class="px-5 py-2.5 rounded-xl bg-amber-100 text-amber-700 font-semibold hover:bg-amber-200 transition flex items-center gap-2" style="display:none;"><i data-lucide="undo-2" class="w-4 h-4"></i> Revert Sale</button>
+            <button id="detailDeleteBtn" onclick="deleteOrderFromDetail()" class="px-5 py-2.5 rounded-xl bg-red-500 text-white font-semibold hover:bg-red-600 transition flex items-center gap-2"><i data-lucide="trash-2" class="w-4 h-4"></i> Delete</button>
+        </div>
+        <div id="detailSaveActions" style="display:none;" class="sticky bottom-0 bg-white border-t border-gray-100 p-4 flex gap-2 justify-end">
+            <button onclick="cancelEdit()" class="px-5 py-2.5 rounded-xl bg-gray-100 text-gray-700 font-semibold hover:bg-gray-200 transition">Cancel</button>
+            <button onclick="saveEdit()" class="px-5 py-2.5 rounded-xl bg-indigo-600 text-white font-semibold hover:bg-indigo-700 transition flex items-center gap-2"><i data-lucide="save" class="w-4 h-4"></i> Save Changes</button>
+        </div>
+    </div>
+</div>
 
-  <!-- ================= SCRIPTS ================= -->
-  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-storage-compat.js"></script>
+<!-- ================================================================ -->
+<!-- SECTION 18: AGENT ACTIVITY MODAL                                -->
+<!-- ================================================================ -->
+<div id="activityModal" class="fixed inset-0 z-50 modal-overlay flex items-center justify-center p-4" style="display:none;">
+    <div class="bg-white rounded-3xl w-full max-w-3xl max-h-[90vh] overflow-y-auto shadow-2xl animate-[fadeIn_0.25s_ease] activity-modal">
+        <div class="sticky top-0 bg-white z-10 flex items-center justify-between p-5 border-b border-gray-100 rounded-t-3xl">
+            <h3 class="font-bold text-lg flex items-center gap-2"><i data-lucide="activity" class="w-5 h-5 text-indigo-600"></i> <span id="activityModalTitle">Agent Activity</span></h3>
+            <button onclick="closeActivityModal()" class="p-2 hover:bg-gray-100 rounded-full transition"><i data-lucide="x" class="w-5 h-5 text-gray-500"></i></button>
+        </div>
+        <div class="p-5" id="activityContent"><div class="text-center py-8 text-gray-400"><span class="spinner-sm"></span> Loading...</div></div>
+        <div class="sticky bottom-0 bg-white p-4 border-t border-gray-100 rounded-b-3xl"><button onclick="closeActivityModal()" class="w-full py-2.5 rounded-xl bg-gray-100 text-gray-700 font-semibold hover:bg-gray-200 transition">Close</button></div>
+    </div>
+</div>
 
-  <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
-  <script src="https://cdn.jsdelivr.net/npm/fuse.js@6.6.2"></script>
-  <script src="https://unpkg.com/lucide@latest"></script>
+<!-- ================================================================ -->
+<!-- SECTION 19: REJECT APPROVAL MODAL                               -->
+<!-- ================================================================ -->
+<div id="rejectModal" class="fixed inset-0 z-50 modal-overlay flex items-center justify-center p-4" style="display:none;">
+    <div class="bg-white rounded-3xl w-full max-w-3xl max-h-[90vh] overflow-y-auto shadow-2xl animate-[fadeIn_0.25s_ease] reject-modal">
+        <div class="sticky top-0 bg-white z-10 flex items-center justify-between p-5 border-b border-gray-100 rounded-t-3xl">
+            <h3 class="font-bold text-lg flex items-center gap-2"><i data-lucide="x-circle" class="w-5 h-5 text-red-600"></i> <span id="rejectModalTitle">Rejected Orders</span></h3>
+            <button onclick="closeRejectModal()" class="p-2 hover:bg-gray-100 rounded-full transition"><i data-lucide="x" class="w-5 h-5 text-gray-500"></i></button>
+        </div>
+        <div class="p-5" id="rejectContent"><div class="text-center py-8 text-gray-400"><span class="spinner-sm"></span> Loading...</div></div>
+        <div class="sticky bottom-0 bg-white p-4 border-t border-gray-100 rounded-b-3xl"><button onclick="closeRejectModal()" class="w-full py-2.5 rounded-xl bg-gray-100 text-gray-700 font-semibold hover:bg-gray-200 transition">Close</button></div>
+    </div>
+</div>
 
-  <script src="script.js"></script>
+<!-- ================================================================ -->
+<!-- SECTION 20: IMAGE VIEWER MODAL                                  -->
+<!-- ================================================================ -->
+<div id="imgViewerModal" class="fixed inset-0 z-[60] flex items-center justify-center p-4" style="display:none; background:rgba(0,0,0,0.92);">
+    <button onclick="closeImageViewer()" class="absolute top-4 right-4 w-11 h-11 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-white z-10"><i data-lucide="x" class="w-6 h-6"></i></button>
+    <div class="w-full max-w-5xl max-h-[90vh] flex flex-col items-center gap-3">
+        <img id="imgViewerImg" src="" alt="Document" class="max-w-full max-h-[80vh] object-contain rounded-xl shadow-2xl bg-white" style="touch-action: pinch-zoom;">
+        <div class="flex items-center gap-3">
+            <span id="imgViewerCaption" class="text-white/90 text-sm font-semibold"></span>
+            <a id="imgViewerDownload" href="#" download="document.jpg" class="text-xs bg-white text-gray-900 font-semibold px-3 py-1.5 rounded-full hover:bg-gray-100">⬇ Download</a>
+        </div>
+    </div>
+</div>
+
+<!-- ================================================================ -->
+<!-- SECTION 21: SCRIPT INCLUDE                                      -->
+<!-- ================================================================ -->
+<script src="script.js"></script>
 </body>
 </html>
