@@ -1,6 +1,7 @@
 // File: script.js
 // Flipkart Admin Panel — Full Script
 // Salary System v3: Paid Cycle Snapshot + Undo + Revert + Delete + Adjustment History
+// + Per-activity incentive override (added)
 
 // ================================================================
 // FIREBASE CONFIG
@@ -170,6 +171,62 @@ async function getData(node, force = false) {
 }
 
 // ================================================================
+// COMMISSION
+// ================================================================
+const COMMISSION_BRACKETS = [
+  { min: 0, max: 10000, type: 'percentage', value: 10 },
+  { min: 10001, max: 31000, type: 'percentage', value: 8 },
+  { min: 31001, max: Infinity, type: 'fixed', value: 2500 }
+];
+
+function calculateCommission(purchasePrice) {
+  if (!purchasePrice || purchasePrice <= 0) return 0;
+
+  for (const bracket of COMMISSION_BRACKETS) {
+    if (purchasePrice >= bracket.min && purchasePrice <= bracket.max) {
+      if (bracket.type === 'percentage') {
+        return Math.round((purchasePrice * bracket.value) / 100);
+      }
+      return bracket.value;
+    }
+  }
+
+  return 0;
+}
+
+// ================================================================
+// INCENTIVE HELPERS — default + per-activity override
+// ----------------------------------------------------------------
+// Default incentive is stored on the agent: users/{username}/pickup_incentive
+// and users/{username}/reject_incentive.
+//
+// For individual activities (orders), an admin can override the incentive
+// ONLY for that order via:
+//     pickups/{orderId}/pickup_incentive_override
+//     pickups/{orderId}/reject_incentive_override
+//
+// If the override is set, it wins for that order. Otherwise the agent's
+// default is used. This never modifies the agent's default.
+// ================================================================
+function hasOverride(order, type) {
+  if (!order) return false;
+  const f = type === 'pickup' ? 'pickup_incentive_override' : 'reject_incentive_override';
+  const v = order[f];
+  return v !== undefined && v !== null && v !== '';
+}
+
+function getActivityIncentive(order, agentUser, type) {
+  const agentField = type === 'pickup' ? 'pickup_incentive' : 'reject_incentive';
+  const agentDefault = agentUser ? (Number(agentUser[agentField]) || 0) : 0;
+
+  if (hasOverride(order, type)) {
+    const n = Number(order[type === 'pickup' ? 'pickup_incentive_override' : 'reject_incentive_override']);
+    if (!isNaN(n)) return n;
+  }
+  return agentDefault;
+}
+
+// ================================================================
 // DOC / IMAGE HELPERS
 // ================================================================
 const ADMIN_MAX_DOC_IMAGES = 3;
@@ -304,14 +361,14 @@ function openImageViewer(src, title) {
     const modal = $('imgViewerModal');
     if (!modal) return;
 
-    let img = $('imgViewerImage');
+    let img = $('imgViewerImg');
     let caption = $('imgViewerCaption');
 
     if (!img) {
       modal.innerHTML = `
         <div style="position:relative; max-width:90vw; max-height:90vh; background:#000; border-radius:12px; padding:10px;">
           <button onclick="closeImageViewer()" style="position:absolute; top:10px; right:10px; z-index:20; background:#dc2626; color:white; border:none; border-radius:8px; padding:8px 12px;">Close</button>
-          <img id="imgViewerImage" src="${src}" style="max-width:100%; max-height:85vh; display:block; margin:0 auto;" alt="Document">
+          <img id="imgViewerImg" src="${src}" style="max-width:100%; max-height:85vh; display:block; margin:0 auto;" alt="Document">
           <div id="imgViewerCaption" style="color:white; text-align:center; margin-top:8px;">${title || ''}</div>
         </div>
       `;
@@ -522,30 +579,6 @@ async function adminSaveDocNumber(which) {
 }
 
 // ================================================================
-// COMMISSION
-// ================================================================
-const COMMISSION_BRACKETS = [
-  { min: 0, max: 10000, type: 'percentage', value: 10 },
-  { min: 10001, max: 31000, type: 'percentage', value: 8 },
-  { min: 31001, max: Infinity, type: 'fixed', value: 2500 }
-];
-
-function calculateCommission(purchasePrice) {
-  if (!purchasePrice || purchasePrice <= 0) return 0;
-
-  for (const bracket of COMMISSION_BRACKETS) {
-    if (purchasePrice >= bracket.min && purchasePrice <= bracket.max) {
-      if (bracket.type === 'percentage') {
-        return Math.round((purchasePrice * bracket.value) / 100);
-      }
-      return bracket.value;
-    }
-  }
-
-  return 0;
-}
-
-// ================================================================
 // STATE
 // ================================================================
 let allOrders = [];
@@ -581,6 +614,9 @@ let currentSalaryPeriod = null;
 
 let overheadPerPhone = 0;
 let overheadCache = { version: -1, value: 0 };
+
+// Date Activities modal state
+let currentActivitiesDate = null;
 
 // ================================================================
 // TOAST
@@ -751,8 +787,6 @@ async function loadDashboard(force = false) {
     const recent = Object.entries(pickups)
       .sort((a, b) => (b[1].timestamp || 0) - (a[1].timestamp || 0))
       .slice(0, 10);
-
-    const container = $('recentList');
 
     if (!recent.length) {
       setHTML('recentList', `<div class="empty-state"><i data-lucide="inbox"></i><p class="text-sm font-medium">No activity yet</p></div>`);
@@ -1390,9 +1424,9 @@ async function loadSales(force = false) {
         if (!uData || (uData.role || 'agent') !== 'agent') return;
 
         if (item.status === 'pickup') {
-          totalPickupIncentives += uData.pickup_incentive || 0;
+          totalPickupIncentives += getActivityIncentive(item, uData, 'pickup');
         } else if (item.status === 'rejected' && Boolean(item.incentive_approved)) {
-          totalRejectIncentives += uData.reject_incentive || 0;
+          totalRejectIncentives += getActivityIncentive(item, uData, 'reject');
         }
       });
 
@@ -3303,6 +3337,254 @@ function showChangePasswordModal(username) {
 }
 
 // ================================================================
+// DATE ACTIVITIES — per-activity incentive override
+// ----------------------------------------------------------------
+// Admin can open this from the Salary page. It lists all pickup /
+// approved-reject activities for a selected date, and lets the admin
+// override the incentive amount for any individual activity.
+//
+// Override is stored as:
+//     pickups/{orderId}/pickup_incentive_override
+//     pickups/{orderId}/reject_incentive_override
+//
+// Agent's default pickup_incentive / reject_incentive are never touched.
+// ================================================================
+
+async function promptDateActivities() {
+  const defaultDate = getVal('salaryDate') || getLocalYMD();
+
+  const { value: dateVal, isConfirmed } = await Swal.fire({
+    title: '📅 View Activities For Date',
+    html: `
+      <div class="text-left text-sm space-y-2">
+        <p class="text-gray-600 text-xs">Select a date to view all pickup &amp; approved-reject activities:</p>
+        <input type="date" id="dateActivitiesPicker" class="swal2-input" value="${defaultDate}" />
+        <p class="text-[11px] text-gray-500 mt-1">You can adjust the incentive for individual activities on this date. Only that activity changes — the agent's default stays the same.</p>
+      </div>
+    `,
+    showCancelButton: true,
+    confirmButtonText: '📅 View Activities',
+    confirmButtonColor: '#4f46e5',
+    cancelButtonColor: '#64748b',
+    preConfirm: () => {
+      const v = document.getElementById('dateActivitiesPicker').value;
+      if (!v) { Swal.showValidationMessage('Select a date'); return false; }
+      return v;
+    }
+  });
+
+  if (!isConfirmed || !dateVal) return;
+  openDateActivitiesModal(dateVal);
+}
+
+async function openDateActivitiesModal(dateVal) {
+  if (!dateVal) dateVal = currentActivitiesDate || getVal('salaryDate') || getLocalYMD();
+  currentActivitiesDate = dateVal;
+
+  try {
+    const [pickups, users] = await Promise.all([
+      getData('pickups', true),
+      getData('users', true)
+    ]);
+
+    const activities = [];
+
+    Object.entries(pickups).forEach(([id, ord]) => {
+      if (!ord || !ord.timestamp) return;
+      if (getLocalYMD(new Date(ord.timestamp)) !== dateVal) return;
+
+      const isPickup = ord.status === 'pickup';
+      const isApprovedReject = ord.status === 'rejected' && Boolean(ord.incentive_approved);
+
+      if (!isPickup && !isApprovedReject) return;
+
+      const type = isPickup ? 'pickup' : 'reject';
+      const agentUser = users[ord.agent] || {};
+      const defaultField = type === 'pickup' ? 'pickup_incentive' : 'reject_incentive';
+      const overrideField = type === 'pickup' ? 'pickup_incentive_override' : 'reject_incentive_override';
+
+      const defaultInc = Number(agentUser[defaultField]) || 0;
+      const hasOv = ord[overrideField] !== undefined && ord[overrideField] !== null && ord[overrideField] !== '';
+      const currentInc = hasOv ? (Number(ord[overrideField]) || 0) : defaultInc;
+
+      activities.push({
+        id,
+        orderId: ord.orderId || id,
+        agent: ord.agent || '',
+        agentName: agentUser.name || ord.agent || '',
+        phoneModel: ord.phoneModel || '',
+        type,
+        defaultInc,
+        currentInc,
+        hasOverride: hasOv,
+        timestamp: ord.timestamp || 0,
+        timestampIST: ord.timestampIST || ''
+      });
+    });
+
+    activities.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+
+    let rows = '';
+
+    if (!activities.length) {
+      rows = `
+        <tr>
+          <td colspan="6" class="text-center py-10 text-gray-400">
+            <div class="text-sm font-semibold text-gray-500">No pickup or approved-reject activities</div>
+            <div class="text-xs text-gray-400 mt-1">on ${dateVal}</div>
+          </td>
+        </tr>
+      `;
+    } else {
+      activities.forEach((a, i) => {
+        const typeBadge = a.type === 'pickup'
+          ? '<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-green-100 text-green-800">📦 PICKUP</span>'
+          : '<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800">❌ REJECT</span>';
+
+        const customIndicator = a.hasOverride
+          ? '<span class="ml-1 text-[9px] px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-700 font-bold">CUSTOM</span>'
+          : '';
+
+        const resetBtn = a.hasOverride
+          ? `<button onclick="resetActivityIncentive('${a.id}', '${a.type}')" class="px-2 py-1 rounded text-[10px] font-bold bg-gray-100 text-gray-700 border border-gray-200 hover:bg-gray-200" title="Reset to agent default">↩️</button>`
+          : '';
+
+        rows += `
+          <tr class="border-b border-gray-100 hover:bg-gray-50 text-xs">
+            <td class="py-2 px-2 text-gray-400 font-mono">${i + 1}</td>
+            <td class="py-2 px-2">
+              <div class="font-mono font-bold text-gray-800 text-[11px]">${esc(a.orderId)}</div>
+              <div class="text-[10px] text-gray-400">${esc(a.phoneModel || '—')}</div>
+            </td>
+            <td class="py-2 px-2">
+              <div class="font-semibold text-gray-700 text-[11px]">${esc(a.agentName)}</div>
+              <div class="text-[10px] text-gray-400 font-mono">${esc(a.agent)}</div>
+              ${a.timestampIST ? `<div class="text-[9px] text-gray-400">${esc(a.timestampIST)}</div>` : ''}
+            </td>
+            <td class="py-2 px-2">${typeBadge}</td>
+            <td class="py-2 px-2 text-right font-bold text-gray-600">${formatINR(a.defaultInc)}</td>
+            <td class="py-2 px-2">
+              <div class="flex items-center gap-1 flex-nowrap">
+                <input type="number" id="incInput_${a.id}" value="${a.currentInc}" min="0" step="1"
+                  class="w-20 px-2 py-1 border-2 border-gray-200 rounded text-xs font-bold text-indigo-700 outline-none focus:border-indigo-500" />
+                ${customIndicator}
+                <button onclick="saveActivityIncentive('${a.id}', '${a.type}')" class="px-2 py-1 rounded text-[10px] font-bold bg-emerald-500 text-white hover:bg-emerald-600" title="Save">💾</button>
+                ${resetBtn}
+              </div>
+            </td>
+          </tr>
+        `;
+      });
+    }
+
+    const totalDefaults = activities.reduce((s, a) => s + a.defaultInc, 0);
+    const totalCurrent = activities.reduce((s, a) => s + a.currentInc, 0);
+    const changedCount = activities.filter(a => a.hasOverride).length;
+
+    await Swal.fire({
+      title: `📅 Activities for ${dateVal}`,
+      width: '1050px',
+      html: `
+        <div class="text-left font-sans">
+          <div class="bg-blue-50 border border-blue-200 rounded-xl p-3 mb-4 text-xs">
+            <p class="font-bold text-blue-900 mb-1">💡 How it works</p>
+            <p class="text-gray-700">Each activity uses the agent's default incentive. Override a specific activity by entering a new amount and clicking <strong>💾 Save</strong>. Only that activity changes — the agent's default and other activities stay the same. Use <strong>↩️ Reset</strong> to revert to the default.</p>
+          </div>
+
+          <div class="flex items-center justify-between mb-3 flex-wrap gap-2 text-xs">
+            <span class="text-gray-500">Total activities: <strong>${activities.length}</strong>
+              ${changedCount ? ` · Changed: <strong class="text-indigo-600">${changedCount}</strong>` : ''}
+            </span>
+            <span class="text-gray-500">
+              Default: <strong>${formatINR(totalDefaults)}</strong>
+              ${totalCurrent !== totalDefaults ? ` · Applied: <strong class="text-indigo-600">${formatINR(totalCurrent)}</strong>` : ''}
+            </span>
+          </div>
+
+          <div class="max-h-[520px] overflow-y-auto border border-gray-200 rounded-xl">
+            <table class="w-full text-left">
+              <thead class="bg-gray-50 border-b border-gray-200 text-gray-600 text-[10px] uppercase font-bold sticky top-0">
+                <tr>
+                  <th class="py-2 px-2">#</th>
+                  <th class="py-2 px-2">Order</th>
+                  <th class="py-2 px-2">Agent / Time</th>
+                  <th class="py-2 px-2">Type</th>
+                  <th class="py-2 px-2 text-right">Default</th>
+                  <th class="py-2 px-2">Applied Incentive</th>
+                </tr>
+              </thead>
+              <tbody>${rows}</tbody>
+            </table>
+          </div>
+        </div>
+      `,
+      showConfirmButton: false,
+      showCloseButton: true
+    });
+  } catch (e) {
+    console.error(e);
+    showToast('Failed to load activities', 'error');
+  }
+}
+
+async function saveActivityIncentive(orderId, type) {
+  const inputEl = document.getElementById('incInput_' + orderId);
+  if (!inputEl) return;
+
+  const val = parseFloat(inputEl.value);
+  if (isNaN(val) || val < 0) {
+    showToast('Enter a valid amount (≥ 0)', 'error');
+    return;
+  }
+
+  const overrideField = type === 'pickup' ? 'pickup_incentive_override' : 'reject_incentive_override';
+  const defaultField = type === 'pickup' ? 'pickup_incentive' : 'reject_incentive';
+
+  try {
+    const snap = await db.ref('pickups/' + orderId).once('value');
+    const ord = snap.val();
+    if (!ord) { showToast('Order not found', 'error'); return; }
+
+    const users = await getData('users', false);
+    const agentUser = users[ord.agent] || {};
+    const defaultVal = Number(agentUser[defaultField]) || 0;
+
+    if (val === defaultVal) {
+      // Same as default → remove override so it stays clean
+      await db.ref('pickups/' + orderId + '/' + overrideField).remove();
+      showToast(`↩️ Reset to default ${formatINR(defaultVal)}`, 'info');
+    } else {
+      await db.ref('pickups/' + orderId).update({ [overrideField]: val });
+      showToast(`✅ Applied ${formatINR(val)} to this activity`, 'success');
+    }
+
+    invalidate('pickups');
+
+    // Refresh the modal with updated values + recalc salary if on salary page
+    setTimeout(() => openDateActivitiesModal(currentActivitiesDate), 300);
+    if (currentPageView === 'salary') loadSalaryData(true);
+  } catch (e) {
+    console.error(e);
+    showToast('Failed to save', 'error');
+  }
+}
+
+async function resetActivityIncentive(orderId, type) {
+  const overrideField = type === 'pickup' ? 'pickup_incentive_override' : 'reject_incentive_override';
+
+  try {
+    await db.ref('pickups/' + orderId + '/' + overrideField).remove();
+    invalidate('pickups');
+    showToast('↩️ Reset to agent default', 'info');
+    setTimeout(() => openDateActivitiesModal(currentActivitiesDate), 300);
+    if (currentPageView === 'salary') loadSalaryData(true);
+  } catch (e) {
+    console.error(e);
+    showToast('Failed to reset', 'error');
+  }
+}
+
+// ================================================================
 // AGENT ACTIVITY
 // ================================================================
 function viewAgentActivity(username) {
@@ -3673,7 +3955,6 @@ async function loadAttendance(force = false) {
         unmarkedCount++;
       }
 
-      // ✅ Unmark button sirf tab dikhao jab Present ya Absent marked ho
       const unmarkBtn = isMarked
         ? `<button onclick="setAgentAttendanceStatus('${uname}', '${date}', 'unmarked', false)" title="Unmark attendance" class="px-2 py-1 text-xs rounded-lg border border-gray-300 text-gray-600 hover:bg-gray-100 font-semibold">
              ⚪ Unmark
@@ -3752,11 +4033,9 @@ async function loadAttendance(force = false) {
 
 async function setAgentAttendanceStatus(username, date, status, isHalfDay = false) {
   try {
-    // ✅ UNMARK case: pura record hi hata do
     if (status === 'unmarked') {
       await db.ref(`attendance/${username}/${date}`).remove();
 
-      // User ke blocked flag bhi reset kar do
       await db.ref(`users/${username}`).update({
         is_blocked: false,
         blocked_date: null
@@ -4099,6 +4378,7 @@ async function blockAgent(username, date) {
 //     ACTIVE payment automatically.
 //   • Adjustments: include "settledInCycle" only for record; date-range
 //     filtering is the primary mechanism for cycle separation.
+//   • Activity incentive uses per-order override if set, else agent default.
 // ================================================================
 
 // ---------- Cycle helpers ----------
@@ -4145,7 +4425,6 @@ function computeCycleRangeForAgent(mode, uData, lastActivePayment, selectedDate)
   }
   if (mode === 'current_cycle') {
     if (lastActivePayment && lastActivePayment.paymentDate) {
-      // New cycle starts the DAY AFTER last payment
       const nextDay = addDays(lastActivePayment.paymentDate, 1);
       return { start: nextDay, end: today };
     }
@@ -4156,8 +4435,6 @@ function computeCycleRangeForAgent(mode, uData, lastActivePayment, selectedDate)
 
 function computeCycleTotals({ uname, uData, cycleStart, cycleEnd, allAttendance, pickupsByAgentDate, allAdjustments }) {
   const salary = uData.salary || 0;
-  const pickupInc = uData.pickup_incentive || 0;
-  const rejectInc = uData.reject_incentive || 0;
   const perDaySalary = salary / 30;
 
   const joinDateObj = uData.joinDate ? new Date(uData.joinDate + 'T00:00:00') : null;
@@ -4218,11 +4495,11 @@ function computeCycleTotals({ uname, uData, cycleStart, cycleEnd, allAttendance,
 
     for (const ord of dayPickups) {
       if (ord.status === 'pickup') {
-        totalPickupIncentive += pickupInc;
+        totalPickupIncentive += getActivityIncentive(ord, uData, 'pickup');
         agentPickupCount++;
       }
       if (ord.status === 'rejected' && Boolean(ord.incentive_approved)) {
-        totalRejectIncentive += rejectInc;
+        totalRejectIncentive += getActivityIncentive(ord, uData, 'reject');
         agentRejectCount++;
       }
       if (ord.status === 'rejected' && !Boolean(ord.incentive_approved)) {
@@ -4243,20 +4520,10 @@ function computeCycleTotals({ uname, uData, cycleStart, cycleEnd, allAttendance,
     currentDate.setDate(currentDate.getDate() + 1);
   }
 
-  // ============================================================
-  // ADJUSTMENTS (Bonus / Deduction)
-  // ------------------------------------------------------------
-  // ✅ FIX: Date filter hata diya. Ab saare pending (unsettled)
-  //    aur non-reverted adjustments har mode mein count honge
-  //    (Today / Current Cycle / Since Join / Date).
-  //    Sirf settledInCycle aur REVERTED wale skip honge.
-  // ============================================================
+  // ADJUSTMENTS — all pending (unsettled) + non-reverted count in every mode
   const agentAdjustments = Object.values(allAdjustments[uname] || {});
   for (const adj of agentAdjustments) {
-    // Skip reverted
     if (adj.status === 'REVERTED') continue;
-
-    // Skip those already consumed by a paid cycle
     if (adj.settledInCycle) continue;
 
     const amt = Number(adj.amount) || 0;
@@ -4269,7 +4536,6 @@ function computeCycleTotals({ uname, uData, cycleStart, cycleEnd, allAttendance,
   // Grand Total = Base + Bonus − Deduction (incentives EXCLUDED)
   const grandTotal = Math.max(0, totalBaseSalary + totalBonus - totalDeduction);
 
-  // Unique pending
   const uniquePending = [];
   const seen = new Set();
   for (const pr of pendingRejects) {
@@ -4320,7 +4586,6 @@ function buildSalaryCard({
 
   return `
     <div class="glass rounded-2xl p-5 shadow-sm border border-gray-100 salary-summary-card">
-      <!-- Header -->
       <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
         <div>
           <span class="font-bold text-gray-800 text-base">${uData.name || uname}</span>
@@ -4333,13 +4598,11 @@ function buildSalaryCard({
         </div>
       </div>
 
-      <!-- Cycle info -->
       <div class="mb-3 px-3 py-2 rounded-xl bg-indigo-50 border border-indigo-100 flex flex-wrap items-center justify-between gap-2 text-xs">
         <span class="text-indigo-700 font-semibold">📅 Cycle: <strong>${cycleLabel}</strong></span>
         ${lastPaidDate ? `<span class="text-gray-500">Last paid: <strong>${lastPaidDate}</strong></span>` : '<span class="text-gray-500">No payment yet</span>'}
       </div>
 
-      <!-- Main calc grid -->
       <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3">
         <div class="bg-gray-50 border border-gray-200 p-3 rounded-xl">
           <div class="text-[10px] text-gray-500 font-bold uppercase tracking-wide">Base Salary</div>
@@ -4360,7 +4623,6 @@ function buildSalaryCard({
         </div>
       </div>
 
-      <!-- Incentives (excluded) -->
       <div class="mb-3 p-3 rounded-xl bg-amber-50 border border-dashed border-amber-300">
         <div class="flex items-center gap-2 mb-2">
           <span class="text-[10px] font-bold text-amber-700 uppercase tracking-wide">💡 Incentives</span>
@@ -4380,7 +4642,6 @@ function buildSalaryCard({
         </div>
       </div>
 
-      <!-- Payment status -->
       <div class="mb-3 grid grid-cols-2 gap-2">
         <div class="p-3 rounded-xl bg-gray-100 border border-gray-200">
           <div class="text-[10px] text-gray-500 font-bold uppercase tracking-wide">Already Paid (this cycle)</div>
@@ -4392,7 +4653,6 @@ function buildSalaryCard({
         </div>
       </div>
 
-      <!-- Action buttons -->
       <div class="flex flex-wrap items-center gap-2">
         <button onclick="openPaidModal('${uname}')" class="px-4 py-2 bg-gradient-to-r from-emerald-500 to-green-600 text-white rounded-xl text-xs font-bold shadow-md hover:shadow-lg transition flex items-center gap-1.5">
           💰 Mark as Paid
@@ -4465,7 +4725,6 @@ async function loadSalaryData(force = false) {
       return;
     }
 
-    // Pre-index pickups by agent + date
     const pickupsByAgentDate = {};
     Object.values(pickups).forEach(ord => {
       if (!ord.timestamp) return;
@@ -4479,7 +4738,7 @@ async function loadSalaryData(force = false) {
 
     let html = '';
     let grandTotalAll = 0;
-    let globalPickup = 0, globalReject = 0, globalPending = 0, globalEarnings = 0;
+    let globalPickup = 0, globalReject = 0, globalPending = 0;
 
     const selectedDate = mode === 'date' ? (getVal('salaryDate') || getLocalYMD()) : null;
 
@@ -4497,7 +4756,6 @@ async function loadSalaryData(force = false) {
         allAdjustments
       });
 
-      // Payments already made within this cycle
       const agentPaysActive = getActivePaymentsForAgent(allPayments, uname);
       const cycleAlreadyPaid = agentPaysActive
         .filter(p => p.paymentDate && p.paymentDate >= cycleStart && p.paymentDate <= cycleEnd)
@@ -4506,7 +4764,6 @@ async function loadSalaryData(force = false) {
       const pendingAmount = Math.max(0, totals.grandTotal - cycleAlreadyPaid);
 
       grandTotalAll += totals.grandTotal;
-      globalEarnings += totals.grandTotal;
       globalPickup += totals.agentPickupCount;
       globalReject += totals.agentRejectCount;
       globalPending += totals.agentPendingCount;
@@ -4584,7 +4841,7 @@ function setSalaryMode(mode) {
   loadSalaryData(true);
 }
 
-// ---------- Mark as Paid (with full snapshot) ----------
+// ---------- Mark as Paid ----------
 async function openPaidModal(agentUsername) {
   if (!agentUsername) return;
 
@@ -4611,7 +4868,6 @@ async function openPaidModal(agentUsername) {
   const cycleStart = lastPaidDate ? addDays(lastPaidDate, 1) : (joinDateStr || '2020-01-01');
   const cycleEnd = today;
 
-  // Compute current cycle totals
   const [pickups, allAttendance, allAdjustmentsSnap] = await Promise.all([
     getData('pickups', false),
     getData('attendance', false),
@@ -4641,7 +4897,6 @@ async function openPaidModal(agentUsername) {
     .reduce((s, p) => s + (Number(p.amount) || 0), 0);
   const pending = Math.max(0, totals.grandTotal - alreadyPaid);
 
-  // Step 1: Confirm
   const step1 = await Swal.fire({
     title: '💰 Mark Salary as Paid?',
     html: `
@@ -4671,7 +4926,6 @@ async function openPaidModal(agentUsername) {
 
   if (!step1.isConfirmed) return;
 
-  // Step 2: Amount + date + note
   const step2 = await Swal.fire({
     title: '💵 Enter Paid Amount',
     html: `
@@ -4818,7 +5072,6 @@ async function undoPaidCycle(agentUsername, payId) {
 
     await db.ref(`salary_payments/${agentUsername}/${payId}`).update(updates);
 
-    // Unsettle adjustments tied to this cycle
     if (Array.isArray(entry.cycleAdjustmentIds) && entry.cycleAdjustmentIds.length) {
       const adjUpdates = {};
       for (const adjId of entry.cycleAdjustmentIds) {
@@ -4834,7 +5087,6 @@ async function undoPaidCycle(agentUsername, payId) {
     loadSalaryData(true);
     loadDashboard(true);
 
-    // Refresh history modal if open
     setTimeout(() => openPaymentHistoryModal(agentUsername), 300);
   } catch (e) {
     console.error(e);
@@ -4843,7 +5095,6 @@ async function undoPaidCycle(agentUsername, payId) {
 }
 
 async function redoPaidCycle(agentUsername, payId) {
-  // Re-activate an undone cycle
   const snap = await db.ref(`salary_payments/${agentUsername}/${payId}`).once('value');
   const entry = snap.val();
   if (!entry) { showToast('Not found', 'error'); return; }
@@ -4891,7 +5142,7 @@ async function redoPaidCycle(agentUsername, payId) {
   }
 }
 
-// ---------- Delete Paid Cycle (permanent from Firebase) ----------
+// ---------- Delete Paid Cycle ----------
 async function deletePaidCycle(agentUsername, payId) {
   if (!agentUsername || !payId) return;
 
@@ -4929,7 +5180,6 @@ async function deletePaidCycle(agentUsername, payId) {
   if (!confirm.isConfirmed) return;
 
   try {
-    // Unsettle any adjustments that were linked (so they can be re-used cleanly)
     if (Array.isArray(entry.cycleAdjustmentIds) && entry.cycleAdjustmentIds.length) {
       const adjUpdates = {};
       for (const adjId of entry.cycleAdjustmentIds) {
@@ -4954,7 +5204,7 @@ async function deletePaidCycle(agentUsername, payId) {
   }
 }
 
-// ---------- Payment History modal (with Undo / Re-apply / Delete) ----------
+// ---------- Payment History modal ----------
 async function openPaymentHistoryModal(agentUsername) {
   if (!agentUsername) return;
 
@@ -5040,9 +5290,9 @@ async function openPaymentHistoryModal(agentUsername) {
           </div>
           <div class="mt-3 p-3 bg-blue-50 rounded-lg border border-blue-100 text-[11px] text-gray-700 leading-relaxed">
             <p><strong>💡 Options:</strong></p>
-            <p>• <strong>↩️ Undo</strong> → Cycle reopen ho jaayegi, saara data (Base, Pickup, Reject, Bonus, Deduction) wapas restore ho jaayega. Aap correct karke dobara pay kar sakte hain.</p>
+            <p>• <strong>↩️ Undo</strong> → Cycle reopen ho jaayegi, saara data wapas restore ho jaayega.</p>
             <p>• <strong>✔️ Re-apply</strong> → Undone cycle ko wapas PAID mark kar dega.</p>
-            <p>• <strong>🗑️ Delete</strong> → Firebase se permanently hata dega (irreversible). Sirf tab use karein jab aap record hi nahi rakhna chahte.</p>
+            <p>• <strong>🗑️ Delete</strong> → Firebase se permanently hata dega (irreversible).</p>
           </div>
         </div>
       `,
@@ -5055,7 +5305,6 @@ async function openPaymentHistoryModal(agentUsername) {
   }
 }
 
-// ---------- Global Paid History (All Agents) ----------
 async function openAllPaymentsHistoryModal() {
   try {
     const [users, snap] = await Promise.all([
@@ -5308,7 +5557,6 @@ async function openAddAdjustmentModal(defaultAgent = '') {
   }
 }
 
-// ---------- Adjustment History (with cycle + status + revert + delete) ----------
 async function openAdjustmentHistoryModal(agentUsername = null) {
   try {
     const [snap, paymentsSnap] = await Promise.all([
@@ -5318,8 +5566,7 @@ async function openAdjustmentHistoryModal(agentUsername = null) {
     const allAdjustments = snap.val() || {};
     const allPayments = paymentsSnap.val() || {};
 
-    // Build a quick index of payment cycles for label lookup
-    const paymentIndex = {}; // payId -> { paymentDate, cycleStartDate, cycleEndDate, status }
+    const paymentIndex = {};
     for (const [uname, uPays] of Object.entries(allPayments)) {
       for (const p of Object.values(uPays)) {
         paymentIndex[p.id] = {
@@ -5335,7 +5582,6 @@ async function openAdjustmentHistoryModal(agentUsername = null) {
     let list = [];
     if (agentUsername) {
       const agentList = allAdjustments[agentUsername] || {};
-      // FIX: attach agent so revert/delete buttons work correctly
       list = Object.values(agentList).map(a => ({ ...a, agent: agentUsername }));
     } else {
       for (const [uname, uAdj] of Object.entries(allAdjustments)) {
@@ -5359,7 +5605,6 @@ async function openAdjustmentHistoryModal(agentUsername = null) {
 
         const isReverted = item.status === 'REVERTED';
 
-        // Cycle label
         let cycleLabel = '—';
         if (item.settledInCycle && paymentIndex[item.settledInCycle]) {
           const p = paymentIndex[item.settledInCycle];
@@ -5371,7 +5616,6 @@ async function openAdjustmentHistoryModal(agentUsername = null) {
           cycleLabel = 'Current / Open';
         }
 
-        // Status badge
         let statusBadge = '<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-100 text-indigo-800">🟢 ACTIVE</span>';
         if (isReverted) {
           statusBadge = '<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-gray-200 text-gray-700">↩️ REVERTED</span>';
@@ -5471,7 +5715,6 @@ async function revertAdjustment(agent, id) {
       status: 'REVERTED',
       revertedAt: Date.now(),
       revertedBy: 'admin',
-      // Also clear settled link so it doesn't affect paid-cycle math
       settledInCycle: null,
       settledAt: null
     });
@@ -5885,7 +6128,7 @@ setInterval(updateClock, 1000);
 updateClock();
 
 // ================================================================
-// INJECT SALARY HEADER BUTTONS (Adjustments + All Paid History)
+// INJECT SALARY HEADER BUTTONS
 // ================================================================
 function injectSalaryHeaderButtons() {
   const recalcBtn = document.querySelector('button[onclick="recalculateAllSalary()"]');
@@ -5909,6 +6152,16 @@ function injectSalaryHeaderButtons() {
     payHistBtn.innerHTML = '<i data-lucide="receipt"></i> Paid History';
     payHistBtn.onclick = () => openAllPaymentsHistoryModal();
     parent.appendChild(payHistBtn);
+  }
+
+  if (!$('dateActivitiesBtn')) {
+    const dateBtn = document.createElement('button');
+    dateBtn.id = 'dateActivitiesBtn';
+    dateBtn.className = 'btn-action save';
+    dateBtn.innerHTML = '<i data-lucide="calendar-clock"></i> Date Activities';
+    dateBtn.title = 'View / adjust incentive for a specific date';
+    dateBtn.onclick = () => promptDateActivities();
+    parent.appendChild(dateBtn);
   }
 
   refreshIcons();
@@ -5946,7 +6199,7 @@ document.addEventListener('DOMContentLoaded', () => {
     salaryToggleBar.appendChild(btn);
   }
 
-  // Inject global salary header buttons (Adjustments + Paid History)
+  // Inject global salary header buttons
   injectSalaryHeaderButtons();
 
   const agentRole = document.querySelector('input[name="regRole"][value="agent"]');
@@ -6232,3 +6485,11 @@ async function quickToggleDay(username, dateStr, currentStatus, isHalfDay) {
   loadAttendance(true);
   renderAttendanceCalendarModal();
 }
+
+// ================================================================
+// Expose functions for inline HTML handlers
+// ================================================================
+window.promptDateActivities = promptDateActivities;
+window.openDateActivitiesModal = openDateActivitiesModal;
+window.saveActivityIncentive = saveActivityIncentive;
+window.resetActivityIncentive = resetActivityIncentive;
