@@ -2656,12 +2656,94 @@ function exportCSV() {
 // ================================================================
 // DEPOSITS
 // ================================================================
+
+// ---------- Deposit helpers ----------
+function getDepositAddedOn(item) {
+  if (!item || !item.timestamp) return '';
+  const d = new Date(item.timestamp);
+  if (isNaN(d)) return '';
+  return getLocalYMD(d);
+}
+
+// Default sort → Transaction Date (newest first), tie-break by Added-On (newest first)
+function depositSortByTransactionDateDesc(a, b) {
+  const da = a.date || '';
+  const db = b.date || '';
+  if (da !== db) return db.localeCompare(da); // ISO date compare → correct for day/month/year
+  return (b.timestamp || 0) - (a.timestamp || 0);
+}
+
+// Added-On sort → chronological ascending (oldest added-on first), tie-break oldest first
+function depositSortByAddedOnAsc(a, b) {
+  const aa = getDepositAddedOn(a);
+  const bb = getDepositAddedOn(b);
+  if (aa !== bb) return aa.localeCompare(bb);
+  return (a.timestamp || 0) - (b.timestamp || 0);
+}
+
+// Dynamically inject "Added On" filter inputs next to the existing Transaction Date filter,
+// plus a small style block for the backdated indicator. This avoids touching HTML/CSS files.
+function injectDepositFilterInputs() {
+  if ($('depositAddedFrom')) return;
+  const anchor = $('depositDateFrom');
+  if (!anchor || !anchor.parentElement) return;
+
+  const parent = anchor.parentElement;
+
+  const wrap = document.createElement('div');
+  wrap.id = 'depositAddedFilterWrap';
+  wrap.style.cssText = 'display:inline-flex; align-items:center; gap:6px; margin-left:10px; flex-wrap:wrap;';
+
+  wrap.innerHTML = `
+    <label style="font-size:11px;font-weight:700;color:#64748b;">Added On:</label>
+    <input type="date" id="depositAddedFrom" style="padding:6px 8px;border:1px solid #e2e8f0;border-radius:8px;font-size:12px;" />
+    <span style="color:#94a3b8;font-size:11px;">→</span>
+    <input type="date" id="depositAddedTo" style="padding:6px 8px;border:1px solid #e2e8f0;border-radius:8px;font-size:12px;" />
+    <button type="button" onclick="applyDepositAddedFilter()" style="padding:6px 10px;border-radius:8px;background:#4f46e5;color:#fff;font-size:11px;font-weight:600;border:none;cursor:pointer;">Apply</button>
+    <button type="button" onclick="clearDepositAddedFilter()" style="padding:6px 10px;border-radius:8px;background:#f1f5f9;color:#334155;font-size:11px;font-weight:600;border:none;cursor:pointer;">Clear</button>
+  `;
+  parent.appendChild(wrap);
+
+  if (!$('depositBackdatedStyle')) {
+    const style = document.createElement('style');
+    style.id = 'depositBackdatedStyle';
+    style.textContent = `
+      .deposit-row-backdated {
+        background: linear-gradient(90deg, #fef3c7 0%, #fffbeb 45%, transparent 100%);
+      }
+      .deposit-row-backdated:hover {
+        background: linear-gradient(90deg, #fde68a 0%, #fef3c7 45%, #f8fafc 100%);
+      }
+      .deposit-backdated-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 3px;
+        margin-left: 6px;
+        padding: 1px 6px;
+        border-radius: 6px;
+        font-size: 9px;
+        font-weight: 700;
+        background: #fef3c7;
+        color: #92400e;
+        border: 1px solid #fde68a;
+        vertical-align: middle;
+        white-space: nowrap;
+      }
+    `;
+    document.head.appendChild(style);
+  }
+}
+
+// ---------- Load / filter / sort ----------
 async function loadDeposits(force = false) {
   try {
+    injectDepositFilterInputs();
+
     const data = await getData('deposits', force);
 
     allDeposits = Object.entries(data).map(([id, item]) => ({ id, ...item }));
-    allDeposits.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+    // Default chronological order: transaction date newest → oldest
+    allDeposits.sort(depositSortByTransactionDateDesc);
 
     applyDepositFilters();
     updateDepositStats();
@@ -2674,11 +2756,35 @@ async function loadDeposits(force = false) {
 function applyDepositFilters() {
   let filtered = [...allDeposits];
 
-  const dateFrom = getVal('depositDateFrom');
-  const dateTo = getVal('depositDateTo');
+  const dateFrom  = getVal('depositDateFrom');   // Transaction Date From
+  const dateTo    = getVal('depositDateTo');     // Transaction Date To
+  const addedFrom = getVal('depositAddedFrom');  // Added-On From
+  const addedTo   = getVal('depositAddedTo');    // Added-On To
 
+  // Filter by Transaction Date
   if (dateFrom) filtered = filtered.filter(item => item.date && item.date >= dateFrom);
-  if (dateTo) filtered = filtered.filter(item => item.date && item.date <= dateTo);
+  if (dateTo)   filtered = filtered.filter(item => item.date && item.date <= dateTo);
+
+  // Filter by Added-On Date (derived from item.timestamp)
+  if (addedFrom) filtered = filtered.filter(item => {
+    const ao = getDepositAddedOn(item);
+    return ao && ao >= addedFrom;
+  });
+  if (addedTo) filtered = filtered.filter(item => {
+    const ao = getDepositAddedOn(item);
+    return ao && ao <= addedTo;
+  });
+
+  // Sorting:
+  //   • If Added-On filter is active → sort by Added-On ASC (chronological, oldest first)
+  //   • Otherwise → sort by Transaction Date DESC (newest first, default)
+  const filterByAddedOn = Boolean(addedFrom || addedTo);
+
+  if (filterByAddedOn) {
+    filtered.sort(depositSortByAddedOnAsc);
+  } else {
+    filtered.sort(depositSortByTransactionDateDesc);
+  }
 
   filteredDeposits = filtered;
   depositCurrentPage = 1;
@@ -2689,11 +2795,23 @@ function applyDepositDateFilter() {
   applyDepositFilters();
 }
 
+function applyDepositAddedFilter() {
+  applyDepositFilters();
+  showToast('Filtered by Added-On date', 'info');
+}
+
 function clearDepositDateFilter() {
   setVal('depositDateFrom', '');
   setVal('depositDateTo', '');
   applyDepositFilters();
-  showToast('Date filters cleared', 'info');
+  showToast('Transaction date filters cleared', 'info');
+}
+
+function clearDepositAddedFilter() {
+  setVal('depositAddedFrom', '');
+  setVal('depositAddedTo', '');
+  applyDepositFilters();
+  showToast('Added-On date filters cleared', 'info');
 }
 
 async function updateDepositStats() {
@@ -2728,6 +2846,7 @@ async function updateDepositStats() {
   setText('depositCommission', formatINR(totalCommission));
 }
 
+// ---------- Table rendering ----------
 function renderDepositsTable() {
   const tbody = $('depositsTableBody');
   if (!tbody) return;
@@ -2759,14 +2878,34 @@ function renderDepositsTable() {
 
   pageItems.forEach((item, idx) => {
     const num = start + idx + 1;
+    const addedOn = getDepositAddedOn(item);
+    const addedDisplay = item.timestamp ? new Date(item.timestamp).toLocaleString() : '—';
+
+    // Backdated if the transaction date is earlier than the date it was added.
+    // (i.e. user added the entry today/on a later day, but the transaction itself is older.)
+    const isBackdated = Boolean(item.date && addedOn && addedOn > item.date);
+
+    const rowClass = isBackdated
+      ? 'order-row border-b border-gray-50 deposit-row-backdated'
+      : 'order-row border-b border-gray-50';
+
+    const backdatedBadge = isBackdated
+      ? `<span class="deposit-backdated-badge" title="Transaction date: ${item.date} · Added on: ${addedOn}">🕓 Backdated</span>`
+      : '';
 
     html += `
-      <tr class="order-row border-b border-gray-50">
+      <tr class="${rowClass}">
         <td class="py-3 px-4 text-gray-400 font-mono text-xs">${num}</td>
         <td class="py-3 px-4 font-bold text-green-600">${formatINR(item.amount || 0)}</td>
-        <td class="py-3 px-4 text-gray-600 text-sm">${item.description || '—'}</td>
-        <td class="py-3 px-4 hidden sm:table-cell text-xs text-gray-500">${item.date || '—'}</td>
-        <td class="py-3 px-4 hidden md:table-cell text-xs text-gray-400">${item.timestamp ? new Date(item.timestamp).toLocaleString() : '—'}</td>
+        <td class="py-3 px-4 text-gray-600 text-sm">
+          ${item.description || '—'}
+          ${backdatedBadge}
+        </td>
+        <td class="py-3 px-4 hidden sm:table-cell text-xs text-gray-500">
+          <div class="font-semibold text-gray-700">${item.date || '—'}</div>
+          ${addedOn ? `<div class="text-[10px] text-gray-400 mt-0.5">Added: ${addedOn}</div>` : ''}
+        </td>
+        <td class="py-3 px-4 hidden md:table-cell text-xs text-gray-400">${addedDisplay}</td>
         <td class="py-3 px-4">
           <button onclick="deleteDeposit('${item.id}')" class="btn-action delete" title="Delete"><i data-lucide="trash-2"></i></button>
         </td>
@@ -2794,6 +2933,7 @@ function nextDepositPage() {
   }
 }
 
+// ---------- Add / delete / export ----------
 function submitDeposit(e) {
   e.preventDefault();
 
@@ -2825,7 +2965,7 @@ function submitDeposit(e) {
         amount,
         date,
         description: description || '',
-        timestamp: Date.now()
+        timestamp: Date.now()   // Added-On timestamp
       });
 
       invalidate('deposits');
@@ -2878,12 +3018,13 @@ function exportDepositsCSV() {
     return;
   }
 
-  const headers = ['Amount', 'Description', 'Date', 'Added On'];
+  const headers = ['Amount', 'Description', 'Transaction Date', 'Added On', 'Added Timestamp'];
 
   const rows = filteredDeposits.map(item => [
     item.amount || 0,
     item.description || '—',
     item.date || '—',
+    getDepositAddedOn(item) || '—',
     item.timestamp ? new Date(item.timestamp).toLocaleString() : '—'
   ]);
 
@@ -2909,7 +3050,6 @@ function refreshDeposits() {
   loadDeposits(true);
   showToast('🔄 Deposits refreshed', 'info');
 }
-
 // ================================================================
 // AGENTS
 // ================================================================
