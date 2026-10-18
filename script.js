@@ -4728,7 +4728,9 @@ function buildSalaryCard({
     <div class="glass rounded-2xl p-5 shadow-sm border border-gray-100 salary-summary-card">
       <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
         <div>
-          <span class="font-bold text-gray-800 text-base">${uData.name || uname}</span>
+          <span class="font-bold text-gray-800 text-base cursor-pointer hover:text-indigo-600 hover:underline transition"
+                onclick="openRiderStatementFlow('${uname}')"
+                title="Click to view Pickup/Reject Statement">${uData.name || uname}</span>
           <span class="text-sm text-gray-500 ml-1">(${uname})</span>
           <span class="text-xs text-gray-400 ml-2">Joined: ${joinDateDisplay}</span>
         </div>
@@ -4794,6 +4796,11 @@ function buildSalaryCard({
       </div>
 
       <div class="flex flex-wrap items-center gap-2">
+        <button onclick="openRiderStatementFlow('${uname}')"
+                class="px-4 py-2 bg-gradient-to-r from-indigo-500 to-purple-600 text-white rounded-xl text-xs font-bold shadow-md hover:shadow-lg transition flex items-center gap-1.5"
+                title="Pickup/Reject Statement">
+          📋 Statement
+        </button>
         <button onclick="openPaidModal('${uname}')" class="px-4 py-2 bg-gradient-to-r from-emerald-500 to-green-600 text-white rounded-xl text-xs font-bold shadow-md hover:shadow-lg transition flex items-center gap-1.5">
           💰 Mark as Paid
         </button>
@@ -6633,3 +6640,769 @@ window.promptDateActivities = promptDateActivities;
 window.openDateActivitiesModal = openDateActivitiesModal;
 window.saveActivityIncentive = saveActivityIncentive;
 window.resetActivityIncentive = resetActivityIncentive;
+
+// ================================================================
+// ================================================================
+// RIDER STATEMENT SYSTEM v1.1
+// - Click rider name → confirm → calendar range → Yes/No model details
+// - Mobile number NOT shown (per request)
+// - YES: detailed table with model per transaction
+// - NO : daily summary counts only
+// ================================================================
+// ================================================================
+
+function formatDateHuman(dateStr) {
+  if (!dateStr) return '—';
+  const d = new Date(dateStr + 'T00:00:00');
+  if (isNaN(d)) return dateStr;
+  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  return `${String(d.getDate()).padStart(2,'0')} ${months[d.getMonth()]} ${d.getFullYear()}`;
+}
+
+function getWeekdayShort(dateStr) {
+  const d = new Date(dateStr + 'T00:00:00');
+  if (isNaN(d)) return '';
+  return ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][d.getDay()];
+}
+
+// ----------------------------------------------------------------
+// STEP 1: Click rider name → confirm
+// ----------------------------------------------------------------
+async function openRiderStatementFlow(username) {
+  if (!username) return;
+
+  let uName = username;
+  try {
+    const users = await getData('users', false);
+    if (users[username] && users[username].name) uName = users[username].name;
+  } catch (_) {}
+
+  const res = await Swal.fire({
+    title: '📋 (FLIPKART) Rider Statement',
+    html: `
+      <div class="text-center font-sans">
+        <p class="text-sm text-gray-600">View <strong>Pickup / Reject Statement</strong> for:</p>
+        <p class="text-lg font-bold text-indigo-700 mt-2">${esc(uName)}</p>
+        <p class="text-xs text-gray-400 font-mono mt-0.5">${esc(username)}</p>
+        <div class="mt-3 p-3 bg-indigo-50 border border-indigo-100 rounded-xl text-left text-xs">
+          <p class="font-bold text-indigo-900 mb-1">📌 What you'll see:</p>
+          <p class="text-gray-700 leading-relaxed">
+            ✅ Attendance calendar (green/red) · 📦 Pickup & reject counts · 💰 Incentive earnings · 📊 Date-wise breakdown · 📋 Copy-to-share
+          </p>
+        </div>
+      </div>
+    `,
+    showCancelButton: true,
+    confirmButtonText: '📅 Select Date Range',
+    cancelButtonText: 'Cancel',
+    confirmButtonColor: '#4f46e5',
+    cancelButtonColor: '#64748b',
+    width: 480
+  });
+
+  if (!res.isConfirmed) return;
+  openStatementCalendarPicker(username);
+}
+
+// ----------------------------------------------------------------
+// STEP 2: Calendar range picker (green/red attendance)
+// ----------------------------------------------------------------
+async function openStatementCalendarPicker(username) {
+  let users, allAttendance;
+  try {
+    [users, allAttendance] = await Promise.all([
+      getData('users', true),
+      getData('attendance', true)
+    ]);
+  } catch (e) {
+    showToast('Failed to load data', 'error');
+    return;
+  }
+
+  const uData = users[username];
+  if (!uData) {
+    showToast('Rider not found', 'error');
+    return;
+  }
+
+  const userAtt = allAttendance[username] || {};
+
+  let currentYear  = new Date().getFullYear();
+  let currentMonth = new Date().getMonth() + 1;
+  let selectedStart = null;
+  let selectedEnd   = null;
+
+  const renderGrid = () => {
+    const monthStr = String(currentMonth).padStart(2, '0');
+    const daysInMonth = new Date(currentYear, currentMonth, 0).getDate();
+    const firstDay = new Date(currentYear, currentMonth - 1, 1).getDay();
+    const monthName = new Date(currentYear, currentMonth - 1, 1)
+      .toLocaleString('en-US', { month: 'long', year: 'numeric' });
+
+    let cells = '';
+    for (let i = 0; i < firstDay; i++) cells += '<div></div>';
+
+    for (let d = 1; d <= daysInMonth; d++) {
+      const dateStr = `${currentYear}-${monthStr}-${String(d).padStart(2,'0')}`;
+      const att = userAtt[dateStr] || {};
+      const status = att.status || 'unmarked';
+
+      let cls = 'bg-gray-50 border-gray-200 text-gray-500';
+      let icon = '';
+      if (status === 'present') {
+        if (att.half_day) { cls = 'bg-amber-100 border-amber-300 text-amber-800'; icon = '🌗'; }
+        else { cls = 'bg-emerald-100 border-emerald-300 text-emerald-800'; icon = '✅'; }
+      } else if (status === 'absent') {
+        cls = 'bg-rose-100 border-rose-300 text-rose-800';
+        icon = '❌';
+      }
+
+      let ring = '';
+      if (selectedStart && selectedEnd) {
+        if (dateStr >= selectedStart && dateStr <= selectedEnd) ring = 'ring-2 ring-indigo-500 ring-offset-1';
+      } else if (selectedStart && dateStr === selectedStart) {
+        ring = 'ring-2 ring-indigo-500 ring-offset-1';
+      }
+
+      cells += `
+        <div class="stmt-day-tile p-1 min-h-[42px] rounded-lg border ${cls} ${ring} cursor-pointer hover:scale-105 transition flex flex-col items-center justify-center"
+             data-date="${dateStr}">
+          <div class="text-[11px] font-bold">${d}</div>
+          <div class="text-[10px] leading-none mt-0.5">${icon}</div>
+        </div>
+      `;
+    }
+
+    return { cells, monthName };
+  };
+
+  const updateUI = () => {
+    const { cells, monthName } = renderGrid();
+    const grid = document.getElementById('stmt_cal_grid');
+    const mlbl = document.getElementById('stmt_cal_month');
+    if (grid) grid.innerHTML = cells;
+    if (mlbl) mlbl.textContent = monthName;
+
+    const sel = document.getElementById('stmt_cal_selection');
+    if (sel) {
+      if (selectedStart && selectedEnd) {
+        sel.innerHTML = `<span class="text-emerald-700 font-bold">✅ Selected: ${formatDateHuman(selectedStart)} → ${formatDateHuman(selectedEnd)}</span>`;
+      } else if (selectedStart) {
+        sel.innerHTML = `<span class="text-indigo-700 font-bold">📍 Start: ${formatDateHuman(selectedStart)} — ab END date click karein</span>`;
+      } else {
+        sel.innerHTML = `<span class="text-gray-500">Click a date to START selection</span>`;
+      }
+    }
+
+    document.querySelectorAll('#stmt_cal_grid .stmt-day-tile').forEach(tile => {
+      tile.onclick = function () {
+        const ds = this.dataset.date;
+        if (!selectedStart || (selectedStart && selectedEnd)) {
+          selectedStart = ds;
+          selectedEnd = null;
+        } else {
+          if (ds < selectedStart) {
+            selectedEnd = selectedStart;
+            selectedStart = ds;
+          } else {
+            selectedEnd = ds;
+          }
+        }
+        updateUI();
+      };
+    });
+  };
+
+  const result = await Swal.fire({
+    title: `📅 ${uData.name || username} — Attendance Calendar`,
+    width: 760,
+    html: `
+      <div class="text-left font-sans">
+        <div class="flex items-center justify-between mb-3 gap-2">
+          <button id="stmt_cal_prev" type="button" class="px-3 py-1.5 bg-gray-100 hover:bg-gray-200 rounded-lg text-sm font-bold text-gray-700">◀ Prev</button>
+          <span id="stmt_cal_month" class="font-bold text-base text-gray-800"></span>
+          <button id="stmt_cal_next" type="button" class="px-3 py-1.5 bg-gray-100 hover:bg-gray-200 rounded-lg text-sm font-bold text-gray-700">Next ▶</button>
+        </div>
+
+        <div class="grid grid-cols-7 gap-1 text-center text-[10px] font-bold text-gray-500 mb-1">
+          <span>Sun</span><span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span><span>Sat</span>
+        </div>
+
+        <div id="stmt_cal_grid" class="grid grid-cols-7 gap-1 mb-3"></div>
+
+        <div class="flex flex-wrap gap-3 text-[10px] text-gray-600 justify-center mb-2">
+          <span class="inline-flex items-center gap-1"><span class="w-3 h-3 bg-emerald-100 border border-emerald-300 rounded"></span> Present</span>
+          <span class="inline-flex items-center gap-1"><span class="w-3 h-3 bg-amber-100 border border-amber-300 rounded"></span> Half Day</span>
+          <span class="inline-flex items-center gap-1"><span class="w-3 h-3 bg-rose-100 border border-rose-300 rounded"></span> Absent</span>
+          <span class="inline-flex items-center gap-1"><span class="w-3 h-3 bg-gray-50 border border-gray-200 rounded"></span> Unmarked</span>
+        </div>
+
+        <div id="stmt_cal_selection" class="text-center text-xs p-2.5 bg-indigo-50 border border-indigo-100 rounded-xl mb-2"></div>
+
+        <p class="text-[10px] text-gray-400 text-center">ℹ️ Click once to select START date · click again to select END date</p>
+      </div>
+    `,
+    showCancelButton: true,
+    showConfirmButton: true,
+    confirmButtonText: '📊 Continue',
+    cancelButtonText: 'Cancel',
+    confirmButtonColor: '#4f46e5',
+    cancelButtonColor: '#64748b',
+    didOpen: () => {
+      updateUI();
+
+      const prevBtn = document.getElementById('stmt_cal_prev');
+      const nextBtn = document.getElementById('stmt_cal_next');
+
+      if (prevBtn) prevBtn.onclick = () => {
+        currentMonth--;
+        if (currentMonth < 1) { currentMonth = 12; currentYear--; }
+        updateUI();
+      };
+      if (nextBtn) nextBtn.onclick = () => {
+        currentMonth++;
+        if (currentMonth > 12) { currentMonth = 1; currentYear++; }
+        updateUI();
+      };
+    },
+    preConfirm: () => {
+      if (!selectedStart || !selectedEnd) {
+        Swal.showValidationMessage('Please select both start and end dates');
+        return false;
+      }
+      return { from: selectedStart, to: selectedEnd };
+    }
+  });
+
+  if (!result.isConfirmed || !result.value) return;
+
+  // ----------------------------------------------------------------
+  // STEP 3: Ask model details Yes/No
+  // ----------------------------------------------------------------
+  const detailChoice = await Swal.fire({
+    title: '📱 Mobile Model Details?',
+    html: `
+      <div class="text-center font-sans">
+        <p class="text-sm text-gray-600 mb-3">Statement mein <strong>mobile model</strong> ki detail chahiye?</p>
+        <div class="grid grid-cols-1 gap-2 text-left">
+          <div class="p-3 bg-emerald-50 border-2 border-emerald-300 rounded-xl">
+            <p class="font-bold text-emerald-800 text-sm">✅ YES — Detailed</p>
+            <p class="text-xs text-gray-600 mt-1">Har pickup/reject ka <strong>model name, order ID, date</strong> dikhega</p>
+          </div>
+          <div class="p-3 bg-gray-50 border-2 border-gray-300 rounded-xl">
+            <p class="font-bold text-gray-800 text-sm">❌ NO — Summary</p>
+            <p class="text-xs text-gray-600 mt-1">Sirf <strong>kitne pickup, kitne reject</strong> — model details nahi</p>
+          </div>
+        </div>
+      </div>
+    `,
+    showDenyButton: true,
+    showCancelButton: false,
+    confirmButtonText: '✅ YES — Model Details',
+    denyButtonText: '❌ NO — Counts Only',
+    confirmButtonColor: '#059669',
+    denyButtonColor: '#64748b',
+    width: 440
+  });
+
+  if (detailChoice.isDismissed) return;
+
+  const showModelDetails = detailChoice.isConfirmed;
+
+  generateRiderStatement(
+    username,
+    result.value.from,
+    result.value.to,
+    showModelDetails
+  );
+}
+
+// ----------------------------------------------------------------
+// STEP 4: Build & show the full statement
+// ----------------------------------------------------------------
+async function generateRiderStatement(username, fromDate, toDate, showModelDetails) {
+  Swal.fire({
+    title: 'Generating statement...',
+    allowOutsideClick: false,
+    didOpen: () => Swal.showLoading()
+  });
+
+  try {
+    const [users, pickups, allAttendance] = await Promise.all([
+      getData('users', true),
+      getData('pickups', true),
+      getData('attendance', true)
+    ]);
+
+    const uData = users[username];
+    if (!uData) { Swal.close(); showToast('Rider not found', 'error'); return; }
+
+    const userAtt = allAttendance[username] || {};
+
+    // Build date array
+    const dates = [];
+    const cur = new Date(fromDate + 'T00:00:00');
+    const endD = new Date(toDate + 'T00:00:00');
+    while (cur <= endD) {
+      dates.push(getLocalYMD(cur));
+      cur.setDate(cur.getDate() + 1);
+    }
+
+    // Group data
+    const pickupsByDate = {};
+    const allOrders = [];
+
+    Object.values(pickups).forEach(ord => {
+      if (ord.agent !== username) return;
+      if (!ord.timestamp) return;
+      if (ord.status === 'on_hold') return;
+      const ds = getLocalYMD(new Date(ord.timestamp));
+      if (ds < fromDate || ds > toDate) return;
+
+      if (!pickupsByDate[ds]) pickupsByDate[ds] = { pickups: [], rejects: [], pending: [] };
+
+      if (ord.status === 'pickup') {
+        pickupsByDate[ds].pickups.push(ord);
+        allOrders.push({ date: ds, type: 'pickup', ord, inc: getActivityIncentive(ord, uData, 'pickup') });
+      } else if (ord.status === 'rejected') {
+        if (ord.incentive_approved) {
+          pickupsByDate[ds].rejects.push(ord);
+          allOrders.push({ date: ds, type: 'reject', ord, inc: getActivityIncentive(ord, uData, 'reject') });
+        } else {
+          pickupsByDate[ds].pending.push(ord);
+          allOrders.push({ date: ds, type: 'pending', ord, inc: 0 });
+        }
+      } else if (ord.status === 'reschedule') {
+        pickupsByDate[ds].pending.push(ord);
+        allOrders.push({ date: ds, type: 'pending', ord, inc: 0 });
+      }
+    });
+
+    // Totals + calendar
+    let totalPickups = 0, totalRejects = 0, totalPending = 0;
+    let totalPickupInc = 0, totalRejectInc = 0;
+    let presentCount = 0, absentCount = 0, halfDayCount = 0;
+
+    let rowsHtml = '';
+    let calendarCells = '';
+    let prevMonthKey = '';
+    let firstCellOffsetDone = false;
+
+    dates.forEach(dateStr => {
+      const att = userAtt[dateStr] || {};
+      const status = att.status || 'unmarked';
+      const dayData = pickupsByDate[dateStr] || { pickups: [], rejects: [], pending: [] };
+
+      const dayPickupInc = dayData.pickups.reduce((s, o) => s + getActivityIncentive(o, uData, 'pickup'), 0);
+      const dayRejectInc = dayData.rejects.reduce((s, o) => s + getActivityIncentive(o, uData, 'reject'), 0);
+
+      totalPickups += dayData.pickups.length;
+      totalRejects += dayData.rejects.length;
+      totalPending += dayData.pending.length;
+      totalPickupInc += dayPickupInc;
+      totalRejectInc += dayRejectInc;
+
+      let attIcon = '—';
+      let attClass = 'text-gray-400';
+      if (status === 'present') {
+        if (att.half_day) { halfDayCount++; attIcon = '🌗 Half'; attClass = 'text-amber-700 font-bold'; }
+        else { presentCount++; attIcon = '✅ Present'; attClass = 'text-emerald-700 font-bold'; }
+      } else if (status === 'absent') {
+        absentCount++; attIcon = '❌ Absent'; attClass = 'text-rose-700 font-bold';
+      }
+
+      // Calendar cell
+      const monthKey = dateStr.substring(0, 7);
+      if (!firstCellOffsetDone) {
+        const firstDow = new Date(fromDate + 'T00:00:00').getDay();
+        for (let i = 0; i < firstDow; i++) calendarCells += '<div></div>';
+        firstCellOffsetDone = true;
+      }
+      if (monthKey !== prevMonthKey) {
+        if (prevMonthKey !== '') calendarCells += '</div></div>';
+        const [yy, mm] = monthKey.split('-').map(Number);
+        const monthLabel = new Date(yy, mm - 1, 1).toLocaleString('en-US', { month: 'long', year: 'numeric' });
+        calendarCells += `<div class="mb-3"><p class="text-xs font-bold text-indigo-700 mb-1 mt-2">${monthLabel}</p><div class="grid grid-cols-7 gap-1">`;
+        prevMonthKey = monthKey;
+      }
+
+      let calCls = 'bg-gray-50 border-gray-200 text-gray-500';
+      let calIcon = '';
+      if (status === 'present') {
+        if (att.half_day) { calCls = 'bg-amber-100 border-amber-300 text-amber-800'; calIcon = '🌗'; }
+        else { calCls = 'bg-emerald-100 border-emerald-300 text-emerald-800'; calIcon = '✅'; }
+      } else if (status === 'absent') {
+        calCls = 'bg-rose-100 border-rose-300 text-rose-800'; calIcon = '❌';
+      }
+      const dayNum = parseInt(dateStr.substring(8), 10);
+      calendarCells += `
+        <div class="p-1 min-h-[38px] rounded-lg border ${calCls} flex flex-col items-center justify-center text-[10px] font-bold">
+          <div>${dayNum}</div>
+          <div class="text-[9px] leading-none mt-0.5">${calIcon}</div>
+        </div>
+      `;
+
+      // Summary row (NO mode)
+      if (!showModelDetails) {
+        const dayTotalInc = dayPickupInc + dayRejectInc;
+        const wd = getWeekdayShort(dateStr);
+        rowsHtml += `
+          <tr class="border-b border-gray-100 text-xs hover:bg-gray-50">
+            <td class="py-2 px-2 font-mono whitespace-nowrap">${dateStr}<div class="text-[9px] text-gray-400">${wd}</div></td>
+            <td class="py-2 px-2 ${attClass} whitespace-nowrap">${attIcon}</td>
+            <td class="py-2 px-2 text-center font-bold text-emerald-700">${dayData.pickups.length || '—'}</td>
+            <td class="py-2 px-2 text-right text-emerald-600 font-semibold whitespace-nowrap">${dayPickupInc ? formatINR(dayPickupInc) : '—'}</td>
+            <td class="py-2 px-2 text-center font-bold text-amber-700">${dayData.rejects.length || '—'}</td>
+            <td class="py-2 px-2 text-right text-amber-600 font-semibold whitespace-nowrap">${dayRejectInc ? formatINR(dayRejectInc) : '—'}</td>
+            <td class="py-2 px-2 text-center text-gray-500">${dayData.pending.length || '—'}</td>
+            <td class="py-2 px-2 text-right font-bold text-indigo-700 whitespace-nowrap">${dayTotalInc ? formatINR(dayTotalInc) : '—'}</td>
+          </tr>
+        `;
+      }
+    });
+    if (prevMonthKey !== '') calendarCells += '</div></div>';
+
+    // ---- Grouped sections for YES mode ----
+    let tableSectionHtml = '';
+
+    if (showModelDetails) {
+      const pickupsArr  = allOrders.filter(x => x.type === 'pickup').sort((a,b) => a.date.localeCompare(b.date));
+      const rejectsArr  = allOrders.filter(x => x.type === 'reject').sort((a,b) => a.date.localeCompare(b.date));
+      const pendingsArr = allOrders.filter(x => x.type === 'pending').sort((a,b) => a.date.localeCompare(b.date));
+
+      const pickupSubTotal = pickupsArr.reduce((s, x) => s + (x.inc || 0), 0);
+      const rejectSubTotal = rejectsArr.reduce((s, x) => s + (x.inc || 0), 0);
+
+      let sections = '';
+
+      if (pickupsArr.length > 0) {
+        sections += `
+          <div class="border-2 border-emerald-300 rounded-xl overflow-hidden mb-2">
+            <div class="bg-emerald-500 text-white p-2 flex justify-between items-center">
+              <span class="font-black text-xs uppercase tracking-wide">✅ PICKUP TRANSACTIONS — ${pickupsArr.length}</span>
+              <span class="font-black text-sm">${formatINR(pickupSubTotal)}</span>
+            </div>
+            <table class="w-full">
+              <tbody>
+                ${pickupsArr.map((item, i) => `
+                  <tr class="border-b border-gray-100 hover:bg-emerald-50 text-xs">
+                    <td class="py-2 px-3 text-gray-400 font-mono w-8">${i + 1}</td>
+                    <td class="py-2 px-3 font-mono whitespace-nowrap font-bold text-gray-700">${item.date}</td>
+                    <td class="py-2 px-3">
+                      <div class="font-bold text-gray-800">${esc(item.ord.phoneModel || '—')}</div>
+                      <div class="text-[10px] text-gray-400 font-mono">#${esc(item.ord.orderId || item.ord.id || '')}</div>
+                    </td>
+                    <td class="py-2 px-3 text-right font-black text-emerald-700 whitespace-nowrap">${formatINR(item.inc)}</td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+        `;
+      }
+
+      if (rejectsArr.length > 0) {
+        sections += `
+          <div class="border-2 border-amber-300 rounded-xl overflow-hidden mb-2">
+            <div class="bg-amber-500 text-white p-2 flex justify-between items-center">
+              <span class="font-black text-xs uppercase tracking-wide">❌ REJECT TRANSACTIONS — ${rejectsArr.length}</span>
+              <span class="font-black text-sm">${formatINR(rejectSubTotal)}</span>
+            </div>
+            <table class="w-full">
+              <tbody>
+                ${rejectsArr.map((item, i) => `
+                  <tr class="border-b border-gray-100 hover:bg-amber-50 text-xs">
+                    <td class="py-2 px-3 text-gray-400 font-mono w-8">${i + 1}</td>
+                    <td class="py-2 px-3 font-mono whitespace-nowrap font-bold text-gray-700">${item.date}</td>
+                    <td class="py-2 px-3">
+                      <div class="font-bold text-gray-800">${esc(item.ord.phoneModel || '—')}</div>
+                      <div class="text-[10px] text-gray-400 font-mono">#${esc(item.ord.orderId || item.ord.id || '')}</div>
+                    </td>
+                    <td class="py-2 px-3 text-right font-black text-amber-700 whitespace-nowrap">${formatINR(item.inc)}</td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+        `;
+      }
+
+      if (pendingsArr.length > 0) {
+        sections += `
+          <div class="border-2 border-gray-300 rounded-xl overflow-hidden mb-2 opacity-80">
+            <div class="bg-gray-400 text-white p-2 flex justify-between items-center">
+              <span class="font-black text-xs uppercase tracking-wide">⏳ PENDING / RESCHEDULED — ${pendingsArr.length} · NOT COUNTED</span>
+              <span class="font-black text-sm">—</span>
+            </div>
+            <table class="w-full">
+              <tbody>
+                ${pendingsArr.map((item, i) => `
+                  <tr class="border-b border-gray-100 text-xs">
+                    <td class="py-2 px-3 text-gray-400 font-mono w-8">${i + 1}</td>
+                    <td class="py-2 px-3 font-mono whitespace-nowrap font-bold text-gray-700">${item.date}</td>
+                    <td class="py-2 px-3">
+                      <div class="font-bold text-gray-600">${esc(item.ord.phoneModel || '—')}</div>
+                      <div class="text-[10px] text-gray-400 font-mono">#${esc(item.ord.orderId || item.ord.id || '')}</div>
+                    </td>
+                    <td class="py-2 px-3 text-right text-gray-400">—</td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+        `;
+      }
+
+      if (!sections) {
+        sections = '<p class="text-center py-6 text-gray-400 text-sm">No transactions in this period</p>';
+      }
+
+      tableSectionHtml = `
+        <div class="mb-3">
+          <p class="text-xs font-bold text-gray-600 uppercase mb-2">📱 Transaction Details — Grouped by Type</p>
+          <div class="max-h-[400px] overflow-y-auto pr-1">
+            ${sections}
+          </div>
+        </div>
+      `;
+    } else {
+      tableSectionHtml = `
+        <div class="mb-3">
+          <p class="text-xs font-bold text-gray-600 uppercase mb-2">📊 Date-wise Summary</p>
+          <div class="max-h-[320px] overflow-y-auto border border-gray-200 rounded-xl">
+            <table class="w-full">
+              <thead class="bg-gray-50 sticky top-0 text-[10px] uppercase text-gray-600 font-bold">
+                <tr>
+                  <th class="py-2 px-2 text-left">Date</th>
+                  <th class="py-2 px-2 text-left">Attendance</th>
+                  <th class="py-2 px-2 text-center">Pickups</th>
+                  <th class="py-2 px-2 text-right">Pickup Inc.</th>
+                  <th class="py-2 px-2 text-center">Rejects</th>
+                  <th class="py-2 px-2 text-right">Reject Inc.</th>
+                  <th class="py-2 px-2 text-center">Pending</th>
+                  <th class="py-2 px-2 text-right">Day Total</th>
+                </tr>
+              </thead>
+              <tbody>${rowsHtml || '<tr><td colspan="8" class="text-center py-6 text-gray-400 text-sm">No data in range</td></tr>'}</tbody>
+            </table>
+          </div>
+        </div>
+      `;
+    }
+
+    const grandTotal = totalPickupInc + totalRejectInc;
+
+    const plainText = buildStatementPlainText({
+      username, uData, fromDate, toDate,
+      totalPickups, totalRejects, totalPending,
+      totalPickupInc, totalRejectInc, grandTotal,
+      showModelDetails, allOrders
+    });
+
+    Swal.close();
+
+    const modalResult = await Swal.fire({
+      title: '',
+      width: 1050,
+      html: `
+        <div class="text-left font-sans">
+          <!-- Header — NO mobile number -->
+          <div class="bg-gradient-to-r from-indigo-600 to-purple-600 text-white p-4 rounded-xl mb-4">
+            <div class="flex items-center justify-between flex-wrap gap-2">
+              <div>
+                <h2 class="text-lg font-bold flex items-center gap-2">📋 (FLIPKART) Rider Statement</h2>
+                <p class="text-base font-bold mt-1">${esc(uData.name || username)}</p>
+                <p class="text-[11px] opacity-90 font-mono">${esc(username)}</p>
+              </div>
+              <div class="text-right text-xs opacity-95">
+                <p class="uppercase font-bold tracking-wide opacity-80">Period</p>
+                <p class="font-bold mt-0.5">${formatDateHuman(fromDate)}</p>
+                <p class="font-bold text-[11px]">→ ${formatDateHuman(toDate)}</p>
+                <p class="text-[10px] mt-1 px-2 py-0.5 bg-white/20 rounded-full inline-block font-bold">
+                  ${showModelDetails ? '📱 Detailed View' : '📊 Summary View'}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <!-- Summary cards -->
+          <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-4">
+            <div class="bg-emerald-50 border border-emerald-200 p-3 rounded-xl text-center">
+              <div class="text-[10px] text-emerald-700 font-bold uppercase">Present</div>
+              <div class="text-xl font-black text-emerald-800 mt-1">${presentCount + halfDayCount}</div>
+              ${halfDayCount > 0 ? `<div class="text-[9px] text-gray-500 mt-0.5">incl. ${halfDayCount} half</div>` : ''}
+            </div>
+            <div class="bg-rose-50 border border-rose-200 p-3 rounded-xl text-center">
+              <div class="text-[10px] text-rose-700 font-bold uppercase">Absent</div>
+              <div class="text-xl font-black text-rose-800 mt-1">${absentCount}</div>
+            </div>
+            <div class="bg-blue-50 border border-blue-200 p-3 rounded-xl text-center">
+              <div class="text-[10px] text-blue-700 font-bold uppercase">Pickups</div>
+              <div class="text-xl font-black text-blue-800 mt-1">${totalPickups}</div>
+              <div class="text-[10px] text-blue-600 font-bold mt-0.5">${formatINR(totalPickupInc)}</div>
+            </div>
+            <div class="bg-amber-50 border border-amber-200 p-3 rounded-xl text-center">
+              <div class="text-[10px] text-amber-700 font-bold uppercase">Rejects</div>
+              <div class="text-xl font-black text-amber-800 mt-1">${totalRejects}</div>
+              <div class="text-[10px] text-amber-600 font-bold mt-0.5">${formatINR(totalRejectInc)}</div>
+            </div>
+          </div>
+
+          <!-- Calendar -->
+          <div class="mb-4">
+            <p class="text-xs font-bold text-gray-600 uppercase mb-2">📅 Attendance Calendar</p>
+            <div class="max-h-[240px] overflow-y-auto border border-gray-200 rounded-xl p-2 bg-white">
+              ${calendarCells || '<p class="text-center text-gray-400 py-4 text-sm">No dates in range</p>'}
+            </div>
+            <div class="flex flex-wrap gap-3 text-[10px] mt-2 text-gray-600 justify-center">
+              <span class="inline-flex items-center gap-1"><span class="w-3 h-3 bg-emerald-100 border border-emerald-300 rounded"></span> Present</span>
+              <span class="inline-flex items-center gap-1"><span class="w-3 h-3 bg-amber-100 border border-amber-300 rounded"></span> Half Day</span>
+              <span class="inline-flex items-center gap-1"><span class="w-3 h-3 bg-rose-100 border border-rose-300 rounded"></span> Absent</span>
+              <span class="inline-flex items-center gap-1"><span class="w-3 h-3 bg-gray-50 border border-gray-200 rounded"></span> Unmarked</span>
+            </div>
+          </div>
+
+          ${tableSectionHtml}
+
+          <!-- Grand total -->
+          <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
+            <div class="bg-indigo-50 border border-indigo-200 p-3 rounded-xl text-center">
+              <div class="text-[10px] text-indigo-700 font-bold uppercase">Pickup Incentive</div>
+              <div class="text-lg font-black text-indigo-800 mt-1">${formatINR(totalPickupInc)}</div>
+            </div>
+            <div class="bg-orange-50 border border-orange-200 p-3 rounded-xl text-center">
+              <div class="text-[10px] text-orange-700 font-bold uppercase">Reject Incentive</div>
+              <div class="text-lg font-black text-orange-800 mt-1">${formatINR(totalRejectInc)}</div>
+            </div>
+            <div class="bg-emerald-50 border-2 border-emerald-300 p-3 rounded-xl text-center">
+              <div class="text-[10px] text-emerald-700 font-bold uppercase">Grand Total</div>
+              <div class="text-lg font-black text-emerald-800 mt-1">${formatINR(grandTotal)}</div>
+            </div>
+          </div>
+        </div>
+      `,
+      showCancelButton: true,
+      showConfirmButton: true,
+      confirmButtonText: '📋 Copy Statement',
+      cancelButtonText: 'Close',
+      confirmButtonColor: '#4f46e5',
+      cancelButtonColor: '#64748b'
+    });
+
+    if (modalResult.isConfirmed) {
+      try {
+        await navigator.clipboard.writeText(plainText);
+        showToast('✅ Statement copied to clipboard!', 'success');
+      } catch (_) {
+        const ta = document.createElement('textarea');
+        ta.value = plainText;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        try { document.execCommand('copy'); showToast('✅ Statement copied!', 'success'); }
+        catch (e) { showToast('Copy failed — please select manually', 'error'); }
+        document.body.removeChild(ta);
+      }
+    }
+
+  } catch (e) {
+    Swal.close();
+    console.error('Statement error:', e);
+    showToast('Failed to generate statement', 'error');
+  }
+}
+
+// ----------------------------------------------------------------
+// Plain text builder — NO mobile, model details if YES
+// ----------------------------------------------------------------
+function buildStatementPlainText(p) {
+  const thick = '════════════════════════════════════════';
+  const thin  = '────────────────────────────────────────';
+  const L = [];
+
+  L.push(thick);
+  L.push('📋 (FLIPKART) RIDER STATEMENT');
+  L.push(thick);
+  L.push('');
+  L.push(`👤 Rider      : ${p.uData.name || p.username}`);
+  L.push(`🆔 Username   : ${p.username}`);
+  L.push(`📅 Period     : ${formatDateHuman(p.fromDate)} → ${formatDateHuman(p.toDate)}`);
+  L.push('');
+  L.push(thin);
+  L.push('📦 WORK SUMMARY');
+  L.push(thin);
+  L.push(`✅ Total Pickups : ${p.totalPickups}`);
+  L.push(`❌ Total Rejects : ${p.totalRejects}`);
+  L.push(`⏳ Total Pending : ${p.totalPending}`);
+  L.push('');
+
+  if (p.showModelDetails && p.allOrders && p.allOrders.length) {
+    const pickupsArr  = p.allOrders.filter(x => x.type === 'pickup').sort((a,b) => a.date.localeCompare(b.date));
+    const rejectsArr  = p.allOrders.filter(x => x.type === 'reject').sort((a,b) => a.date.localeCompare(b.date));
+    const pendingsArr = p.allOrders.filter(x => x.type === 'pending').sort((a,b) => a.date.localeCompare(b.date));
+
+    if (pickupsArr.length > 0) {
+      L.push(thin);
+      L.push(`✅ PICKUP TRANSACTIONS (${pickupsArr.length})`);
+      L.push(thin);
+      pickupsArr.forEach((item, i) => {
+        const model = item.ord.phoneModel || '(no model)';
+        const ordId = item.ord.orderId || item.ord.id || '—';
+        L.push(`${String(i + 1).padStart(2, '0')}. ${formatDateHuman(item.date)}`);
+        L.push(`    📱 Model : ${model}`);
+        L.push(`    🔖 Order : ${ordId}`);
+        L.push(`    💰 Amount: ${formatINR(item.inc)}`);
+      });
+      const sub = pickupsArr.reduce((s, x) => s + (x.inc || 0), 0);
+      L.push('');
+      L.push(`   ➜ Pickup Subtotal: ${formatINR(sub)}`);
+      L.push('');
+    }
+
+    if (rejectsArr.length > 0) {
+      L.push(thin);
+      L.push(`❌ REJECT TRANSACTIONS (${rejectsArr.length})`);
+      L.push(thin);
+      rejectsArr.forEach((item, i) => {
+        const model = item.ord.phoneModel || '(no model)';
+        const ordId = item.ord.orderId || item.ord.id || '—';
+        L.push(`${String(i + 1).padStart(2, '0')}. ${formatDateHuman(item.date)}`);
+        L.push(`    📱 Model : ${model}`);
+        L.push(`    🔖 Order : ${ordId}`);
+        L.push(`    💰 Amount: ${formatINR(item.inc)}`);
+      });
+      const sub = rejectsArr.reduce((s, x) => s + (x.inc || 0), 0);
+      L.push('');
+      L.push(`   ➜ Reject Subtotal: ${formatINR(sub)}`);
+      L.push('');
+    }
+
+    if (pendingsArr.length > 0) {
+      L.push(thin);
+      L.push(`⏳ PENDING / RESCHEDULED (${pendingsArr.length}) — Not Counted`);
+      L.push(thin);
+      pendingsArr.forEach((item, i) => {
+        const model = item.ord.phoneModel || '(no model)';
+        const ordId = item.ord.orderId || item.ord.id || '—';
+        L.push(`${String(i + 1).padStart(2, '0')}. ${formatDateHuman(item.date)}`);
+        L.push(`    📱 Model : ${model}`);
+        L.push(`    🔖 Order : ${ordId}`);
+      });
+      L.push('');
+    }
+  }
+
+  L.push(thick);
+  L.push('💰 EARNINGS SUMMARY');
+  L.push(thick);
+  L.push(`📦 Pickup Incentive : ${formatINR(p.totalPickupInc)}`);
+  L.push(`❌ Reject Incentive : ${formatINR(p.totalRejectInc)}`);
+  L.push(thin);
+  L.push(`💵 GRAND TOTAL      : ${formatINR(p.grandTotal)}`);
+  L.push(thick);
+  L.push('');
+  L.push(`🕒 Generated: ${new Date().toLocaleString('en-IN')}`);
+
+  return L.join('\n');
+}
