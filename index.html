@@ -7,38 +7,19 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
     <meta name="theme-color" content="#0f172a" />
-    <title>Cashify Admin · Operations Portal</title>
+    <title>Admin · Flipkart</title>
 <!-- ============ 1.1: External Libraries ============ -->
 <script src="https://cdn.tailwindcss.com"></script>
 <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-app.js"></script>
 <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-database.js"></script>
-<script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-storage.js"></script>
+<script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-storage.js"></script>   <!-- 🔥 NEW -->
 <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 <script src="https://unpkg.com/lucide@latest"></script>
 <script src="https://cdn.jsdelivr.net/npm/fuse.js@7.0.0"></script>
 
     <!-- ============ 1.2: All CSS Styles ============ -->
     <style>
-        /* ===== ORIGINAL STYLES ===== */
-        :root {
-            --cashify-primary: #12CAA7;
-            --cashify-primary-dark: #0FA88B;
-            --cashify-primary-light: #E6FAF6;
-            --cashify-accent: #0F172A;
-        }
-        .text-cashify { color: #12CAA7; }
-        .bg-cashify { background-color: #12CAA7; }
-        .border-cashify { border-color: #12CAA7; }
-        .sidebar-link.active { background: #E6FAF6 !important; color: #0FA88B !important; border-left-color: #12CAA7 !important; }
-        .sidebar-link:hover { background: #f8fafc; color: #0f172a; }
-        .stat-card { border-radius: 16px; border: 1px solid #e2e8f0; background: #ffffff; transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1); }
-        .stat-card:hover { transform: translateY(-2px); box-shadow: 0 12px 24px -10px rgba(18, 202, 167, 0.15); border-color: #cbd5e1; }
-        .badge-status.pickup { background: #d1fae5; color: #065f46; border: 1px solid #a7f3d0; }
-        .badge-status.rejected { background: #fee2e2; color: #991b1b; border: 1px solid #fecaca; }
-        .badge-status.reschedule { background: #fef3c7; color: #92400e; border: 1px solid #fde68a; }
-        .badge-status.sold { background: #e0f2fe; color: #0369a1; border: 1px solid #bae6fd; }
-        .badge-status.pending { background: #f1f5f9; color: #475569; border: 1px solid #e2e8f0; }
-
+        /* ===== ORIGINAL STYLES (unchanged) ===== */
         * { -webkit-tap-highlight-color: transparent; }
         body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f1f5f9; min-height: 100vh; overscroll-behavior: none; }
         .glass { background: rgba(255,255,255,0.8); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); }
@@ -175,7 +156,8 @@
         .attendance-present { color: #059669; font-weight: 700; }
         .attendance-absent { color: #dc2626; font-weight: 700; }
         .attendance-blocked { color: #d97706; font-weight: 700; }
-        .salary-summary-card { border-left: 4px solid #4f46e5; }
+        .salary-summary-card { border-left: 4px solid #4f46e5; transition: box-shadow 0.25s ease, transform 0.25s ease; }
+        .salary-summary-card:hover { box-shadow: 0 12px 40px -12px rgba(79,70,229,0.18); transform: translateY(-1px); }
         .attendance-card { transition: all 0.2s; }
         .attendance-card:hover { background: #f8fafc; }
         .otp-display { font-size: 24px; font-weight: 700; letter-spacing: 4px; color: #4f46e5; }
@@ -190,7 +172,7 @@
         .role-selector input[type="radio"] { width: 16px; height: 16px; accent-color: #4f46e5; cursor: pointer; }
         .admin-fields-hidden { display: none !important; }
         .promote-btn-wrap { display: inline-flex; gap: 4px; align-items: center; flex-wrap: wrap; }
-        .salary-toggle-btn { padding: 6px 16px; border: 1px solid #d1d5db; background: #fff; color: #374151; font-weight: 600; font-size: 13px; cursor: pointer; transition: all 0.2s; }
+        .salary-toggle-btn { padding: 6px 16px; border: 1px solid #d1d5db; background: #fff; color: #374151; font-weight: 600; font-size: 13px; cursor: pointer; transition: all 0.2s; white-space: nowrap; }
         .salary-toggle-btn.active { background: #4f46e5; color: #fff; border-color: #4f46e5; }
         .salary-toggle-btn:first-child { border-radius: 8px 0 0 8px; }
         .salary-toggle-btn:last-child { border-radius: 0 8px 8px 0; }
@@ -567,6 +549,9 @@
         /* ===== SWEETALERT Z-INDEX FIX ===== */
         .swal2-container { z-index: 99999 !important; }
 
+        /* ===== TABLE WRAP FOR MOBILE ===== */
+        .table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+
         /* ===== IMEI OVERRIDE BUTTON ===== */
         .imei-allow-btn {
             font-size: 10px;
@@ -589,247 +574,122 @@
         .imei-wrap { display: flex; align-items: center; gap: 4px; }
         .imei-wrap input { flex: 1; }
 
-        /* ===== 🆕 DEPOSIT ACCOUNT SELECTOR ===== */
-        .deposit-account-btn {
-            display: flex;
+        /* ===== 🆕 PREMIUM SALARY CARD STYLES ===== */
+        .salary-pulse-ring {
+            animation: salaryPulse 2.4s cubic-bezier(0.215,0.61,0.355,1) infinite;
+        }
+        @keyframes salaryPulse {
+            0% { box-shadow: 0 0 0 0 rgba(5,150,105,0.55); }
+            70% { box-shadow: 0 0 0 10px rgba(5,150,105,0); }
+            100% { box-shadow: 0 0 0 0 rgba(5,150,105,0); }
+        }
+        .cycle-chip {
+            display: inline-flex;
             align-items: center;
-            gap: 12px;
+            gap: 6px;
+            padding: 6px 12px;
+            border-radius: 999px;
+            background: linear-gradient(135deg, #eef2ff, #e0e7ff);
+            border: 1px solid #c7d2fe;
+            color: #3730a3;
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 0.2px;
+        }
+        .excluded-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            padding: 2px 8px;
+            border-radius: 999px;
+            background: #fef3c7;
+            border: 1px solid #fde68a;
+            color: #92400e;
+            font-size: 9px;
+            font-weight: 800;
+            letter-spacing: 0.4px;
+            text-transform: uppercase;
+        }
+        .salary-stat {
             padding: 12px 14px;
             border-radius: 14px;
-            border: 2px solid #e2e8f0;
+            border: 1px solid #e2e8f0;
             background: #fff;
-            cursor: pointer;
-            transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-            text-align: left;
-            color: #475569;
+            transition: all 0.2s;
         }
-        .deposit-account-btn:hover { border-color: #cbd5e1; transform: translateY(-1px); box-shadow: 0 4px 12px rgba(0,0,0,0.04); }
-        .deposit-account-btn:active { transform: scale(0.98); }
-        .deposit-account-btn.active[data-account="commission"] {
-            border-color: #f59e0b;
-            background: linear-gradient(135deg, #fffbeb, #fef3c7);
-            color: #92400e;
-            box-shadow: 0 6px 16px rgba(245, 158, 11, 0.22);
+        .salary-stat:hover { border-color: #cbd5e1; }
+        .salary-stat .lbl {
+            font-size: 10px;
+            font-weight: 800;
+            letter-spacing: 0.5px;
+            text-transform: uppercase;
+            color: #94a3b8;
         }
-        .deposit-account-btn.active[data-account="wallet"] {
-            border-color: #10b981;
+        .salary-stat .amt {
+            font-size: 18px;
+            font-weight: 800;
+            margin-top: 4px;
+            letter-spacing: -0.3px;
+        }
+        .salary-stat.grand {
             background: linear-gradient(135deg, #ecfdf5, #d1fae5);
-            color: #065f46;
-            box-shadow: 0 6px 16px rgba(16, 185, 129, 0.22);
+            border: 2px solid #10b981;
         }
-
-        /* ================================================================ */
-        /* 📱 MOBILE RESPONSIVENESS — SAFE, NON-BREAKING OVERRIDES           */
-        /* Desktop UI completely untouched — only @media max-width 640px     */
-        /* ================================================================ */
-        @media (max-width: 640px) {
-            /* Main content padding — breathing room */
-            main { padding-left: 0.75rem !important; padding-right: 0.75rem !important; }
-
-            /* ===== SweetAlert Modals — Force fit on mobile ===== */
-            .swal2-popup {
-                width: 94vw !important;
-                max-width: 94vw !important;
-                padding: 0.75rem !important;
-                border-radius: 14px !important;
-            }
-            .swal2-title {
-                font-size: 1rem !important;
-                padding: 0.5rem 0.5rem 0.25rem !important;
-                line-height: 1.3 !important;
-            }
-            .swal2-html-container {
-                font-size: 0.8rem !important;
-                margin: 0.25rem 0 !important;
-                padding: 0 !important;
-                overflow-x: hidden !important;
-            }
-            .swal2-close {
-                font-size: 1.6rem !important;
-                top: 0.2rem !important;
-                right: 0.2rem !important;
-            }
-
-            /* Tables inside Swal — smaller text, tight padding */
-            .swal2-html-container table { font-size: 10px !important; }
-            .swal2-html-container th,
-            .swal2-html-container td { padding: 5px 4px !important; }
-
-            /* Force all internal scrollable containers to shorter height */
-            .swal2-html-container [class*="max-h-"] {
-                max-height: 50vh !important;
-            }
-
-            /* Swal buttons — responsive stacking */
-            .swal2-actions {
-                padding: 0.5rem 0 !important;
-                gap: 6px !important;
-                flex-wrap: wrap !important;
-            }
-            .swal2-actions button {
-                flex: 1 1 auto !important;
-                min-width: 90px !important;
-                font-size: 12px !important;
-                padding: 8px 10px !important;
-                margin: 0 !important;
-            }
-
-            /* ===== Calendar (Statement Picker) — compact tiles ===== */
-            .stmt-day-tile {
-                min-height: 30px !important;
-                padding: 1px !important;
-                font-size: 9px !important;
-            }
-            .stmt-day-tile > div:first-child { font-size: 10px !important; }
-            .stmt-day-tile > div:nth-child(2) { font-size: 8px !important; }
-
-            /* ===== Salary Summary Cards — mobile stacking ===== */
-            .salary-summary-card { padding: 0.75rem !important; }
-            .salary-summary-card .grid-cols-4,
-            .salary-summary-card .sm\\:grid-cols-4 {
-                grid-template-columns: repeat(2, 1fr) !important;
-                gap: 6px !important;
-            }
-
-            /* ===== Global Salary Stats — 2 columns ===== */
-            .salary-global-stats {
-                grid-template-columns: repeat(2, 1fr) !important;
-                gap: 6px !important;
-            }
-            .salary-global-stats .stat-box { padding: 8px 6px !important; }
-            .salary-global-stats .stat-box .num { font-size: 16px !important; }
-            .salary-global-stats .stat-box .label { font-size: 9px !important; }
-
-            /* ===== Deposit Stats — 2 columns ===== */
-            .deposit-stats {
-                grid-template-columns: repeat(2, 1fr) !important;
-                gap: 6px !important;
-            }
-            .deposit-stats .stat-box { padding: 8px 6px !important; }
-            .deposit-stats .stat-box .num { font-size: 16px !important; }
-            .deposit-stats .stat-box .label { font-size: 9px !important; }
-
-            /* ===== Detail Grid — single column on mobile ===== */
-            .detail-grid { grid-template-columns: 1fr !important; }
-            #detailContent { padding: 0.75rem !important; }
-            #detailContent .detail-item { padding: 8px 10px !important; }
-
-            /* ===== Tables (main pages) — horizontal scroll ===== */
-            .table-wrap {
-                overflow-x: auto !important;
-                -webkit-overflow-scrolling: touch !important;
-            }
-            .table-wrap table { min-width: 640px; }
-            .table-wrap th,
-            .table-wrap td {
-                padding: 8px 8px !important;
-                font-size: 11px !important;
-            }
-
-            /* ===== Filter chips — tighter ===== */
-            .filter-chip {
-                padding: 3px 10px !important;
-                font-size: 11px !important;
-            }
-
-            /* ===== Buttons — compact ===== */
-            .btn-action {
-                padding: 5px 9px !important;
-                font-size: 11px !important;
-            }
-            .btn-action i { width: 14px !important; height: 14px !important; }
-
-            /* ===== Modal bottom action bars (Order Detail) ===== */
-            #detailActions, #detailSaveActions {
-                padding: 0.6rem !important;
-                gap: 6px !important;
-                flex-wrap: wrap !important;
-            }
-            #detailActions button, #detailSaveActions button {
-                flex: 1 1 auto !important;
-                min-width: 80px !important;
-                font-size: 11px !important;
-                padding: 8px 8px !important;
-            }
-
-            /* ===== Salary toggle (Today / Since Join / Date / Current Cycle) ===== */
-            .salary-toggle-btn {
-                padding: 5px 8px !important;
-                font-size: 10.5px !important;
-                white-space: nowrap !important;
-            }
-
-            /* ===== Headings — tighter ===== */
-            h2.text-2xl { font-size: 1.25rem !important; line-height: 1.3 !important; }
-            h2.text-xl  { font-size: 1.05rem !important; }
-            .text-xl    { font-size: 1.05rem !important; }
-            .text-lg    { font-size: 0.98rem !important; }
-
-            /* ===== Sidebar — max-width safety ===== */
-            .sidebar { max-width: 280px !important; }
-
-            /* ===== Live search dropdown ===== */
-            .live-search-dropdown { max-height: 200px !important; }
-            .live-search-dropdown .dropdown-item {
-                padding: 0.5rem 0.75rem !important;
-                flex-wrap: wrap !important;
-                gap: 4px !important;
-            }
-
-            /* ===== Form inputs — readable font ===== */
-            .edit-field, .status-select,
-            .agent-form input, .agent-form select,
-            .deposit-form input, .deposit-form textarea,
-            .sell-modal input {
-                font-size: 14px !important;
-                padding: 8px 10px !important;
-            }
-
-            /* ===== Balance card amounts — reduce from text-3xl ===== */
-            #commissionBalanceCoins,
-            #walletBalance {
-                font-size: 1.5rem !important;
-            }
-
-            /* ===== Deposit dual-account selector — full stack on tiny ===== */
-            #depositAccountToggle { gap: 6px !important; }
-            .deposit-account-btn {
-                padding: 10px 10px !important;
-                gap: 8px !important;
-            }
-            .deposit-account-btn .text-2xl { font-size: 1.25rem !important; }
-
-            /* ===== Date-range filter groups — wrap nicely ===== */
-            .flex.flex-wrap.items-center.gap-2 input[type="date"] {
-                flex: 1 1 45% !important;
-                min-width: 120px !important;
-            }
-
-            /* ===== Prevent any accidental overflow ===== */
-            .glass, .stat-card, .salary-summary-card {
-                overflow-wrap: break-word !important;
-                word-break: break-word !important;
-            }
+        .salary-stat.grand .amt { color: #065f46; font-size: 22px; }
+        .salary-action-btn {
+            padding: 10px 16px;
+            border-radius: 12px;
+            font-size: 13px;
+            font-weight: 700;
+            border: none;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
         }
-
-        /* ===== Very narrow screens (iPhone SE, small Androids) ===== */
-        @media (max-width: 400px) {
-            .salary-global-stats { grid-template-columns: 1fr !important; }
-            .deposit-stats { grid-template-columns: 1fr !important; }
-
-            .salary-toggle-btn {
-                font-size: 10px !important;
-                padding: 4px 7px !important;
-            }
-
-            .swal2-popup {
-                width: 96vw !important;
-                max-width: 96vw !important;
-                padding: 0.6rem !important;
-            }
-            .swal2-title { font-size: 0.95rem !important; }
-
-            h2.text-2xl { font-size: 1.1rem !important; }
+        .salary-action-btn:active { transform: scale(0.96); }
+        .salary-action-btn.pay {
+            background: linear-gradient(135deg, #059669, #10b981);
+            color: #fff;
+            box-shadow: 0 6px 20px -6px rgba(5,150,105,0.55);
+        }
+        .salary-action-btn.pay:hover { box-shadow: 0 8px 28px -6px rgba(5,150,105,0.7); }
+        .salary-action-btn.history {
+            background: #eef2ff;
+            color: #3730a3;
+            border: 1px solid #c7d2fe;
+        }
+        .salary-action-btn.history:hover { background: #e0e7ff; }
+        .salary-action-btn.ghost {
+            background: #f8fafc;
+            color: #475569;
+            border: 1px solid #e2e8f0;
+        }
+        .salary-action-btn.ghost:hover { background: #f1f5f9; }
+        .status-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 5px 12px;
+            border-radius: 999px;
+            font-size: 10px;
+            font-weight: 800;
+            letter-spacing: 0.4px;
+        }
+        .status-pill.unpaid { background: #fee2e2; color: #991b1b; }
+        .status-pill.partial { background: #fef3c7; color: #92400e; }
+        .status-pill.paid { background: #d1fae5; color: #065f46; }
+        .pending-box {
+            padding: 12px 14px;
+            border-radius: 14px;
+            border: 1px dashed #fecaca;
+            background: #fff1f2;
+        }
+        .pending-box.settled {
+            border-style: solid;
+            border-color: #a7f3d0;
+            background: #ecfdf5;
         }
     </style>
 </head>
@@ -858,7 +718,7 @@
             </div>
             <div>
                 <h1 class="text-sm font-bold text-gray-800">Admin Panel</h1>
-                <p class="text-[10px] text-gray-400 font-medium">Cashify</p>
+                <p class="text-[10px] text-gray-400 font-medium">Flipkart</p>
             </div>
         </div>
 
@@ -1032,7 +892,7 @@
                         </div>
                         <div>
                             <p class="text-2xl font-bold text-gray-800" id="statRevenue">₹0</p>
-                            <p class="text-xs text-gray-500 font-medium">Revenue</p>
+                            <p class="text-xs text-gray-500 font-medium">Revenue (After Commission)</p>
                         </div>
                     </div>
                 </div>
@@ -1265,7 +1125,7 @@
             <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
                 <div>
                     <h2 class="text-2xl font-bold text-gray-800">Inventory</h2>
-                    <p class="text-sm text-gray-500">All phones available for sale — Coins shown based on purchase</p>
+                    <p class="text-sm text-gray-500">All phones available for sale — Commission shown based on purchase price</p>
                 </div>
                 <div class="flex items-center gap-2">
                     <span class="text-sm font-semibold text-gray-600" id="inventoryCount">0 units</span>
@@ -1296,7 +1156,7 @@
                                 <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">Model</th>
                                 <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase hidden md:table-cell">IMEI</th>
                                 <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">Purchase Price</th>
-                                <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">Coins</th>
+                                <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">Commission</th>
                                 <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase hidden lg:table-cell">Customer</th>
                                 <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">Actions</th>
                             </tr>
@@ -1378,7 +1238,7 @@
                                 <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase hidden md:table-cell">IMEI</th>
                                 <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">Purchase</th>
                                 <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">Sale Price</th>
-                                <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">Coins</th>
+                                <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">Commission</th>
                                 <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">Gross Profit</th>
                                 <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">Overhead/Phone</th>
                                 <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">Final Net Profit</th>
@@ -1396,13 +1256,13 @@
         </div>
 
         <!-- ============================================================ -->
-        <!-- SECTION 11: DEPOSITS PAGE — 🪙 Commission + 💼 Wallet         -->
+        <!-- SECTION 11: DEPOSITS PAGE                                    -->
         <!-- ============================================================ -->
         <div id="page-deposits" class="page-content fade-in" style="display:none;">
             <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
                 <div>
                     <h2 class="text-2xl font-bold text-gray-800">Deposits</h2>
-                    <p class="text-sm text-gray-500">Commission (Coins) & Wallet (₹) — separate ledgers</p>
+                    <p class="text-sm text-gray-500">Track your deposits & commission</p>
                 </div>
                 <div class="flex items-center gap-2">
                     <button onclick="exportDepositsCSV()" class="btn-action export"><i data-lucide="download"></i> Export CSV</button>
@@ -1410,135 +1270,48 @@
                 </div>
             </div>
 
-            <!-- 🪙💼 Dual Account Balance Cards -->
-            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
-                <!-- Commission Account -->
-                <div class="glass rounded-2xl p-5 shadow-sm border border-amber-200" style="background:linear-gradient(135deg,#fffbeb 0%,#fef3c7 100%);">
-                    <div class="flex items-center justify-between mb-2">
-                        <div class="flex items-center gap-2">
-                            <div class="w-10 h-10 rounded-xl flex items-center justify-center shadow-sm" style="background:linear-gradient(135deg,#f59e0b,#ea580c);">
-                                <span class="text-white text-xl">🪙</span>
-                            </div>
-                            <div>
-                                <h3 class="text-sm font-bold text-gray-800">Commission Account</h3>
-                                <p class="text-[10px] text-amber-700 font-bold uppercase tracking-wide">Coins Ledger</p>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="flex items-baseline gap-2 mt-3">
-                        <span class="text-3xl font-bold text-amber-900" id="commissionBalanceCoins">0</span>
-                        <span class="text-sm font-semibold text-amber-700">Coins</span>
-                    </div>
-                    <div class="text-xs text-amber-800 mt-1">
-                        ≈ <span class="font-bold" id="commissionBalanceValue">₹0</span>
-                        <span class="text-[10px] text-amber-600 font-medium">(@ ₹12.50/coin)</span>
-                    </div>
-                    <div class="text-[11px] text-gray-600 mt-3 flex items-center justify-between border-t border-amber-200 pt-2">
-                        <span><strong class="text-amber-900" id="commissionEntryCount">0</strong> entries</span>
-                        <span>Last: <span class="font-semibold" id="commissionLastDate">—</span></span>
-                    </div>
-                </div>
-
-                <!-- Wallet Account -->
-                <div class="glass rounded-2xl p-5 shadow-sm border border-emerald-200" style="background:linear-gradient(135deg,#ecfdf5 0%,#d1fae5 100%);">
-                    <div class="flex items-center justify-between mb-2">
-                        <div class="flex items-center gap-2">
-                            <div class="w-10 h-10 rounded-xl flex items-center justify-center shadow-sm" style="background:linear-gradient(135deg,#10b981,#059669);">
-                                <span class="text-white text-xl">💼</span>
-                            </div>
-                            <div>
-                                <h3 class="text-sm font-bold text-gray-800">Wallet Account</h3>
-                                <p class="text-[10px] text-emerald-700 font-bold uppercase tracking-wide">Cash Ledger (₹)</p>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="flex items-baseline gap-2 mt-3">
-                        <span class="text-3xl font-bold text-emerald-900" id="walletBalance">₹0</span>
-                    </div>
-                    <div class="text-xs text-emerald-800 mt-1">Direct cash deposits</div>
-                    <div class="text-[11px] text-gray-600 mt-3 flex items-center justify-between border-t border-emerald-200 pt-2">
-                        <span><strong class="text-emerald-900" id="walletEntryCount">0</strong> entries</span>
-                        <span>Last: <span class="font-semibold" id="walletLastDate">—</span></span>
-                    </div>
-                </div>
+            <!-- ===== 11.1: Deposit Stats ===== -->
+            <div class="deposit-stats" id="depositStats">
+                <div class="stat-box"><div class="num green" id="depositTotal">₹0</div><div class="label">Total Deposits</div></div>
+                <div class="stat-box"><div class="num blue" id="depositStockValue">₹0</div><div class="label">Stock Value</div></div>
+                <div class="stat-box"><div class="num amber" id="depositBalance">₹0</div><div class="label">Balance</div></div>
+                <div class="stat-box"><div class="num red" id="depositCommission">₹0</div><div class="label">Total Commission</div></div>
+                <div class="stat-box"><div class="num" id="depositCount">0</div><div class="label">Total Entries</div></div>
             </div>
 
-            <!-- Add Deposit Form -->
+            <!-- ===== 11.2: Add Deposit Form ===== -->
             <div class="glass rounded-2xl p-5 shadow-sm border border-gray-100 mb-6">
                 <h3 class="font-bold text-gray-800 mb-4 flex items-center gap-2">
                     <i data-lucide="plus-circle" class="w-5 h-5 text-emerald-600"></i>
                     Add Deposit
                 </h3>
-
-                <!-- Account Type Selector -->
-                <div class="mb-5">
-                    <label class="block text-xs font-bold text-gray-600 mb-2 uppercase tracking-wide">Account Type *</label>
-                    <div class="grid grid-cols-2 gap-3" id="depositAccountToggle">
-                        <button type="button" onclick="selectDepositAccount('commission')" id="depositAccCommission"
-                            class="deposit-account-btn active" data-account="commission">
-                            <span class="text-2xl">🪙</span>
-                            <div class="text-left">
-                                <div class="font-bold text-sm">Commission</div>
-                                <div class="text-[10px] opacity-80">Coins Ledger</div>
-                            </div>
-                        </button>
-                        <button type="button" onclick="selectDepositAccount('wallet')" id="depositAccWallet"
-                            class="deposit-account-btn" data-account="wallet">
-                            <span class="text-2xl">💼</span>
-                            <div class="text-left">
-                                <div class="font-bold text-sm">Wallet</div>
-                                <div class="text-[10px] opacity-80">Cash in ₹</div>
-                            </div>
-                        </button>
-                    </div>
-                    <input type="hidden" id="depositAccount" value="commission" />
-                </div>
-
                 <form id="depositForm" class="deposit-form grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <!-- Amount (adapts to account type) -->
-                    <div class="field-group" id="depositAmountWrapper">
-                        <label id="depositAmountLabel">Coins <span class="text-red-500">*</span></label>
-                        <input type="number" id="depositAmount" placeholder="Enter coins quantity" step="1" min="1" required />
-                        <div id="depositAmountHint" class="text-[11px] text-amber-700 mt-1 flex items-center gap-1">
-                            <span>🪙</span>
-                            <span>Coins only. Value auto-converted at ₹12.50/coin.</span>
-                        </div>
-                        <div id="depositLivePreview" class="text-[11px] text-gray-700 mt-1">
-                            Live value: <span id="depositLivePreviewValue" class="font-bold text-amber-700">₹0</span>
-                        </div>
+                    <div class="field-group">
+                        <label>Amount (₹) <span class="text-red-500">*</span></label>
+                        <input type="number" id="depositAmount" placeholder="Enter amount" step="1" min="1" required />
                     </div>
-
                     <div class="field-group">
                         <label>Date</label>
                         <input type="date" id="depositDate" />
                     </div>
-
                     <div class="field-group sm:col-span-2">
                         <label>Description</label>
                         <textarea id="depositDescription" placeholder="What is this deposit for? (optional)" rows="2"></textarea>
                     </div>
-
-                    <div class="sm:col-span-2 flex flex-col sm:flex-row gap-2">
-                        <button type="submit" class="btn-submit flex-1" onclick="submitDeposit(event)">
+                    <div class="sm:col-span-2">
+                        <button type="submit" class="btn-submit" onclick="submitDeposit(event)">
                             <i data-lucide="plus" class="w-4 h-4 inline mr-2"></i> Add Deposit
-                        </button>
-                        <button type="button" onclick="resetDepositForm()" class="px-5 py-3 rounded-xl bg-gray-100 text-gray-700 font-semibold hover:bg-gray-200 transition">
-                            Reset
                         </button>
                     </div>
                 </form>
             </div>
 
-            <!-- Deposits History (with account filter) -->
+            <!-- ===== 11.3: Deposits Table ===== -->
             <div class="glass rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
                 <div class="p-4 border-b border-gray-100">
                     <div class="flex flex-wrap items-center gap-2">
-                        <span class="text-xs font-bold text-gray-500 mr-1">Account:</span>
-                        <button class="filter-chip active" data-acc-filter="all" onclick="setDepositAccountFilter('all')">All</button>
-                        <button class="filter-chip" data-acc-filter="commission" onclick="setDepositAccountFilter('commission')">🪙 Commission</button>
-                        <button class="filter-chip" data-acc-filter="wallet" onclick="setDepositAccountFilter('wallet')">💼 Wallet</button>
-
-                        <span class="text-xs font-bold text-gray-500 ml-3 mr-1">Date:</span>
+                        <span class="text-xs font-bold text-gray-500 mr-1">Filter:</span>
+                        <button class="filter-chip active" data-filter="all" onclick="setDepositFilter('all')">All</button>
                         <input type="date" id="depositDateFrom" class="px-4 py-2 border border-gray-200 rounded-xl text-sm outline-none focus:border-indigo-400" />
                         <span class="text-xs text-gray-400">to</span>
                         <input type="date" id="depositDateTo" class="px-4 py-2 border border-gray-200 rounded-xl text-sm outline-none focus:border-indigo-400" />
@@ -1551,7 +1324,6 @@
                         <thead>
                             <tr class="bg-gray-50 border-b border-gray-100">
                                 <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">#</th>
-                                <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">Account</th>
                                 <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">Amount</th>
                                 <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">Description</th>
                                 <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase hidden sm:table-cell">Date</th>
@@ -1560,7 +1332,7 @@
                             </tr>
                         </thead>
                         <tbody id="depositsTableBody">
-                            <tr><td colspan="7"><div class="empty-state"><i data-lucide="inbox"></i><p class="text-sm font-medium">No deposits yet</p></div></td></tr>
+                            <tr><td colspan="6"><div class="empty-state"><i data-lucide="inbox"></i><p class="text-sm font-medium">No deposits yet</p></div></td></tr>
                         </tbody>
                     </table>
                 </div>
@@ -1611,7 +1383,7 @@
         </div>
 
         <!-- ============================================================ -->
-        <!-- SECTION 13: SALARY PAGE                                      -->
+        <!-- SECTION 13: SALARY PAGE (Premium Upgrade)                   -->
         <!-- ============================================================ -->
         <div id="page-salary" class="page-content fade-in" style="display:none;">
             <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
@@ -1624,6 +1396,7 @@
                         <button id="salaryModeToday" class="salary-toggle-btn active" onclick="setSalaryMode('today')">Today</button>
                         <button id="salaryModeSinceJoin" class="salary-toggle-btn" onclick="setSalaryMode('since_join')">Since Join</button>
                         <button id="salaryModeDate" class="salary-toggle-btn" onclick="setSalaryMode('date')">Date</button>
+                        <button id="salaryModeCurrentCycle" class="salary-toggle-btn" onclick="setSalaryMode('current_cycle')">Current Cycle</button>
                     </div>
                     <div id="salaryDateWrapper" style="display:none;">
                         <input type="date" id="salaryDate" class="px-4 py-2 border border-gray-200 rounded-xl text-sm outline-none focus:border-indigo-400" />
@@ -1638,7 +1411,7 @@
                 <div class="stat-box"><div class="num green" id="globalPickups">0</div><div class="label">Total Pickups</div></div>
                 <div class="stat-box"><div class="num red" id="globalRejects">0</div><div class="label">Total Rejects</div></div>
                 <div class="stat-box"><div class="num amber" id="globalPending">0</div><div class="label">Total Pending</div></div>
-                <div class="stat-box"><div class="num purple" id="globalEarnings">₹0</div><div class="label">Grand Earnings</div></div>
+                <div class="stat-box"><div class="num purple" id="globalEarnings">₹0</div><div class="label">Grand Total (All Agents)</div></div>
             </div>
 
             <!-- ===== 13.2: Salary Container ===== -->
@@ -1751,136 +1524,136 @@
           </div>
       </div>
 
-      <!-- ================================================================ -->
-      <!-- SECTION 15: GLOBAL SEARCH MODAL                                  -->
-      <!-- ================================================================ -->
-      <div id="globalSearchModal">
-          <div class="modal-box">
-              <div class="modal-header">
-                  <h3>
-                      <i data-lucide="search" class="w-5 h-5 text-indigo-600"></i>
-                      Smart Search
-                      <span class="text-xs font-normal text-gray-400 font-mono ml-1">⌘K</span>
-                  </h3>
-                  <button class="close-btn" onclick="closeGlobalSearch()" aria-label="Close search">
-                      <i data-lucide="x" class="w-5 h-5"></i>
-                  </button>
-              </div>
-              <div class="search-input-wrap">
-                  <i data-lucide="search" class="w-4 h-4"></i>
-                  <input type="text" id="globalSearchModalInput" placeholder="Search orders, inventory, sales, agents…" autofocus />
-              </div>
-              <div class="results-container" id="globalSearchModalResults">
-                  <div class="empty-state">
-                      <i data-lucide="inbox"></i>
-                      <p class="text-sm font-medium">Type to start searching across all modules</p>
-                  </div>
-              </div>
-          </div>
-      </div>
+<!-- ================================================================ -->
+<!-- SECTION 15: GLOBAL SEARCH MODAL                                  -->
+<!-- ================================================================ -->
+<div id="globalSearchModal">
+    <div class="modal-box">
+        <div class="modal-header">
+            <h3>
+                <i data-lucide="search" class="w-5 h-5 text-indigo-600"></i>
+                Smart Search
+                <span class="text-xs font-normal text-gray-400 font-mono ml-1">⌘K</span>
+            </h3>
+            <button class="close-btn" onclick="closeGlobalSearch()" aria-label="Close search">
+                <i data-lucide="x" class="w-5 h-5"></i>
+            </button>
+        </div>
+        <div class="search-input-wrap">
+            <i data-lucide="search" class="w-4 h-4"></i>
+            <input type="text" id="globalSearchModalInput" placeholder="Search orders, inventory, sales, agents…" autofocus />
+        </div>
+        <div class="results-container" id="globalSearchModalResults">
+            <div class="empty-state">
+                <i data-lucide="inbox"></i>
+                <p class="text-sm font-medium">Type to start searching across all modules</p>
+            </div>
+        </div>
+    </div>
+</div>
 
-      <!-- ================================================================ -->
-      <!-- SECTION 16: SELL MODAL                                           -->
-      <!-- ================================================================ -->
-      <div id="sellModal" class="fixed inset-0 z-50 modal-overlay flex items-center justify-center p-4" style="display:none;">
-          <div class="bg-white rounded-3xl w-full max-w-md shadow-2xl slide-up sell-modal max-h-[95vh] overflow-y-auto">
-              <div class="sticky top-0 bg-white z-10 p-5 border-b border-gray-100 flex items-center justify-between rounded-t-3xl">
-                  <h3 class="font-bold text-lg flex items-center gap-2"><i data-lucide="badge-dollar-sign" class="w-5 h-5 text-green-600"></i> Sell Phone</h3>
-                  <button onclick="closeSellModal()" class="p-2 hover:bg-gray-100 rounded-full transition"><i data-lucide="x" class="w-5 h-5 text-gray-500"></i></button>
-              </div>
-              <div class="p-5 space-y-4">
-                  <div class="field-group"><label>Order ID</label><input type="text" id="sellOrderId" readonly /></div>
-                  <div class="field-group"><label>Phone Model</label><input type="text" id="sellModel" readonly /></div>
-                  <div class="field-group"><label>Purchase Price (₹)</label><input type="text" id="sellPurchasePrice" readonly /></div>
-                  <div class="field-group"><label>Sale Price (₹) <span class="text-red-500">*</span></label><input type="number" id="sellSalePrice" placeholder="Enter sale price" step="1" min="0" /><div class="hint">Profit will be calculated automatically</div></div>
-                  <div class="field-group"><label>Buyer Name <span class="text-red-500">*</span></label><input type="text" id="sellBuyerName" placeholder="Enter buyer name" /></div>
-                  <div class="field-group"><label>Buyer Contact <span class="text-gray-400">(optional)</span></label><input type="text" id="sellBuyerContact" placeholder="Phone number" /></div>
-                  <div class="field-group"><label>Sale Date</label><input type="date" id="sellSaleDate" /></div>
-                  <div id="sellProfitBreakdown" class="bg-gray-50 rounded-xl p-4 border border-gray-200 space-y-1">
-                      <p class="text-xs font-bold text-gray-500 uppercase tracking-wide">Profit Breakdown</p>
-                      <div class="flex justify-between"><span class="text-sm">Gross Profit</span><span class="font-bold" id="sellGrossProfit">₹0</span></div>
-                      <div class="flex justify-between"><span class="text-sm">Overhead Cost / Phone</span><span class="font-bold text-amber-600" id="sellOverhead">₹0</span></div>
-                      <div class="flex justify-between border-t border-gray-200 pt-1 mt-1"><span class="text-sm font-semibold">Final Net Profit</span><span class="font-bold text-green-600" id="sellFinalProfit">₹0</span></div>
-                  </div>
-                  <div id="sellProfitPreview" class="profit-preview neutral">Enter sale price to see profit (based on actual cost incl. coins)</div>
-              </div>
-              <div class="sticky bottom-0 bg-white p-5 border-t border-gray-100 flex gap-2 rounded-b-3xl">
-                  <button onclick="closeSellModal()" class="flex-1 py-3 rounded-xl bg-gray-100 text-gray-700 font-semibold hover:bg-gray-200 transition">Cancel</button>
-                  <button onclick="confirmSell()" class="flex-1 py-3 rounded-xl bg-green-600 text-white font-semibold hover:bg-green-700 transition flex items-center justify-center gap-2"><i data-lucide="check-circle" class="w-4 h-4"></i> Confirm Sale</button>
-              </div>
-          </div>
-      </div>
+<!-- ================================================================ -->
+<!-- SECTION 16: SELL MODAL                                           -->
+<!-- ================================================================ -->
+<div id="sellModal" class="fixed inset-0 z-50 modal-overlay flex items-center justify-center p-4" style="display:none;">
+    <div class="bg-white rounded-3xl w-full max-w-md shadow-2xl slide-up sell-modal max-h-[95vh] overflow-y-auto">
+        <div class="sticky top-0 bg-white z-10 p-5 border-b border-gray-100 flex items-center justify-between rounded-t-3xl">
+            <h3 class="font-bold text-lg flex items-center gap-2"><i data-lucide="badge-dollar-sign" class="w-5 h-5 text-green-600"></i> Sell Phone</h3>
+            <button onclick="closeSellModal()" class="p-2 hover:bg-gray-100 rounded-full transition"><i data-lucide="x" class="w-5 h-5 text-gray-500"></i></button>
+        </div>
+        <div class="p-5 space-y-4">
+            <div class="field-group"><label>Order ID</label><input type="text" id="sellOrderId" readonly /></div>
+            <div class="field-group"><label>Phone Model</label><input type="text" id="sellModel" readonly /></div>
+            <div class="field-group"><label>Purchase Price (₹)</label><input type="text" id="sellPurchasePrice" readonly /></div>
+            <div class="field-group"><label>Sale Price (₹) <span class="text-red-500">*</span></label><input type="number" id="sellSalePrice" placeholder="Enter sale price" step="1" min="0" /><div class="hint">Profit will be calculated automatically</div></div>
+            <div class="field-group"><label>Buyer Name <span class="text-red-500">*</span></label><input type="text" id="sellBuyerName" placeholder="Enter buyer name" /></div>
+            <div class="field-group"><label>Buyer Contact <span class="text-gray-400">(optional)</span></label><input type="text" id="sellBuyerContact" placeholder="Phone number" /></div>
+            <div class="field-group"><label>Sale Date</label><input type="date" id="sellSaleDate" /></div>
+            <div id="sellProfitBreakdown" class="bg-gray-50 rounded-xl p-4 border border-gray-200 space-y-1">
+                <p class="text-xs font-bold text-gray-500 uppercase tracking-wide">Profit Breakdown</p>
+                <div class="flex justify-between"><span class="text-sm">Gross Profit</span><span class="font-bold" id="sellGrossProfit">₹0</span></div>
+                <div class="flex justify-between"><span class="text-sm">Overhead Cost / Phone</span><span class="font-bold text-amber-600" id="sellOverhead">₹0</span></div>
+                <div class="flex justify-between border-t border-gray-200 pt-1 mt-1"><span class="text-sm font-semibold">Final Net Profit</span><span class="font-bold text-green-600" id="sellFinalProfit">₹0</span></div>
+            </div>
+            <div id="sellProfitPreview" class="profit-preview neutral">Enter sale price to see profit (commission based on purchase price)</div>
+        </div>
+        <div class="sticky bottom-0 bg-white p-5 border-t border-gray-100 flex gap-2 rounded-b-3xl">
+            <button onclick="closeSellModal()" class="flex-1 py-3 rounded-xl bg-gray-100 text-gray-700 font-semibold hover:bg-gray-200 transition">Cancel</button>
+            <button onclick="confirmSell()" class="flex-1 py-3 rounded-xl bg-green-600 text-white font-semibold hover:bg-green-700 transition flex items-center justify-center gap-2"><i data-lucide="check-circle" class="w-4 h-4"></i> Confirm Sale</button>
+        </div>
+    </div>
+</div>
 
-      <!-- ================================================================ -->
-      <!-- SECTION 17: ORDER DETAIL MODAL                                   -->
-      <!-- ================================================================ -->
-      <div id="detailModal" class="fixed inset-0 z-[10000] modal-overlay flex items-center justify-center p-4" style="display:none;">
-          <div class="bg-white rounded-3xl w-full max-w-2xl max-h-[95vh] overflow-y-auto shadow-2xl animate-[fadeIn_0.25s_ease]">
-              <div class="sticky top-0 bg-white z-10 flex items-center justify-between p-5 border-b border-gray-100">
-                  <h3 class="font-bold text-lg flex items-center gap-2"><i data-lucide="file-text" class="w-5 h-5 text-indigo-600"></i> <span id="detailModalTitle">Order Details</span></h3>
-                  <button onclick="closeDetail()" class="p-2 hover:bg-gray-100 rounded-full transition"><i data-lucide="x" class="w-5 h-5 text-gray-500"></i></button>
-              </div>
-              <div class="p-5 space-y-4" id="detailContent"><div class="text-center py-8 text-gray-400"><span class="spinner-sm"></span> Loading...</div></div>
-              <div class="sticky bottom-0 bg-white border-t border-gray-100 p-4 flex flex-wrap gap-2 justify-end" id="detailActions">
-                  <button onclick="closeDetail()" class="px-5 py-2.5 rounded-xl bg-gray-100 text-gray-700 font-semibold hover:bg-gray-200 transition">Close</button>
-                  <button id="detailEditBtn" onclick="toggleEditMode()" class="px-5 py-2.5 rounded-xl bg-amber-100 text-amber-700 font-semibold hover:bg-amber-200 transition flex items-center gap-2"><i data-lucide="pencil" class="w-4 h-4"></i> Edit</button>
-                  <button id="detailHoldBtn" onclick="holdOrderFromDetail()" class="px-5 py-2.5 rounded-xl bg-blue-100 text-blue-700 font-semibold hover:bg-blue-200 transition flex items-center gap-2"><i data-lucide="pause-circle" class="w-4 h-4"></i> Hold</button>
-                  <button id="detailUnholdBtn" onclick="unholdOrderFromDetail()" class="px-5 py-2.5 rounded-xl bg-amber-100 text-amber-700 font-semibold hover:bg-amber-200 transition flex items-center gap-2" style="display:none;"><i data-lucide="play-circle" class="w-4 h-4"></i> Unhold</button>
-                  <button id="detailRevertBtn" onclick="revertSoldOrder(detailOrderId)" class="px-5 py-2.5 rounded-xl bg-amber-100 text-amber-700 font-semibold hover:bg-amber-200 transition flex items-center gap-2" style="display:none;"><i data-lucide="undo-2" class="w-4 h-4"></i> Revert Sale</button>
-                  <button id="detailDeleteBtn" onclick="deleteOrderFromDetail()" class="px-5 py-2.5 rounded-xl bg-red-500 text-white font-semibold hover:bg-red-600 transition flex items-center gap-2"><i data-lucide="trash-2" class="w-4 h-4"></i> Delete</button>
-              </div>
-              <div id="detailSaveActions" style="display:none;" class="sticky bottom-0 bg-white border-t border-gray-100 p-4 flex gap-2 justify-end">
-                  <button onclick="cancelEdit()" class="px-5 py-2.5 rounded-xl bg-gray-100 text-gray-700 font-semibold hover:bg-gray-200 transition">Cancel</button>
-                  <button onclick="saveEdit()" class="px-5 py-2.5 rounded-xl bg-indigo-600 text-white font-semibold hover:bg-indigo-700 transition flex items-center gap-2"><i data-lucide="save" class="w-4 h-4"></i> Save Changes</button>
-              </div>
-          </div>
-      </div>
+<!-- ================================================================ -->
+<!-- SECTION 17: ORDER DETAIL MODAL                                   -->
+<!-- ================================================================ -->
+<div id="detailModal" class="fixed inset-0 z-[10000] modal-overlay flex items-center justify-center p-4" style="display:none;">
+    <div class="bg-white rounded-3xl w-full max-w-2xl max-h-[95vh] overflow-y-auto shadow-2xl animate-[fadeIn_0.25s_ease]">
+        <div class="sticky top-0 bg-white z-10 flex items-center justify-between p-5 border-b border-gray-100">
+            <h3 class="font-bold text-lg flex items-center gap-2"><i data-lucide="file-text" class="w-5 h-5 text-indigo-600"></i> <span id="detailModalTitle">Order Details</span></h3>
+            <button onclick="closeDetail()" class="p-2 hover:bg-gray-100 rounded-full transition"><i data-lucide="x" class="w-5 h-5 text-gray-500"></i></button>
+        </div>
+        <div class="p-5 space-y-4" id="detailContent"><div class="text-center py-8 text-gray-400"><span class="spinner-sm"></span> Loading...</div></div>
+        <div class="sticky bottom-0 bg-white border-t border-gray-100 p-4 flex flex-wrap gap-2 justify-end" id="detailActions">
+            <button onclick="closeDetail()" class="px-5 py-2.5 rounded-xl bg-gray-100 text-gray-700 font-semibold hover:bg-gray-200 transition">Close</button>
+            <button id="detailEditBtn" onclick="toggleEditMode()" class="px-5 py-2.5 rounded-xl bg-amber-100 text-amber-700 font-semibold hover:bg-amber-200 transition flex items-center gap-2"><i data-lucide="pencil" class="w-4 h-4"></i> Edit</button>
+            <button id="detailHoldBtn" onclick="holdOrderFromDetail()" class="px-5 py-2.5 rounded-xl bg-blue-100 text-blue-700 font-semibold hover:bg-blue-200 transition flex items-center gap-2"><i data-lucide="pause-circle" class="w-4 h-4"></i> Hold</button>
+            <button id="detailUnholdBtn" onclick="unholdOrderFromDetail()" class="px-5 py-2.5 rounded-xl bg-amber-100 text-amber-700 font-semibold hover:bg-amber-200 transition flex items-center gap-2" style="display:none;"><i data-lucide="play-circle" class="w-4 h-4"></i> Unhold</button>
+            <button id="detailRevertBtn" onclick="revertSoldOrder(detailOrderId)" class="px-5 py-2.5 rounded-xl bg-amber-100 text-amber-700 font-semibold hover:bg-amber-200 transition flex items-center gap-2" style="display:none;"><i data-lucide="undo-2" class="w-4 h-4"></i> Revert Sale</button>
+            <button id="detailDeleteBtn" onclick="deleteOrderFromDetail()" class="px-5 py-2.5 rounded-xl bg-red-500 text-white font-semibold hover:bg-red-600 transition flex items-center gap-2"><i data-lucide="trash-2" class="w-4 h-4"></i> Delete</button>
+        </div>
+        <div id="detailSaveActions" style="display:none;" class="sticky bottom-0 bg-white border-t border-gray-100 p-4 flex gap-2 justify-end">
+            <button onclick="cancelEdit()" class="px-5 py-2.5 rounded-xl bg-gray-100 text-gray-700 font-semibold hover:bg-gray-200 transition">Cancel</button>
+            <button onclick="saveEdit()" class="px-5 py-2.5 rounded-xl bg-indigo-600 text-white font-semibold hover:bg-indigo-700 transition flex items-center gap-2"><i data-lucide="save" class="w-4 h-4"></i> Save Changes</button>
+        </div>
+    </div>
+</div>
 
-      <!-- ================================================================ -->
-      <!-- SECTION 18: AGENT ACTIVITY MODAL                                -->
-      <!-- ================================================================ -->
-      <div id="activityModal" class="fixed inset-0 z-50 modal-overlay flex items-center justify-center p-4" style="display:none;">
-          <div class="bg-white rounded-3xl w-full max-w-3xl max-h-[90vh] overflow-y-auto shadow-2xl animate-[fadeIn_0.25s_ease] activity-modal">
-              <div class="sticky top-0 bg-white z-10 flex items-center justify-between p-5 border-b border-gray-100 rounded-t-3xl">
-                  <h3 class="font-bold text-lg flex items-center gap-2"><i data-lucide="activity" class="w-5 h-5 text-indigo-600"></i> <span id="activityModalTitle">Agent Activity</span></h3>
-                  <button onclick="closeActivityModal()" class="p-2 hover:bg-gray-100 rounded-full transition"><i data-lucide="x" class="w-5 h-5 text-gray-500"></i></button>
-              </div>
-              <div class="p-5" id="activityContent"><div class="text-center py-8 text-gray-400"><span class="spinner-sm"></span> Loading...</div></div>
-              <div class="sticky bottom-0 bg-white p-4 border-t border-gray-100 rounded-b-3xl"><button onclick="closeActivityModal()" class="w-full py-2.5 rounded-xl bg-gray-100 text-gray-700 font-semibold hover:bg-gray-200 transition">Close</button></div>
-          </div>
-      </div>
+<!-- ================================================================ -->
+<!-- SECTION 18: AGENT ACTIVITY MODAL                                -->
+<!-- ================================================================ -->
+<div id="activityModal" class="fixed inset-0 z-50 modal-overlay flex items-center justify-center p-4" style="display:none;">
+    <div class="bg-white rounded-3xl w-full max-w-3xl max-h-[90vh] overflow-y-auto shadow-2xl animate-[fadeIn_0.25s_ease] activity-modal">
+        <div class="sticky top-0 bg-white z-10 flex items-center justify-between p-5 border-b border-gray-100 rounded-t-3xl">
+            <h3 class="font-bold text-lg flex items-center gap-2"><i data-lucide="activity" class="w-5 h-5 text-indigo-600"></i> <span id="activityModalTitle">Agent Activity</span></h3>
+            <button onclick="closeActivityModal()" class="p-2 hover:bg-gray-100 rounded-full transition"><i data-lucide="x" class="w-5 h-5 text-gray-500"></i></button>
+        </div>
+        <div class="p-5" id="activityContent"><div class="text-center py-8 text-gray-400"><span class="spinner-sm"></span> Loading...</div></div>
+        <div class="sticky bottom-0 bg-white p-4 border-t border-gray-100 rounded-b-3xl"><button onclick="closeActivityModal()" class="w-full py-2.5 rounded-xl bg-gray-100 text-gray-700 font-semibold hover:bg-gray-200 transition">Close</button></div>
+    </div>
+</div>
 
-      <!-- ================================================================ -->
-      <!-- SECTION 19: REJECT APPROVAL MODAL                               -->
-      <!-- ================================================================ -->
-      <div id="rejectModal" class="fixed inset-0 z-50 modal-overlay flex items-center justify-center p-4" style="display:none;">
-          <div class="bg-white rounded-3xl w-full max-w-3xl max-h-[90vh] overflow-y-auto shadow-2xl animate-[fadeIn_0.25s_ease] reject-modal">
-              <div class="sticky top-0 bg-white z-10 flex items-center justify-between p-5 border-b border-gray-100 rounded-t-3xl">
-                  <h3 class="font-bold text-lg flex items-center gap-2"><i data-lucide="x-circle" class="w-5 h-5 text-red-600"></i> <span id="rejectModalTitle">Rejected Orders</span></h3>
-                  <button onclick="closeRejectModal()" class="p-2 hover:bg-gray-100 rounded-full transition"><i data-lucide="x" class="w-5 h-5 text-gray-500"></i></button>
-              </div>
-              <div class="p-5" id="rejectContent"><div class="text-center py-8 text-gray-400"><span class="spinner-sm"></span> Loading...</div></div>
-              <div class="sticky bottom-0 bg-white p-4 border-t border-gray-100 rounded-b-3xl"><button onclick="closeRejectModal()" class="w-full py-2.5 rounded-xl bg-gray-100 text-gray-700 font-semibold hover:bg-gray-200 transition">Close</button></div>
-          </div>
-      </div>
+<!-- ================================================================ -->
+<!-- SECTION 19: REJECT APPROVAL MODAL                               -->
+<!-- ================================================================ -->
+<div id="rejectModal" class="fixed inset-0 z-50 modal-overlay flex items-center justify-center p-4" style="display:none;">
+    <div class="bg-white rounded-3xl w-full max-w-3xl max-h-[90vh] overflow-y-auto shadow-2xl animate-[fadeIn_0.25s_ease] reject-modal">
+        <div class="sticky top-0 bg-white z-10 flex items-center justify-between p-5 border-b border-gray-100 rounded-t-3xl">
+            <h3 class="font-bold text-lg flex items-center gap-2"><i data-lucide="x-circle" class="w-5 h-5 text-red-600"></i> <span id="rejectModalTitle">Rejected Orders</span></h3>
+            <button onclick="closeRejectModal()" class="p-2 hover:bg-gray-100 rounded-full transition"><i data-lucide="x" class="w-5 h-5 text-gray-500"></i></button>
+        </div>
+        <div class="p-5" id="rejectContent"><div class="text-center py-8 text-gray-400"><span class="spinner-sm"></span> Loading...</div></div>
+        <div class="sticky bottom-0 bg-white p-4 border-t border-gray-100 rounded-b-3xl"><button onclick="closeRejectModal()" class="w-full py-2.5 rounded-xl bg-gray-100 text-gray-700 font-semibold hover:bg-gray-200 transition">Close</button></div>
+    </div>
+</div>
 
-      <!-- ================================================================ -->
-      <!-- SECTION 20: IMAGE VIEWER MODAL                                  -->
-      <!-- ================================================================ -->
-      <div id="imgViewerModal" class="fixed inset-0 z-[60] flex items-center justify-center p-4" style="display:none; background:rgba(0,0,0,0.92);">
-          <button onclick="closeImageViewer()" class="absolute top-4 right-4 w-11 h-11 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-white z-10"><i data-lucide="x" class="w-6 h-6"></i></button>
-          <div class="w-full max-w-5xl max-h-[90vh] flex flex-col items-center gap-3">
-              <img id="imgViewerImg" src="" alt="Document" class="max-w-full max-h-[80vh] object-contain rounded-xl shadow-2xl bg-white" style="touch-action: pinch-zoom;">
-              <div class="flex items-center gap-3">
-                  <span id="imgViewerCaption" class="text-white/90 text-sm font-semibold"></span>
-                  <a id="imgViewerDownload" href="#" download="document.jpg" class="text-xs bg-white text-gray-900 font-semibold px-3 py-1.5 rounded-full hover:bg-gray-100">⬇ Download</a>
-              </div>
-          </div>
-      </div>
+<!-- ================================================================ -->
+<!-- SECTION 20: IMAGE VIEWER MODAL                                  -->
+<!-- ================================================================ -->
+<div id="imgViewerModal" class="fixed inset-0 z-[60] flex items-center justify-center p-4" style="display:none; background:rgba(0,0,0,0.92);">
+    <button onclick="closeImageViewer()" class="absolute top-4 right-4 w-11 h-11 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-white z-10"><i data-lucide="x" class="w-6 h-6"></i></button>
+    <div class="w-full max-w-5xl max-h-[90vh] flex flex-col items-center gap-3">
+        <img id="imgViewerImg" src="" alt="Document" class="max-w-full max-h-[80vh] object-contain rounded-xl shadow-2xl bg-white" style="touch-action: pinch-zoom;">
+        <div class="flex items-center gap-3">
+            <span id="imgViewerCaption" class="text-white/90 text-sm font-semibold"></span>
+            <a id="imgViewerDownload" href="#" download="document.jpg" class="text-xs bg-white text-gray-900 font-semibold px-3 py-1.5 rounded-full hover:bg-gray-100">⬇ Download</a>
+        </div>
+    </div>
+</div>
 
-      <!-- ================================================================ -->
-      <!-- SECTION 21: SCRIPT INCLUDE                                      -->
-      <!-- ================================================================ -->
-      <script src="script.js"></script>
-</body> 
+<!-- ================================================================ -->
+<!-- SECTION 21: SCRIPT INCLUDE                                      -->
+<!-- ================================================================ -->
+<script src="script.js"></script>
+</body>
 </html>
