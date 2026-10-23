@@ -599,6 +599,7 @@ let inventoryList = [];
 let salesList = [];
 let filteredInventory = [];
 let filteredSales = [];
+let inventoryTypeFilter = 'all';
 let sellOrderData = null;
 
 let agentsList = [];
@@ -683,6 +684,7 @@ function refreshCurrentPage(force = false) {
   else if (currentPageView === 'attendance') loadAttendance(force);
   else if (currentPageView === 'salary') loadSalaryData(force);
   else if (currentPageView === 'agents') loadAgents(force);
+  else if (currentPageView === 'outside-pickups') loadOutsidePickups(force);
 }
 
 // ================================================================
@@ -783,6 +785,17 @@ async function loadDashboard(force = false) {
     setText('agentsBadge', totalAgents);
     setText('attendanceBadge', presentToday + '/' + totalAgents);
     setText('depositsBadge', Object.keys(deposits).length);
+
+    try {
+      const outsidePickupsSnap = await db.ref('outside_pickups').once('value');
+      const outsidePickups = outsidePickupsSnap.val() || {};
+      const outsidePendingCount = Object.values(outsidePickups).filter(
+        item => item && (item.status || 'pending') === 'pending'
+      ).length;
+      setText('outsidePickupsBadge', outsidePendingCount);
+    } catch (e) {
+      console.warn('Outside pickup badge load error:', e);
+    }
 
     const recent = Object.entries(pickups)
       .sort((a, b) => (b[1].timestamp || 0) - (a[1].timestamp || 0))
@@ -1293,7 +1306,12 @@ async function loadInventory(force = false) {
 
 function applyInventorySearch() {
   const query = getVal('inventorySearch').trim();
-  let filtered = inventoryList;
+  let filtered = inventoryList.filter(item => {
+    const isOutsidePickup = item.outsidePickup === true;
+    if (inventoryTypeFilter === 'regular') return !isOutsidePickup;
+    if (inventoryTypeFilter === 'outside') return isOutsidePickup;
+    return true;
+  });
 
   if (query && window.Fuse) {
     const fuse = new Fuse(filtered, {
@@ -1308,6 +1326,15 @@ function applyInventorySearch() {
   filteredInventory = filtered;
   renderInventoryTable();
   setText('inventoryCount', filteredInventory.length + ' units');
+}
+
+function setInventoryTypeFilter(filter) {
+  if (!['all', 'regular', 'outside'].includes(filter)) return;
+  inventoryTypeFilter = filter;
+  document.querySelectorAll('[data-inventory-type-filter]').forEach(button => {
+    button.classList.toggle('active', button.dataset.inventoryTypeFilter === inventoryTypeFilter);
+  });
+  applyInventorySearch();
 }
 
 function clearInventorySearch() {
@@ -6252,7 +6279,8 @@ async function refreshAll() {
     loadInventory(true),
     loadSales(true),
     loadDeposits(true),
-    loadAgents(true)
+    loadAgents(true),
+    loadOutsidePickups(true)
   ]);
 
   isRefreshing = false;
@@ -6404,6 +6432,644 @@ if (globalSearchModal) {
   globalSearchModal.addEventListener('click', function (e) {
     if (e.target === this) closeGlobalSearch();
   });
+}
+
+// ================================================================
+// OUTSIDE PICKUPS — ADMIN APPROVAL WORKFLOW
+// ================================================================
+let allOutsidePickups = [];
+let outsidePickupFilter = 'pending';
+
+async function loadOutsidePickups(force = false) {
+  try {
+    const snap = await db.ref('outside_pickups').once('value');
+    const data = snap.val() || {};
+
+    allOutsidePickups = Object.entries(data)
+      .filter(([, item]) => item && typeof item === 'object')
+      .map(([pickupId, item]) => ({ ...item, pickupId }))
+      .sort((a, b) => (Number(b.createdAt) || 0) - (Number(a.createdAt) || 0));
+
+    const pendingCount = allOutsidePickups.filter(p => (p.status || 'pending') === 'pending').length;
+    setText('outsidePickupsBadge', pendingCount);
+    renderOutsidePickupsTable();
+  } catch (e) {
+    console.error('Outside pickups load error:', e);
+    showToast('Error loading outside pickups', 'error');
+    setHTML('outsidePickupsTableBody', `<tr><td colspan="9"><div class="empty-state"><i data-lucide="alert-circle"></i><p class="text-sm font-medium text-red-500">Failed to load</p></div></td></tr>`);
+    refreshIcons();
+  }
+}
+
+function setOutsidePickupFilter(filter) {
+  outsidePickupFilter = filter || 'all';
+  document.querySelectorAll('[data-op-filter]').forEach(button => {
+    button.classList.toggle('active', button.dataset.opFilter === outsidePickupFilter);
+  });
+  renderOutsidePickupsTable();
+}
+
+function renderOutsidePickupsTable() {
+  const tbody = $('outsidePickupsTableBody');
+  if (!tbody) return;
+
+  let list = [...allOutsidePickups];
+  if (outsidePickupFilter !== 'all') {
+    list = list.filter(p => (p.status || 'pending') === outsidePickupFilter);
+  }
+
+  const query = (getVal('outsidePickupSearch') || '').trim().toLowerCase();
+  if (query) {
+    list = list.filter(p => [
+      p.pickupId, p.imei, p.phoneModel, p.rider, p.agentName, p.agent, p.customerName
+    ].filter(Boolean).join(' ').toLowerCase().includes(query));
+  }
+
+  setText('outsidePickupCountDisplay', `${list.length} pickup${list.length === 1 ? '' : 's'}`);
+  if (!list.length) {
+    const filterLabel = outsidePickupFilter === 'all' ? '' : outsidePickupFilter;
+    tbody.innerHTML = `<tr><td colspan="9"><div class="empty-state"><i data-lucide="inbox"></i><p class="text-sm font-medium">No ${esc(filterLabel)} pickups</p></div></td></tr>`;
+    refreshIcons();
+    return;
+  }
+
+  tbody.innerHTML = list.map((p, index) => {
+    const status = p.status || 'pending';
+    const statusClass = status === 'approved' ? 'approved' : status === 'rejected' ? 'rejected' : 'reschedule';
+    const statusLabel = status === 'approved' ? 'Approved' : status === 'rejected' ? 'Rejected' : 'Pending';
+    const createdAt = Number(p.createdAt);
+    const dateStr = createdAt
+      ? new Date(createdAt).toLocaleDateString('en-IN') + ' ' + new Date(createdAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })
+      : (p.timestampIST || '—');
+
+    return `
+      <tr class="order-row border-b border-gray-50">
+        <td class="py-3 px-4 text-gray-400 font-mono text-xs">${index + 1}</td>
+        <td class="py-3 px-4 font-mono font-bold text-gray-800 text-sm">${esc(p.pickupId)}</td>
+        <td class="py-3 px-4 text-gray-600 text-sm">${esc(p.phoneModel || '—')}</td>
+        <td class="py-3 px-4 hidden md:table-cell font-mono text-xs text-gray-500">${esc(p.imei || '—')}</td>
+        <td class="py-3 px-4 font-bold text-gray-700">${formatINR(Number(p.value) || 0)}</td>
+        <td class="py-3 px-4 hidden sm:table-cell text-gray-500 text-sm">${esc(p.rider || p.agentName || p.agent || '—')}</td>
+        <td class="py-3 px-4 hidden lg:table-cell text-xs text-gray-400">${esc(dateStr)}</td>
+        <td class="py-3 px-4"><span class="badge-status ${statusClass}">${statusLabel}</span></td>
+        <td class="py-3 px-4">
+          <div class="flex items-center gap-1.5">
+            <button data-op-action="view" data-op-id="${esc(p.pickupId)}" class="btn-action view" title="View details"><i data-lucide="eye"></i></button>
+            ${status === 'pending' ? `
+              <button data-op-action="approve" data-op-id="${esc(p.pickupId)}" class="btn-action approve" title="Approve"><i data-lucide="check-circle"></i></button>
+              <button data-op-action="reject" data-op-id="${esc(p.pickupId)}" class="btn-action delete" title="Reject"><i data-lucide="x-circle"></i></button>
+            ` : ''}
+            ${status === 'approved' ? `
+              <button data-op-action="copy-whatsapp" data-op-id="${esc(p.pickupId)}" class="btn-action show" title="Copy approval WhatsApp message" aria-label="Copy approval WhatsApp message"><i data-lucide="copy"></i></button>
+            ` : ''}
+            <button data-op-action="edit" data-op-id="${esc(p.pickupId)}" class="btn-action edit" title="Edit pickup" aria-label="Edit pickup"><i data-lucide="pencil"></i></button>
+            <button data-op-action="delete" data-op-id="${esc(p.pickupId)}" class="btn-action delete" title="Permanently delete pickup" aria-label="Permanently delete pickup"><i data-lucide="trash-2"></i></button>
+          </div>
+        </td>
+      </tr>`;
+  }).join('');
+
+  refreshIcons();
+}
+
+const outsidePickupsTableBody = $('outsidePickupsTableBody');
+if (outsidePickupsTableBody) {
+  outsidePickupsTableBody.addEventListener('click', event => {
+    const button = event.target.closest('button[data-op-action]');
+    if (!button) return;
+    const pickupId = button.dataset.opId;
+    const actions = {
+      view: viewOutsidePickup,
+      approve: approveOutsidePickup,
+      reject: rejectOutsidePickup,
+      'copy-whatsapp': copyOutsidePickupWhatsApp,
+      edit: editOutsidePickup,
+      delete: deleteOutsidePickup
+    };
+    const action = actions[button.dataset.opAction];
+    if (action) action(pickupId);
+  });
+}
+
+async function editOutsidePickup(pickupId) {
+  if (!pickupId) return;
+
+  try {
+    const pickupRef = db.ref('outside_pickups/' + pickupId);
+    const snap = await pickupRef.once('value');
+    const pickup = snap.val();
+    if (!pickup) {
+      showToast('Pickup not found', 'error');
+      return;
+    }
+
+    const result = await Swal.fire({
+      title: 'Edit Outside Pickup',
+      html: `
+        <div class="text-left space-y-3">
+          <label class="block text-xs font-semibold text-gray-600">Phone Model
+            <input id="op-edit-model" class="swal2-input" value="${esc(pickup.phoneModel || '')}" placeholder="Phone model">
+          </label>
+          <label class="block text-xs font-semibold text-gray-600">IMEI
+            <input id="op-edit-imei" class="swal2-input" value="${esc(pickup.imei || '')}" placeholder="IMEI">
+          </label>
+          <label class="block text-xs font-semibold text-gray-600">Value (₹)
+            <input id="op-edit-value" type="number" min="0" step="1" class="swal2-input" value="${Number(pickup.value) || 0}" placeholder="Value">
+          </label>
+          <div class="grid grid-cols-2 gap-2">
+            <label class="block text-xs font-semibold text-gray-600">RAM
+              <input id="op-edit-ram" class="swal2-input" value="${esc(pickup.ram || '')}" placeholder="RAM">
+            </label>
+            <label class="block text-xs font-semibold text-gray-600">Storage
+              <input id="op-edit-storage" class="swal2-input" value="${esc(pickup.storage || '')}" placeholder="Storage">
+            </label>
+          </div>
+          <label class="block text-xs font-semibold text-gray-600">Network
+            <input id="op-edit-network" class="swal2-input" value="${esc(pickup.networkType || '')}" placeholder="Network">
+          </label>
+          <label class="block text-xs font-semibold text-gray-600">Customer Name
+            <input id="op-edit-customer" class="swal2-input" value="${esc(pickup.customerName || '')}" placeholder="Customer name">
+          </label>
+          <label class="block text-xs font-semibold text-gray-600">Rider
+            <input id="op-edit-rider" class="swal2-input" value="${esc(pickup.rider || pickup.agentName || pickup.agent || '')}" placeholder="Rider">
+          </label>
+          <label class="block text-xs font-semibold text-gray-600">Aadhaar Number
+            <input id="op-edit-aadhaar" class="swal2-input" value="${esc(pickup.aadhaarNumber || '')}" placeholder="Optional">
+          </label>
+          <label class="block text-xs font-semibold text-gray-600">Bill Number
+            <input id="op-edit-bill" class="swal2-input" value="${esc(pickup.billNumber || '')}" placeholder="Optional">
+          </label>
+        </div>`,
+      focusConfirm: false,
+      showCancelButton: true,
+      confirmButtonText: 'Save Changes',
+      cancelButtonText: 'Cancel',
+      confirmButtonColor: '#4f46e5',
+      preConfirm: () => {
+        const valueInput = document.getElementById('op-edit-value');
+        const value = Number(valueInput.value);
+        if (!Number.isFinite(value) || value < 0) {
+          Swal.showValidationMessage('Please enter a valid non-negative value.');
+          return false;
+        }
+
+        return {
+          phoneModel: document.getElementById('op-edit-model').value.trim(),
+          imei: document.getElementById('op-edit-imei').value.trim(),
+          value,
+          ram: document.getElementById('op-edit-ram').value.trim(),
+          storage: document.getElementById('op-edit-storage').value.trim(),
+          networkType: document.getElementById('op-edit-network').value.trim(),
+          customerName: document.getElementById('op-edit-customer').value.trim(),
+          rider: document.getElementById('op-edit-rider').value.trim(),
+          aadhaarNumber: document.getElementById('op-edit-aadhaar').value.trim(),
+          billNumber: document.getElementById('op-edit-bill').value.trim()
+        };
+      }
+    });
+    if (!result.isConfirmed) return;
+
+    const updates = {};
+    Object.entries(result.value).forEach(([field, value]) => {
+      updates[`outside_pickups/${pickupId}/${field}`] = value;
+    });
+    updates[`outside_pickups/${pickupId}/ramStorage`] =
+      [result.value.ram, result.value.storage].filter(Boolean).join('/');
+
+    if (pickup.inventoryCreated === true) {
+      const inventorySnap = await db.ref('pickups/' + pickupId).once('value');
+      const inventoryItem = inventorySnap.val();
+      if (!inventoryItem || inventoryItem.outsidePickup !== true || inventoryItem.orderId !== pickupId) {
+        showToast('Linked inventory item was not found; pickup was not updated', 'error');
+        return;
+      }
+
+      const syncedFields = ['phoneModel', 'imei', 'value', 'ram', 'storage', 'networkType', 'customerName', 'rider', 'aadhaarNumber', 'billNumber'];
+      syncedFields.forEach(field => {
+        updates[`pickups/${pickupId}/${field}`] = result.value[field];
+      });
+      updates[`pickups/${pickupId}/ramStorage`] =
+        [result.value.ram, result.value.storage].filter(Boolean).join('/');
+    }
+
+    await db.ref().update(updates);
+    invalidate('pickups');
+    showToast('Outside pickup updated', 'success');
+    await loadOutsidePickups(true);
+    if (pickup.inventoryCreated === true && currentPageView === 'inventory') await loadInventory(true);
+    if (currentPageView === 'dashboard') loadDashboard(true);
+  } catch (e) {
+    console.error('Outside pickup edit error:', e);
+    showToast('Edit failed: ' + (e.message || 'Unable to update pickup'), 'error');
+  }
+}
+
+async function deleteOutsidePickup(pickupId) {
+  if (!pickupId) return;
+
+  try {
+    const pickupRef = db.ref('outside_pickups/' + pickupId);
+    const snap = await pickupRef.once('value');
+    const pickup = snap.val();
+    if (!pickup) {
+      showToast('Pickup not found', 'error');
+      return;
+    }
+
+    const hasLinkedInventory = pickup.inventoryCreated === true || pickup.status === 'approved';
+    const confirmation = await Swal.fire({
+      icon: 'warning',
+      title: 'Permanently Delete Pickup?',
+      html: `<p>This permanently removes pickup <strong>${esc(pickupId)}</strong> and cannot be undone.${hasLinkedInventory ? ' Its linked Inventory item will also be deleted.' : ''}</p>`,
+      showCancelButton: true,
+      confirmButtonText: 'Delete Permanently',
+      cancelButtonText: 'Cancel',
+      confirmButtonColor: '#dc2626',
+      cancelButtonColor: '#64748b'
+    });
+    if (!confirmation.isConfirmed) return;
+
+    const updates = { [`outside_pickups/${pickupId}`]: null };
+    if (hasLinkedInventory) {
+      const inventorySnap = await db.ref('pickups/' + pickupId).once('value');
+      const inventoryItem = inventorySnap.val();
+      if (inventoryItem && (inventoryItem.outsidePickup !== true || inventoryItem.orderId !== pickupId)) {
+        showToast('Linked inventory item could not be verified; nothing was deleted', 'error');
+        return;
+      }
+      if (inventoryItem) updates[`pickups/${pickupId}`] = null;
+    }
+
+    await db.ref().update(updates);
+    invalidate('pickups');
+    showToast('Outside pickup permanently deleted', 'success');
+    await loadOutsidePickups(true);
+    if (hasLinkedInventory && currentPageView === 'inventory') await loadInventory(true);
+    if (currentPageView === 'dashboard') loadDashboard(true);
+  } catch (e) {
+    console.error('Outside pickup delete error:', e);
+    showToast('Delete failed: ' + (e.message || 'Unable to delete pickup'), 'error');
+  }
+}
+
+async function viewOutsidePickup(pickupId) {
+  try {
+    const snap = await db.ref('outside_pickups/' + pickupId).once('value');
+    const p = snap.val();
+    if (!p) {
+      showToast('Pickup not found', 'error');
+      return;
+    }
+
+    const status = p.status || 'pending';
+    const createdAt = Number(p.createdAt);
+    const dateStr = createdAt ? new Date(createdAt).toLocaleString('en-IN') : (p.timestampIST || '—');
+    const photos = Array.isArray(p.phoneImages) ? p.phoneImages : [];
+    const photoHtml = photos.length
+      ? `<div class="grid grid-cols-3 gap-2 mt-2">${photos.map((image, index) => {
+          let photoUrl = '';
+          try {
+            const parsedUrl = new URL(image);
+            if (parsedUrl.protocol === 'https:') photoUrl = parsedUrl.href;
+          } catch (e) {
+            console.warn('Ignoring invalid outside pickup photo URL:', e);
+          }
+          return photoUrl
+            ? `<a href="${esc(photoUrl)}" target="_blank" rel="noopener noreferrer"><img src="${esc(photoUrl)}" class="w-full h-24 object-cover rounded-lg border border-gray-200" loading="lazy" alt="Phone photo ${index + 1}"></a>`
+            : '';
+        }).join('')}</div>`
+      : '<div class="text-xs text-gray-400 italic">No photos</div>';
+
+    const statusBadge = status === 'approved'
+      ? '<span class="badge-status approved">Approved</span>'
+      : status === 'rejected'
+        ? '<span class="badge-status rejected">Rejected</span>'
+        : '<span class="badge-status reschedule">Pending Approval</span>';
+    const detailHtml = `
+      <div class="text-left text-sm space-y-3">
+        <div class="flex items-center justify-between flex-wrap gap-2">
+          <div>
+            <div class="text-[10px] font-bold text-gray-400 uppercase tracking-wide">Pickup ID</div>
+            <div class="font-mono font-bold text-lg text-gray-800">${esc(pickupId)}</div>
+          </div>
+          ${statusBadge}
+        </div>
+        <div class="bg-gray-50 border border-gray-200 rounded-xl p-3 grid grid-cols-2 gap-2 text-xs">
+          <div><span class="text-gray-400 uppercase font-bold text-[10px]">Rider</span><br><strong>${esc(p.rider || p.agentName || p.agent || '—')}</strong></div>
+          <div><span class="text-gray-400 uppercase font-bold text-[10px]">Date &amp; Time</span><br><strong>${esc(dateStr)}</strong></div>
+        </div>
+        <div class="border border-gray-100 rounded-xl p-3 space-y-1.5 text-xs">
+          <div class="flex justify-between"><span class="text-gray-500">Model:</span><strong>${esc(p.phoneModel || '—')}</strong></div>
+          <div class="flex justify-between"><span class="text-gray-500">IMEI:</span><strong class="font-mono text-[11px]">${esc(p.imei || '—')}</strong></div>
+          <div class="flex justify-between"><span class="text-gray-500">RAM / Storage:</span><strong>${esc(p.ram || '—')} / ${esc(p.storage || '—')}</strong></div>
+          <div class="flex justify-between"><span class="text-gray-500">Network:</span><strong>${esc(p.networkType || '—')}</strong></div>
+          <div class="flex justify-between"><span class="text-gray-500">Agreed Value:</span><strong class="text-green-700">${formatINR(Number(p.value) || 0)}</strong></div>
+          ${p.customerName ? `<div class="flex justify-between"><span class="text-gray-500">Customer:</span><strong>${esc(p.customerName)}</strong></div>` : ''}
+          ${p.aadhaarNumber ? `<div class="flex justify-between"><span class="text-gray-500">Aadhaar:</span><strong class="font-mono text-[11px]">${esc(p.aadhaarNumber)}</strong></div>` : ''}
+          ${p.billNumber ? `<div class="flex justify-between"><span class="text-gray-500">Bill No:</span><strong>${esc(p.billNumber)}</strong></div>` : ''}
+        </div>
+        <div>
+          <div class="text-[10px] font-bold text-gray-400 uppercase tracking-wide mb-1">Phone Photos (${photos.length})</div>
+          ${photoHtml}
+        </div>
+        ${status === 'approved' ? `<div class="bg-green-50 border border-green-200 rounded-xl p-3 text-xs text-green-800"><strong>Approved</strong> — Added to Inventory. Approved at: ${esc(p.approvedAt ? new Date(p.approvedAt).toLocaleString('en-IN') : '—')}</div>` : ''}
+        ${status === 'rejected' ? `<div class="bg-red-50 border border-red-200 rounded-xl p-3 text-xs text-red-800"><strong>Rejected</strong>${p.rejectReason ? ` — Reason: ${esc(p.rejectReason)}` : ''}</div>` : ''}
+      </div>`;
+    const result = await Swal.fire({
+      title: 'Outside Pickup Details',
+      html: detailHtml,
+      width: 'min(640px, 96vw)',
+      showCancelButton: true,
+      ...(status === 'pending' ? {
+        showDenyButton: true,
+        confirmButtonText: 'Approve',
+        denyButtonText: 'Reject',
+        cancelButtonText: 'Close',
+        confirmButtonColor: '#059669',
+        denyButtonColor: '#dc2626'
+      } : {
+        confirmButtonText: 'Close',
+        confirmButtonColor: '#4f46e5'
+      })
+    });
+
+    if (status === 'pending' && result.isConfirmed) await approveOutsidePickup(pickupId);
+    else if (status === 'pending' && result.isDenied) await rejectOutsidePickup(pickupId);
+  } catch (e) {
+    console.error('Outside pickup detail error:', e);
+    showToast('Error loading pickup details', 'error');
+  }
+}
+
+function countLiveInventory(pickups) {
+  return Object.values(pickups || {}).filter(item => item && item.status === 'pickup' && !item.sold).length;
+}
+
+async function approveOutsidePickup(pickupId) {
+  if (!pickupId) return;
+
+  try {
+    const snap = await db.ref('outside_pickups/' + pickupId).once('value');
+    const p = snap.val();
+    if (!p) {
+      showToast('Pickup not found', 'error');
+      return;
+    }
+    if ((p.status || 'pending') !== 'pending' || p.inventoryCreated === true) {
+      Swal.fire({ icon: 'warning', title: 'Already processed', text: 'Only pending pickups can be approved.', confirmButtonColor: '#4f46e5' });
+      return;
+    }
+
+    const confirm = await Swal.fire({
+      title: 'Approve Outside Pickup?',
+      html: `<div class="text-left text-sm space-y-1">
+        <p><strong>Pickup ID:</strong> <span class="font-mono">${esc(pickupId)}</span></p>
+        <p><strong>Model:</strong> ${esc(p.phoneModel || '—')}</p>
+        <p><strong>IMEI:</strong> <span class="font-mono">${esc(p.imei || '—')}</span></p>
+        <p><strong>Value:</strong> ${formatINR(Number(p.value) || 0)}</p>
+        <p class="text-xs text-gray-600 mt-3 pt-2 border-t border-gray-200">This phone will be added to Flipkart Inventory.</p>
+      </div>`,
+      icon: 'question',
+      showCancelButton: true,
+      confirmButtonText: 'Yes, Approve',
+      cancelButtonText: 'Cancel',
+      confirmButtonColor: '#059669',
+      cancelButtonColor: '#64748b'
+    });
+    if (!confirm.isConfirmed) return;
+
+    const nowTs = Date.now();
+    const now = new Date(nowTs);
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const istDate = new Date(nowTs + 5.5 * 60 * 60 * 1000);
+    const istString = `${String(istDate.getUTCDate()).padStart(2, '0')}-${months[istDate.getUTCMonth()]}-${istDate.getUTCFullYear()}, ${String(istDate.getUTCHours() % 12 || 12).padStart(2, '0')}:${String(istDate.getUTCMinutes()).padStart(2, '0')} ${istDate.getUTCHours() >= 12 ? 'PM' : 'AM'} IST`;
+    const inventoryRecord = {
+      orderId: pickupId,
+      status: 'pickup',
+      sold: false,
+      outsidePickup: true,
+      phoneModel: p.phoneModel || '',
+      imei: p.imei || '',
+      value: Number(p.value) || 0,
+      ram: p.ram || '',
+      storage: p.storage || '',
+      ramStorage: p.ramStorage || ((p.ram && p.storage) ? p.ram + '/' + p.storage : ''),
+      networkType: p.networkType || '',
+      customerName: p.customerName || 'N/A',
+      aadhaarNumber: p.aadhaarNumber || '',
+      billNumber: p.billNumber || '',
+      phoneImages: p.phoneImages || [],
+      agent: p.agent || p.agentName || '',
+      rider: p.rider || '',
+      timestamp: now.toISOString(),
+      timestampIST: istString,
+      date: now.toLocaleDateString('en-IN'),
+      time: now.toLocaleTimeString('en-IN'),
+      approvedFromOutsidePickupAt: nowTs
+    };
+
+    let transactionIssue = '';
+    const transaction = await db.ref('pickups').transaction(currentPickups => {
+      const pickups = currentPickups || {};
+      const existing = pickups[pickupId];
+      if (existing) {
+        if (existing.outsidePickup === true && existing.orderId === pickupId) return pickups;
+        transactionIssue = 'Pickup ID already exists in inventory.';
+        return;
+      }
+
+      const imei = String(p.imei || '').trim();
+      if (imei && Object.values(pickups).some(item =>
+        item && item.status === 'pickup' && String(item.imei || '').trim() === imei
+      )) {
+        transactionIssue = 'IMEI already exists in inventory.';
+        return;
+      }
+
+      return { ...pickups, [pickupId]: inventoryRecord };
+    }, undefined, false);
+
+    if (!transaction.committed) {
+      Swal.fire({
+        icon: 'error',
+        title: transactionIssue === 'IMEI already exists in inventory.' ? 'IMEI Already in Inventory' : 'Cannot Approve Pickup',
+        text: transactionIssue || 'The inventory changed before approval. Refresh and try again.',
+        confirmButtonColor: '#dc2626'
+      });
+      return;
+    }
+
+    const committedPickups = transaction.snapshot.val() || {};
+    const inventoryCount = countLiveInventory(committedPickups);
+    const approvedPickup = { ...p, pickupId, status: 'approved', approvedAt: nowTs };
+    const whatsappMessage = buildOutsidePickupMessage(approvedPickup, inventoryCount);
+    await db.ref('outside_pickups/' + pickupId).update({
+      status: 'approved',
+      inventoryCreated: true,
+      approvedAt: nowTs,
+      approvedBy: 'admin',
+      inventoryCountAtApproval: inventoryCount,
+      approvalWhatsAppMessage: whatsappMessage
+    });
+
+    invalidate('pickups');
+    showToast('Approved and added to inventory', 'success');
+    await loadOutsidePickups(true);
+    if (currentPageView === 'inventory') loadInventory(true);
+    if (currentPageView === 'dashboard') loadDashboard(true);
+    await showOutsidePickupApprovedModal(approvedPickup, inventoryCount, whatsappMessage);
+  } catch (e) {
+    console.error('Outside pickup approval error:', e);
+    showToast('Approval failed: ' + (e.message || 'Unable to save pickup'), 'error');
+    await loadOutsidePickups(true);
+  }
+}
+
+async function rejectOutsidePickup(pickupId) {
+  if (!pickupId) return;
+
+  try {
+    const snap = await db.ref('outside_pickups/' + pickupId).once('value');
+    const p = snap.val();
+    if (!p) {
+      showToast('Pickup not found', 'error');
+      return;
+    }
+    if ((p.status || 'pending') !== 'pending' || p.inventoryCreated === true) {
+      Swal.fire({ icon: 'warning', title: 'Already processed', text: 'Only pending pickups can be rejected.', confirmButtonColor: '#4f46e5' });
+      return;
+    }
+
+    const result = await Swal.fire({
+      title: 'Reject Outside Pickup?',
+      text: 'Rejecting will not add this phone to inventory.',
+      input: 'text',
+      inputPlaceholder: 'Reason for rejection (optional)',
+      showCancelButton: true,
+      confirmButtonText: 'Reject',
+      cancelButtonText: 'Cancel',
+      confirmButtonColor: '#dc2626',
+      cancelButtonColor: '#64748b'
+    });
+    if (!result.isConfirmed) return;
+
+    const rejectedAt = Date.now();
+    let wasProcessed = false;
+    const rejection = await db.ref('outside_pickups/' + pickupId).transaction(current => {
+      if (!current || (current.status || 'pending') !== 'pending' || current.inventoryCreated === true) {
+        wasProcessed = true;
+        return;
+      }
+      return {
+        ...current,
+        status: 'rejected',
+        rejectReason: (result.value || '').trim() || 'No reason provided',
+        rejectedAt,
+        rejectedBy: 'admin'
+      };
+    }, undefined, false);
+
+    if (!rejection.committed) {
+      showToast(wasProcessed ? 'Pickup was already processed' : 'Rejection was not saved; refresh and try again', 'error');
+      return;
+    }
+
+    showToast('Pickup rejected', 'info');
+    await loadOutsidePickups(true);
+    if (currentPageView === 'dashboard') loadDashboard(true);
+  } catch (e) {
+    console.error('Outside pickup rejection error:', e);
+    showToast('Rejection failed: ' + (e.message || 'Unable to save rejection'), 'error');
+  }
+}
+
+function buildOutsidePickupMessage(p, inventoryCount) {
+  const lines = [
+    '📦 *OUTSIDE PICKUP — FLIPKART*',
+    '',
+    `Pickup ID: ${p.pickupId || '—'}`,
+    `Rider: ${p.rider || p.agentName || '—'}`,
+    `Model: ${p.phoneModel || '—'}`,
+    `RAM / ROM: ${p.ram || '—'} / ${p.storage || '—'}`,
+    `IMEI: ${p.imei || '—'}`,
+    `Network: ${p.networkType || '—'}`,
+    `Agreed Value: ₹${(Number(p.value) || 0).toLocaleString('en-IN')}`
+  ];
+  if (p.customerName && p.customerName !== 'N/A') lines.push(`Customer: ${p.customerName}`);
+  if (p.aadhaarNumber) lines.push(`Aadhaar: ${p.aadhaarNumber}`);
+  if (p.billNumber) lines.push(`Bill Number: ${p.billNumber}`);
+  lines.push('Status: Approved', `Total Flipkart Inventory: ${inventoryCount}`);
+  return lines.join('\n');
+}
+
+async function copyOutsidePickupWhatsApp(pickupId) {
+  try {
+    const snap = await db.ref('outside_pickups/' + pickupId).once('value');
+    const p = snap.val();
+    if (!p || p.status !== 'approved') {
+      showToast('Approved pickup not found', 'error');
+      return;
+    }
+    const message = p.approvalWhatsAppMessage || buildOutsidePickupMessage(
+      { ...p, pickupId },
+      Number(p.inventoryCountAtApproval) || 0
+    );
+    await copyOutsidePickupMessage(message);
+  } catch (e) {
+    console.error('Outside pickup WhatsApp message error:', e);
+    showToast('Could not copy WhatsApp message', 'error');
+  }
+}
+
+async function copyOutsidePickupMessage(message) {
+  try {
+    await navigator.clipboard.writeText(message);
+    showToast('Approval WhatsApp message copied', 'success');
+  } catch (e) {
+    console.warn('Clipboard API unavailable; trying fallback copy:', e);
+    const textarea = document.createElement('textarea');
+    textarea.value = message;
+    textarea.style.position = 'fixed';
+    textarea.style.opacity = '0';
+    document.body.appendChild(textarea);
+    try {
+      textarea.select();
+      const copied = document.execCommand('copy');
+      if (!copied) throw new Error('Clipboard fallback copy was unsuccessful');
+      showToast('Approval WhatsApp message copied', 'success');
+    } catch (fallbackError) {
+      console.error('Clipboard fallback failed:', fallbackError);
+      showToast('Copy failed', 'error');
+    } finally {
+      textarea.remove();
+    }
+  }
+}
+
+async function showOutsidePickupApprovedModal(p, inventoryCount, savedMessage) {
+  const message = savedMessage || p.approvalWhatsAppMessage || buildOutsidePickupMessage(p, inventoryCount);
+  const result = await Swal.fire({
+    title: 'Approved — WhatsApp Message',
+    html: `<div class="text-left">
+      <p class="text-xs text-gray-500 mb-2">Message ready to send to WhatsApp group:</p>
+      <pre style="background:#f1f5f9;padding:12px;border-radius:10px;font-size:12px;line-height:1.5;white-space:pre-wrap;max-height:320px;overflow-y:auto;border:1px solid #e2e8f0;text-align:left;font-family:inherit;">${esc(message)}</pre>
+    </div>`,
+    showDenyButton: true,
+    showCancelButton: true,
+    confirmButtonText: 'Copy Message',
+    denyButtonText: 'Open WhatsApp',
+    cancelButtonText: 'Close',
+    confirmButtonColor: '#059669',
+    denyButtonColor: '#25D366',
+    cancelButtonColor: '#64748b',
+    width: 'min(560px, 96vw)'
+  });
+
+  if (result.isConfirmed) {
+    await copyOutsidePickupMessage(message);
+  } else if (result.isDenied) {
+    window.open('https://wa.me/?text=' + encodeURIComponent(message), '_blank', 'noopener,noreferrer');
+  }
 }
 
 document.addEventListener('keydown', function (e) {

@@ -761,6 +761,10 @@
                 <i data-lucide="users"></i> Agents
                 <span id="agentsBadge" class="ml-auto text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full">0</span>
             </div>
+            <div class="sidebar-link" data-page="outside-pickups" onclick="navigate('outside-pickups')">
+                <i data-lucide="map-pin"></i> Outside Pickups
+                <span id="outsidePickupsBadge" class="ml-auto text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full">0</span>
+            </div>
         </nav>
 
         <div class="mt-auto pt-6 border-t border-gray-100 px-3">
@@ -1135,6 +1139,12 @@
 
             <!-- ===== 9.1: Inventory Search ===== -->
             <div class="glass rounded-2xl p-4 shadow-sm border border-gray-100 mb-4">
+                <div class="flex flex-wrap items-center gap-2 mb-3">
+                    <span class="text-xs font-bold text-gray-500 mr-1">Inventory Type:</span>
+                    <button class="filter-chip active" data-inventory-type-filter="all" onclick="setInventoryTypeFilter('all')">All</button>
+                    <button class="filter-chip" data-inventory-type-filter="regular" onclick="setInventoryTypeFilter('regular')">Only Inventory</button>
+                    <button class="filter-chip" data-inventory-type-filter="outside" onclick="setInventoryTypeFilter('outside')">Outside Inventory</button>
+                </div>
                 <div class="flex flex-wrap items-center gap-2">
                     <div class="search-wrapper w-full sm:w-auto flex-1">
                         <input type="text" id="inventorySearch" placeholder="🔍 Smart search: Model, IMEI, Customer…" class="w-full px-4 py-2 border border-gray-200 rounded-xl text-sm outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100" autocomplete="off" />
@@ -1520,6 +1530,62 @@
               </div>
               <div class="flex items-center justify-between px-4 py-3 border-t border-gray-100 text-xs text-gray-500">
                   <span id="agentsCount">0 users</span>
+              </div>
+          </div>
+      </div>
+
+      <!-- ============================================================ -->
+      <!-- SECTION 14B: OUTSIDE PICKUPS PAGE                            -->
+      <!-- ============================================================ -->
+      <div id="page-outside-pickups" class="page-content fade-in" style="display:none;">
+          <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+              <div>
+                  <h2 class="text-2xl font-bold text-gray-800">Outside Pickups</h2>
+                  <p class="text-sm text-gray-500">Manual pickups (no order ID) — rider submissions pending your approval</p>
+              </div>
+              <button onclick="loadOutsidePickups(true)" class="btn-action view"><i data-lucide="refresh-cw"></i> Refresh</button>
+          </div>
+
+          <div class="glass rounded-2xl p-4 shadow-sm border border-gray-100 mb-4">
+              <div class="flex flex-wrap items-center gap-2">
+                  <span class="text-xs font-bold text-gray-500 mr-1">Filter:</span>
+                  <button class="filter-chip active" data-op-filter="pending" onclick="setOutsidePickupFilter('pending')">Pending Approval</button>
+                  <button class="filter-chip" data-op-filter="approved" onclick="setOutsidePickupFilter('approved')">Approved in Inventory</button>
+                  <button class="filter-chip" data-op-filter="rejected" onclick="setOutsidePickupFilter('rejected')">Rejected</button>
+                  <button class="filter-chip" data-op-filter="all" onclick="setOutsidePickupFilter('all')">All</button>
+              </div>
+              <div class="flex flex-wrap items-center gap-2 mt-3 border-t border-gray-200 pt-3">
+                  <span class="text-xs font-bold text-gray-500 mr-1">Search:</span>
+                  <input type="text" id="outsidePickupSearch" placeholder="Pickup ID, IMEI, Model, Rider..." class="flex-1 min-w-[220px] px-4 py-2 border border-gray-200 rounded-xl text-sm outline-none focus:border-indigo-400" autocomplete="off" onkeyup="if(event.key==='Enter') renderOutsidePickupsTable()" />
+                  <button onclick="renderOutsidePickupsTable()" class="px-4 py-2 bg-indigo-600 text-white rounded-xl text-sm font-semibold hover:bg-indigo-700 transition">Search</button>
+                  <button onclick="document.getElementById('outsidePickupSearch').value=''; renderOutsidePickupsTable();" class="px-4 py-2 bg-gray-100 text-gray-600 rounded-xl text-sm font-semibold hover:bg-gray-200 transition">Clear</button>
+              </div>
+          </div>
+
+          <div class="glass rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+              <div class="table-wrap">
+                  <table class="w-full text-sm">
+                      <thead>
+                          <tr class="bg-gray-50 border-b border-gray-100">
+                              <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">#</th>
+                              <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">Pickup ID</th>
+                              <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">Model</th>
+                              <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase hidden md:table-cell">IMEI</th>
+                              <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">Value</th>
+                              <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase hidden sm:table-cell">Rider</th>
+                              <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase hidden lg:table-cell">Date</th>
+                              <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">Status</th>
+                              <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">Actions</th>
+                          </tr>
+                      </thead>
+                      <tbody id="outsidePickupsTableBody">
+                          <tr><td colspan="9"><div class="empty-state"><i data-lucide="inbox"></i><p class="text-sm font-medium">Loading…</p></div></td></tr>
+                      </tbody>
+                  </table>
+              </div>
+              <div class="flex items-center justify-between px-4 py-3 border-t border-gray-100 text-xs text-gray-500">
+                  <span id="outsidePickupCountDisplay">0 pickups</span>
+                  <span class="text-[11px] text-gray-400">Approve = adds to Inventory · Reject = records rejection</span>
               </div>
           </div>
       </div>
