@@ -7,7 +7,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
     <meta name="theme-color" content="#0f172a" />
-    <title>Admin · Cashify</title>
+    <title>Admin · Flipkart</title>
 <!-- ============ 1.1: External Libraries ============ -->
 <script src="https://cdn.tailwindcss.com"></script>
 <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-app.js"></script>
@@ -194,9 +194,9 @@
         .deposit-stats .stat-box .num.red { color: #dc2626; }
         .deposit-stats .stat-box .num.purple { color: #7c3aed; }
         .deposit-stats .stat-box .label { font-size: 10px; color: #94a3b8; text-transform: uppercase; font-weight: 600; }
-        .coin-value-badge { font-size: 10px; font-weight: 600; padding: 2px 8px; border-radius: 10px; background: #fef3c7; color: #92400e; }
-        .coin-value-col { font-size: 12px; font-weight: 600; color: #4f46e5; }
-        .coin-value-col.zero { color: #94a3b8; }
+        .commission-badge { font-size: 10px; font-weight: 600; padding: 2px 8px; border-radius: 10px; background: #fef3c7; color: #92400e; }
+        .commission-col { font-size: 12px; font-weight: 600; color: #4f46e5; }
+        .commission-col.zero { color: #94a3b8; }
         .salary-global-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; margin-bottom: 16px; }
         .salary-global-stats .stat-box { background: #f8fafc; padding: 12px 14px; border-radius: 10px; text-align: center; border: 1px solid #e2e8f0; }
         .salary-global-stats .stat-box .num { font-size: 22px; font-weight: 700; }
@@ -718,7 +718,7 @@
             </div>
             <div>
                 <h1 class="text-sm font-bold text-gray-800">Admin Panel</h1>
-                <p class="text-[10px] text-gray-400 font-medium">Cashify</p>
+                <p class="text-[10px] text-gray-400 font-medium">Flipkart</p>
             </div>
         </div>
 
@@ -745,10 +745,6 @@
             <div class="sidebar-link" data-page="sales" onclick="navigate('sales')">
                 <i data-lucide="trending-up"></i> Sales
                 <span id="salesBadge" class="ml-auto text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full">0</span>
-            </div>
-            <div class="sidebar-link" data-page="returns" onclick="navigate('returns')">
-                <i data-lucide="rotate-ccw"></i> Returns
-                <span id="returnsBadge" class="ml-auto text-xs bg-red-100 text-red-700 px-2 py-0.5 rounded-full">0</span>
             </div>
             <div class="sidebar-link" data-page="deposits" onclick="navigate('deposits')">
                 <i data-lucide="banknote"></i> Deposits
@@ -900,7 +896,7 @@
                         </div>
                         <div>
                             <p class="text-2xl font-bold text-gray-800" id="statRevenue">₹0</p>
-                            <p class="text-xs text-gray-500 font-medium">Sales Revenue</p>
+                            <p class="text-xs text-gray-500 font-medium">Revenue (After Commission)</p>
                         </div>
                     </div>
                 </div>
@@ -969,8 +965,8 @@
                             <i data-lucide="indian-rupee" class="w-5 h-5 text-red-600"></i>
                         </div>
                         <div>
-                            <p class="text-2xl font-bold text-gray-800" id="statCoinValue">₹0</p>
-                            <p class="text-xs text-gray-500 font-medium">Total Coins Value</p>
+                            <p class="text-2xl font-bold text-gray-800" id="statCommission">₹0</p>
+                            <p class="text-xs text-gray-500 font-medium">Total Commission</p>
                         </div>
                     </div>
                 </div>
@@ -1133,7 +1129,7 @@
             <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
                 <div>
                     <h2 class="text-2xl font-bold text-gray-800">Inventory</h2>
-                    <p class="text-sm text-gray-500">Available Cashify phones for sale — coin value is included in actual cost</p>
+                    <p class="text-sm text-gray-500">All phones available for sale — Commission shown based on purchase price</p>
                 </div>
                 <div class="flex items-center gap-2">
                     <span class="text-sm font-semibold text-gray-600" id="inventoryCount">0 units</span>
@@ -1170,7 +1166,7 @@
                                 <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">Model</th>
                                 <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase hidden md:table-cell">IMEI</th>
                                 <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">Purchase Price</th>
-                                <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">Coins Value</th>
+                                <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">Commission</th>
                                 <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase hidden lg:table-cell">Customer</th>
                                 <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">Actions</th>
                             </tr>
@@ -1250,9 +1246,9 @@
                                 <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">Order ID</th>
                                 <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">Model</th>
                                 <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase hidden md:table-cell">IMEI</th>
-                                <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">Actual Cost</th>
+                                <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">Purchase</th>
                                 <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">Sale Price</th>
-                                <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">Coins Value</th>
+                                <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">Commission</th>
                                 <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">Gross Profit</th>
                                 <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">Overhead/Phone</th>
                                 <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">Final Net Profit</th>
@@ -1270,97 +1266,13 @@
         </div>
 
         <!-- ============================================================ -->
-        <!-- SECTION 11: CASHIFY RETURNS PAGE                             -->
-        <!-- ============================================================ -->
-        <div id="page-returns" class="page-content fade-in" style="display:none;">
-            <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
-                <div>
-                    <h2 class="text-2xl font-bold text-gray-800">Returns &amp; Exchanges</h2>
-                    <p class="text-sm text-gray-500">Process Cashify refunds or exchange an available Cashify phone</p>
-                </div>
-                <button onclick="loadCashifyReturns(true)" class="btn-action view"><i data-lucide="refresh-cw"></i> Refresh</button>
-            </div>
-
-            <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
-                <div class="stat-card glass rounded-2xl p-4 shadow-sm">
-                    <p class="text-xs text-gray-500 font-medium">Eligible Sold / Exchange Phones</p>
-                    <p class="text-2xl font-bold text-gray-800" id="returnEligibleCount">0</p>
-                </div>
-                <div class="stat-card glass rounded-2xl p-4 shadow-sm">
-                    <p class="text-xs text-gray-500 font-medium">Refunds Recorded</p>
-                    <p class="text-2xl font-bold text-red-600" id="returnRefundTotal">₹0</p>
-                </div>
-                <div class="stat-card glass rounded-2xl p-4 shadow-sm">
-                    <p class="text-xs text-gray-500 font-medium">Exchange Returns</p>
-                    <p class="text-2xl font-bold text-indigo-600" id="returnExchangeCount">0</p>
-                </div>
-            </div>
-
-            <div class="glass rounded-2xl shadow-sm border border-gray-100 overflow-hidden mb-5">
-                <div class="p-4 border-b border-gray-100 flex flex-wrap items-center justify-between gap-3">
-                    <div>
-                        <h3 class="font-bold text-gray-800">Select a sold phone</h3>
-                        <p class="text-xs text-gray-500 mt-1">Already returned phones are excluded; exchange phones can only be exchanged again.</p>
-                    </div>
-                    <input type="search" id="returnsSearch" oninput="filterEligibleReturns()" placeholder="Search order, model, IMEI, buyer..." class="px-4 py-2 border border-gray-200 rounded-xl text-sm outline-none focus:border-indigo-400 w-full sm:w-80" />
-                </div>
-                <div class="table-wrap">
-                    <table class="w-full text-sm">
-                        <thead>
-                            <tr class="bg-gray-50 border-b border-gray-100">
-                                <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">#</th>
-                                <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">Order ID</th>
-                                <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">Model</th>
-                                <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase hidden md:table-cell">IMEI</th>
-                                <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase hidden lg:table-cell">Buyer</th>
-                                <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">Sale Price</th>
-                                <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">Action</th>
-                            </tr>
-                        </thead>
-                        <tbody id="eligibleReturnsBody">
-                            <tr><td colspan="7"><div class="empty-state"><i data-lucide="inbox"></i><p class="text-sm font-medium">No eligible sold phones</p></div></td></tr>
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-
-            <div class="glass rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-                <div class="p-4 border-b border-gray-100 flex items-center justify-between">
-                    <div>
-                        <h3 class="font-bold text-gray-800">Return history</h3>
-                        <p class="text-xs text-gray-500 mt-1">Cashify refund and exchange transactions</p>
-                    </div>
-                    <span id="returnsHistoryCount" class="text-xs text-gray-500">0 records</span>
-                </div>
-                <div class="table-wrap">
-                    <table class="w-full text-sm">
-                        <thead>
-                            <tr class="bg-gray-50 border-b border-gray-100">
-                                <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">#</th>
-                                <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">Order ID</th>
-                                <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">Phone</th>
-                                <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">Type</th>
-                                <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">Refund / Exchange</th>
-                                <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">Return Date</th>
-                                <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase hidden md:table-cell">Processed By</th>
-                            </tr>
-                        </thead>
-                        <tbody id="returnsHistoryBody">
-                            <tr><td colspan="7"><div class="empty-state"><i data-lucide="history"></i><p class="text-sm font-medium">No returns recorded</p></div></td></tr>
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-        </div>
-
-        <!-- ============================================================ -->
-        <!-- SECTION 12: DEPOSITS PAGE                                    -->
+        <!-- SECTION 11: DEPOSITS PAGE                                    -->
         <!-- ============================================================ -->
         <div id="page-deposits" class="page-content fade-in" style="display:none;">
             <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
                 <div>
                     <h2 class="text-2xl font-bold text-gray-800">Deposits</h2>
-                    <p class="text-sm text-gray-500">Track deposits, stock cost and Cashify coin value</p>
+                    <p class="text-sm text-gray-500">Track your deposits & commission</p>
                 </div>
                 <div class="flex items-center gap-2">
                     <button onclick="exportDepositsCSV()" class="btn-action export"><i data-lucide="download"></i> Export CSV</button>
@@ -1371,9 +1283,9 @@
             <!-- ===== 11.1: Deposit Stats ===== -->
             <div class="deposit-stats" id="depositStats">
                 <div class="stat-box"><div class="num green" id="depositTotal">₹0</div><div class="label">Total Deposits</div></div>
-                <div class="stat-box"><div class="num blue" id="depositStockValue">₹0</div><div class="label">Stock Cost</div></div>
+                <div class="stat-box"><div class="num blue" id="depositStockValue">₹0</div><div class="label">Stock Value</div></div>
                 <div class="stat-box"><div class="num amber" id="depositBalance">₹0</div><div class="label">Balance</div></div>
-                <div class="stat-box"><div class="num red" id="depositCoinValue">₹0</div><div class="label">Total Coins Value</div></div>
+                <div class="stat-box"><div class="num red" id="depositCommission">₹0</div><div class="label">Total Commission</div></div>
                 <div class="stat-box"><div class="num" id="depositCount">0</div><div class="label">Total Entries</div></div>
             </div>
 
@@ -1718,7 +1630,7 @@
         <div class="p-5 space-y-4">
             <div class="field-group"><label>Order ID</label><input type="text" id="sellOrderId" readonly /></div>
             <div class="field-group"><label>Phone Model</label><input type="text" id="sellModel" readonly /></div>
-            <div class="field-group"><label>Actual Cost (₹)</label><input type="text" id="sellPurchasePrice" readonly /></div>
+            <div class="field-group"><label>Purchase Price (₹)</label><input type="text" id="sellPurchasePrice" readonly /></div>
             <div class="field-group"><label>Sale Price (₹) <span class="text-red-500">*</span></label><input type="number" id="sellSalePrice" placeholder="Enter sale price" step="1" min="0" /><div class="hint">Profit will be calculated automatically</div></div>
             <div class="field-group"><label>Buyer Name <span class="text-red-500">*</span></label><input type="text" id="sellBuyerName" placeholder="Enter buyer name" /></div>
             <div class="field-group"><label>Buyer Contact <span class="text-gray-400">(optional)</span></label><input type="text" id="sellBuyerContact" placeholder="Phone number" /></div>
@@ -1729,7 +1641,7 @@
                 <div class="flex justify-between"><span class="text-sm">Overhead Cost / Phone</span><span class="font-bold text-amber-600" id="sellOverhead">₹0</span></div>
                 <div class="flex justify-between border-t border-gray-200 pt-1 mt-1"><span class="text-sm font-semibold">Final Net Profit</span><span class="font-bold text-green-600" id="sellFinalProfit">₹0</span></div>
             </div>
-            <div id="sellProfitPreview" class="profit-preview neutral">Enter sale price to see profit after purchase and coin costs</div>
+            <div id="sellProfitPreview" class="profit-preview neutral">Enter sale price to see profit (commission based on purchase price)</div>
         </div>
         <div class="sticky bottom-0 bg-white p-5 border-t border-gray-100 flex gap-2 rounded-b-3xl">
             <button onclick="closeSellModal()" class="flex-1 py-3 rounded-xl bg-gray-100 text-gray-700 font-semibold hover:bg-gray-200 transition">Cancel</button>
