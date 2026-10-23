@@ -1,5 +1,5 @@
 // File: script.js
-// Flipkart Admin Panel — Full Script
+// Cashify Admin Panel — Full Script
 // Salary System v3: Paid Cycle Snapshot + Undo + Revert + Delete + Adjustment History
 // + Per-activity incentive override (added)
 
@@ -7,14 +7,14 @@
 // FIREBASE CONFIG
 // ================================================================
 const firebaseConfig = {
-  apiKey: "AIzaSyDGJWdgj2GBL-44gXZ9W0mWnOfsczwPXdw",
-  authDomain: "mobile-shop-9ea44.firebaseapp.com",
-  databaseURL: "https://mobile-shop-9ea44-default-rtdb.firebaseio.com",
-  projectId: "mobile-shop-9ea44",
-  storageBucket: "mobile-shop-9ea44.firebasestorage.app",
-  messagingSenderId: "902893829958",
-  appId: "1:902893829958:web:f2f429ad9290c56f4d6f47",
-  measurementId: "G-V4JQT7Z8T9"
+  apiKey: "AIzaSyD1XNPVJfKzPoNgxo5R33zxOCebH2H613w",
+  authDomain: "cashify-1cea1.firebaseapp.com",
+  databaseURL: "https://cashify-1cea1-default-rtdb.firebaseio.com",
+  projectId: "cashify-1cea1",
+  storageBucket: "cashify-1cea1.firebasestorage.app",
+  messagingSenderId: "141846449557",
+  appId: "1:141846449557:web:8afe3b2c843b1297a3fa9c",
+  measurementId: "G-SNC5ELYPL6"
 };
 
 firebase.initializeApp(firebaseConfig);
@@ -139,7 +139,8 @@ const cache = {
   users: null,
   deposits: null,
   attendance: null,
-  salary_payments: null
+  salary_payments: null,
+  returns: null
 };
 
 const cacheTime = {
@@ -148,7 +149,8 @@ const cacheTime = {
   users: 0,
   deposits: 0,
   attendance: 0,
-  salary_payments: 0
+  salary_payments: 0,
+  returns: 0
 };
 
 function invalidate(...nodes) {
@@ -171,27 +173,37 @@ async function getData(node, force = false) {
 }
 
 // ================================================================
-// COMMISSION
+// CASHIFY COSTS
 // ================================================================
-const COMMISSION_BRACKETS = [
-  { min: 0, max: 10000, type: 'percentage', value: 10 },
-  { min: 10001, max: 31000, type: 'percentage', value: 8 },
-  { min: 31001, max: Infinity, type: 'fixed', value: 2500 }
-];
-
-function calculateCommission(purchasePrice) {
-  if (!purchasePrice || purchasePrice <= 0) return 0;
-
-  for (const bracket of COMMISSION_BRACKETS) {
-    if (purchasePrice >= bracket.min && purchasePrice <= bracket.max) {
-      if (bracket.type === 'percentage') {
-        return Math.round((purchasePrice * bracket.value) / 100);
-      }
-      return bracket.value;
-    }
+function getCashifyCoinValue(item = {}) {
+  if (item.coinTotalValue !== undefined && item.coinTotalValue !== null) {
+    const totalValue = Number(item.coinTotalValue);
+    if (Number.isFinite(totalValue)) return totalValue;
   }
 
-  return 0;
+  const coins = Number(item.coins) || 0;
+  const rate = item.coinValueRate !== undefined && item.coinValueRate !== null
+    ? Number(item.coinValueRate)
+    : 12.5;
+  return coins * (Number.isFinite(rate) ? rate : 12.5);
+}
+
+function getCashifyAcquisitionCost(item = {}) {
+  if (item.actualTotalCost !== undefined && item.actualTotalCost !== null) {
+    const actualTotalCost = Number(item.actualTotalCost);
+    if (Number.isFinite(actualTotalCost)) return actualTotalCost;
+  }
+
+  return (Number(item.value) || 0) + getCashifyCoinValue(item);
+}
+
+function getCashifyGrossProfit(item = {}) {
+  if (item.grossProfit !== undefined && item.grossProfit !== null) {
+    const grossProfit = Number(item.grossProfit);
+    if (Number.isFinite(grossProfit)) return grossProfit;
+  }
+
+  return (Number(item.salePrice) || 0) - getCashifyAcquisitionCost(item);
 }
 
 // ================================================================
@@ -601,6 +613,8 @@ let filteredInventory = [];
 let filteredSales = [];
 let inventoryTypeFilter = 'all';
 let sellOrderData = null;
+let eligibleReturnPickups = [];
+let cashifyReturnHistory = [];
 
 let agentsList = [];
 let passwordVisible = {};
@@ -680,6 +694,7 @@ function refreshCurrentPage(force = false) {
   else if (currentPageView === 'rejected') loadRejectedAdmin(force);
   else if (currentPageView === 'inventory') loadInventory(force);
   else if (currentPageView === 'sales') loadSales(force);
+  else if (currentPageView === 'returns') loadCashifyReturns(force);
   else if (currentPageView === 'deposits') loadDeposits(force);
   else if (currentPageView === 'attendance') loadAttendance(force);
   else if (currentPageView === 'salary') loadSalaryData(force);
@@ -708,28 +723,24 @@ async function loadDashboard(force = false) {
     let unsoldCount = 0;
     let revenue = 0;
     let profit = 0;
-    let totalCommission = 0;
+    let totalCoinValue = 0;
     let totalStockValue = 0;
 
     Object.values(pickups).forEach(item => {
       total++;
       if (item.status === 'on_hold') return;
 
-      const commission = item.commission !== undefined ? item.commission : calculateCommission(item.value || 0);
-      totalCommission += commission;
-
       if (item.status === 'pickup') {
+        totalCoinValue += getCashifyCoinValue(item);
         pickupCount++;
 
         if (item.sold) {
           soldCount++;
-          const netRevenue = (item.salePrice || 0) - commission;
-          revenue += netRevenue;
-          const itemProfit = item.profit !== undefined ? item.profit : (netRevenue - (item.value || 0));
-          profit += itemProfit;
+          revenue += Number(item.salePrice) || 0;
+          profit += getCashifyGrossProfit(item);
         } else {
           unsoldCount++;
-          totalStockValue += item.value || 0;
+          totalStockValue += getCashifyAcquisitionCost(item);
         }
       } else if (item.status === 'rejected') {
         rejectedCount++;
@@ -775,7 +786,7 @@ async function loadDashboard(force = false) {
     setText('statStockValue', formatINR(totalStockValue));
     setText('statAgents', totalAgents);
     setText('statPresentToday', presentToday);
-    setText('statCommission', formatINR(totalCommission));
+    setText('statCoinValue', formatINR(totalCoinValue));
 
     setText('orderCountBadge', total);
     setText('pendingBadge', pendingCount);
@@ -1355,7 +1366,7 @@ function renderInventoryTable() {
   let html = '';
 
   filteredInventory.forEach((item, idx) => {
-    const commission = calculateCommission(item.value || 0);
+    const coinValue = getCashifyCoinValue(item);
 
     html += `
       <tr class="order-row border-b border-gray-50">
@@ -1364,7 +1375,7 @@ function renderInventoryTable() {
         <td class="py-3 px-4 text-gray-600 text-sm">${item.phoneModel || '—'}</td>
         <td class="py-3 px-4 hidden md:table-cell font-mono text-xs text-gray-500">${item.imei || '—'}</td>
         <td class="py-3 px-4 font-bold text-gray-700">${formatINR(item.value || 0)}</td>
-        <td class="py-3 px-4"><span class="commission-col">${formatINR(commission)}</span></td>
+        <td class="py-3 px-4"><span class="coin-value-col">${formatINR(coinValue)}</span></td>
         <td class="py-3 px-4 hidden lg:table-cell text-gray-600 text-sm">${item.customerName || '—'}</td>
         <td class="py-3 px-4">
           <button onclick="openSellModal('${item.id}')" class="btn-action sell"><i data-lucide="badge-dollar-sign"></i> Sell</button>
@@ -1469,17 +1480,20 @@ async function loadSales(force = false) {
     }
 
     salesList = Object.entries(data)
-      .filter(([_, item]) => item.sold === true && item.status !== 'on_hold')
+      .filter(([_, item]) => item.sold === true && item.status !== 'on_hold' && item.soldVia !== 'exchange')
       .map(([id, item]) => {
-        const purchase = item.value || 0;
-        const commission = item.commission !== undefined ? item.commission : calculateCommission(purchase);
-        const grossProfit = (item.salePrice || 0) - purchase - commission;
-        const finalNetProfit = grossProfit - overheadPerPhone;
+        const purchase = getCashifyAcquisitionCost(item);
+        const coinValue = getCashifyCoinValue(item);
+        const grossProfit = getCashifyGrossProfit(item);
+        const finalNetProfit = item.finalNetProfit !== undefined
+          ? Number(item.finalNetProfit) || 0
+          : grossProfit - overheadPerPhone;
 
         return {
           id,
           ...item,
-          commission,
+          purchaseCost: purchase,
+          coinValue,
           grossProfit,
           finalNetProfit
         };
@@ -1536,12 +1550,9 @@ function updateSalesSummary() {
   let finalProfitTotal = 0;
 
   filteredSales.forEach(item => {
-    const purchase = item.value || 0;
-    const c = item.commission !== undefined ? item.commission : calculateCommission(purchase);
+    revenue += Number(item.salePrice) || 0;
 
-    revenue += (item.salePrice || 0) - c;
-
-    const gp = item.grossProfit !== undefined ? item.grossProfit : (item.salePrice - c - purchase);
+    const gp = getCashifyGrossProfit(item);
     grossProfitTotal += gp || 0;
 
     const fp = item.finalNetProfit !== undefined ? item.finalNetProfit : (gp - overheadPerPhone);
@@ -1569,9 +1580,9 @@ function renderSalesTable() {
   let html = '';
 
   filteredSales.forEach((item, idx) => {
-    const purchase = item.value || 0;
-    const commission = item.commission !== undefined ? item.commission : calculateCommission(purchase);
-    const grossProfit = item.grossProfit !== undefined ? item.grossProfit : (item.salePrice - commission - purchase);
+    const purchase = getCashifyAcquisitionCost(item);
+    const coinValue = getCashifyCoinValue(item);
+    const grossProfit = getCashifyGrossProfit(item);
     const finalProfit = item.finalNetProfit !== undefined ? item.finalNetProfit : (grossProfit - overheadPerPhone);
     const profitClass = finalProfit >= 0 ? 'profit-green' : 'profit-red';
 
@@ -1583,7 +1594,7 @@ function renderSalesTable() {
         <td class="py-3 px-4 hidden md:table-cell font-mono text-xs text-gray-500">${item.imei || '—'}</td>
         <td class="py-3 px-4 text-gray-600">${formatINR(purchase)}</td>
         <td class="py-3 px-4 font-bold text-gray-800">${formatINR(item.salePrice || 0)}</td>
-        <td class="py-3 px-4"><span class="commission-badge">${formatINR(commission)}</span></td>
+        <td class="py-3 px-4"><span class="coin-value-badge">${formatINR(coinValue)}</span></td>
         <td class="py-3 px-4 font-bold text-indigo-600">${formatINR(grossProfit)}</td>
         <td class="py-3 px-4 text-amber-600 font-semibold">${formatINR(overheadPerPhone)}</td>
         <td class="py-3 px-4 font-bold ${profitClass}">${formatINR(finalProfit)}</td>
@@ -1609,12 +1620,13 @@ function exportSalesCSV() {
     return;
   }
 
-  const headers = ['Order ID', 'Model', 'IMEI', 'Purchase Price', 'Sale Price', 'Commission', 'Gross Profit', 'Overhead/Phone', 'Final Net Profit', 'Buyer', 'Buyer Contact', 'Sale Date', 'Agent'];
+  const headers = ['Order ID', 'Model', 'IMEI', 'Purchase Price', 'Coins Value', 'Actual Cost', 'Sale Price', 'Gross Profit', 'Overhead/Phone', 'Final Net Profit', 'Buyer', 'Buyer Contact', 'Sale Date', 'Agent'];
 
   const rows = filteredSales.map(item => {
-    const purchase = item.value || 0;
-    const c = item.commission !== undefined ? item.commission : calculateCommission(purchase);
-    const gp = item.grossProfit !== undefined ? item.grossProfit : (item.salePrice - c - purchase);
+    const purchase = Number(item.value) || 0;
+    const coinValue = getCashifyCoinValue(item);
+    const actualCost = getCashifyAcquisitionCost(item);
+    const gp = getCashifyGrossProfit(item);
     const fp = item.finalNetProfit !== undefined ? item.finalNetProfit : (gp - overheadPerPhone);
 
     return [
@@ -1622,8 +1634,9 @@ function exportSalesCSV() {
       item.phoneModel || '',
       item.imei || '',
       purchase,
+      coinValue,
+      actualCost,
       item.salePrice || 0,
-      c,
       gp,
       overheadPerPhone,
       fp,
@@ -1653,6 +1666,360 @@ function exportSalesCSV() {
 }
 
 // ================================================================
+// CASHIFY RETURNS & EXCHANGES
+// ================================================================
+async function loadCashifyReturns(force = false) {
+  try {
+    const [pickups, returns] = await Promise.all([
+      getData('pickups', force),
+      getData('returns', force)
+    ]);
+
+    eligibleReturnPickups = Object.entries(pickups)
+      .filter(([_, item]) =>
+        item &&
+        item.status === 'pickup' &&
+        item.sold === true &&
+        item.returned !== true
+      )
+      .map(([id, item]) => ({ id, ...item }))
+      .sort((a, b) => (Number(b.saleTimestamp || b.timestamp) || 0) - (Number(a.saleTimestamp || a.timestamp) || 0));
+
+    cashifyReturnHistory = Object.entries(returns)
+      .filter(([_, item]) => item && (!item.source || item.source === 'cashify'))
+      .map(([id, item]) => ({ id, ...item }))
+      .sort((a, b) => (Number(b.createdAt) || 0) - (Number(a.createdAt) || 0));
+
+    setText('returnsBadge', cashifyReturnHistory.length);
+    renderCashifyReturnSummary();
+    filterEligibleReturns();
+    renderCashifyReturnHistory();
+  } catch (error) {
+    console.error('Cashify returns load failed:', error);
+    showToast('Could not load Cashify returns', 'error', 5000);
+    setHTML('eligibleReturnsBody', '<tr><td colspan="7"><div class="empty-state"><p class="text-sm font-medium text-red-500">Failed to load eligible sales</p></div></td></tr>');
+    setHTML('returnsHistoryBody', '<tr><td colspan="7"><div class="empty-state"><p class="text-sm font-medium text-red-500">Failed to load return history</p></div></td></tr>');
+  }
+}
+
+function renderCashifyReturnSummary() {
+  const refundTotal = cashifyReturnHistory
+    .filter(item => item.returnType === 'money')
+    .reduce((total, item) => total + (Number(item.returnAmount) || 0), 0);
+  const exchangeCount = cashifyReturnHistory.filter(item => item.returnType === 'exchange').length;
+
+  setText('returnEligibleCount', eligibleReturnPickups.length);
+  setText('returnRefundTotal', formatINR(refundTotal));
+  setText('returnExchangeCount', exchangeCount);
+}
+
+function filterEligibleReturns() {
+  const query = getVal('returnsSearch').trim().toLowerCase();
+  const filtered = query
+    ? eligibleReturnPickups.filter(item =>
+        [item.orderId, item.id, item.phoneModel, item.imei, item.buyerName, item.customerName]
+          .some(value => String(value || '').toLowerCase().includes(query))
+      )
+    : eligibleReturnPickups;
+
+  renderEligibleReturns(filtered);
+}
+
+function renderEligibleReturns(items) {
+  const tbody = $('eligibleReturnsBody');
+  if (!tbody) return;
+
+  if (!items.length) {
+    tbody.innerHTML = `<tr><td colspan="7"><div class="empty-state"><i data-lucide="inbox"></i><p class="text-sm font-medium">No eligible sold phones</p></div></td></tr>`;
+    refreshIcons();
+    return;
+  }
+
+  tbody.innerHTML = items.map((item, index) => {
+    const saleDate = item.saleDate || (item.saleTimestamp ? getLocalYMD(new Date(item.saleTimestamp)) : '—');
+    return `
+      <tr class="border-b border-gray-50 hover:bg-gray-50">
+        <td class="py-3 px-4 text-gray-400 font-mono text-xs">${index + 1}</td>
+        <td class="py-3 px-4 font-mono font-bold text-gray-800">${esc(item.orderId || item.id)}</td>
+        <td class="py-3 px-4 text-gray-700">${esc(item.phoneModel || '—')}</td>
+        <td class="py-3 px-4 hidden md:table-cell font-mono text-xs text-gray-500">${esc(item.imei || '—')}</td>
+        <td class="py-3 px-4 hidden lg:table-cell text-gray-600">${esc(item.buyerName || '—')}</td>
+        <td class="py-3 px-4 font-semibold">${formatINR(Number(item.salePrice) || 0)}<div class="text-[10px] text-gray-400">${esc(saleDate)}</div></td>
+        <td class="py-3 px-4"><button type="button" data-return-pickup-id="${esc(item.id)}" onclick="openCashifyReturnDialog(this.dataset.returnPickupId)" class="btn-action delete"><i data-lucide="rotate-ccw"></i> Return</button></td>
+      </tr>
+    `;
+  }).join('');
+  refreshIcons();
+}
+
+function renderCashifyReturnHistory() {
+  const tbody = $('returnsHistoryBody');
+  if (!tbody) return;
+
+  setText('returnsHistoryCount', `${cashifyReturnHistory.length} records`);
+  if (!cashifyReturnHistory.length) {
+    tbody.innerHTML = `<tr><td colspan="7"><div class="empty-state"><i data-lucide="history"></i><p class="text-sm font-medium">No returns recorded</p></div></td></tr>`;
+    refreshIcons();
+    return;
+  }
+
+  tbody.innerHTML = cashifyReturnHistory.map((item, index) => {
+    const isExchange = item.returnType === 'exchange';
+    const outcome = isExchange
+      ? `${esc(item.exchangeModel || '—')} · ${esc(item.exchangeOrderId || '—')}`
+      : `${formatINR(Number(item.returnAmount) || 0)} refunded`;
+    const processedBy = item.createdByName || item.createdByUsername || item.createdBy || 'Admin';
+    return `
+      <tr class="border-b border-gray-50">
+        <td class="py-3 px-4 text-gray-400 font-mono text-xs">${index + 1}</td>
+        <td class="py-3 px-4 font-mono font-bold text-gray-800">${esc(item.originalOrderId || '—')}</td>
+        <td class="py-3 px-4 text-gray-700">${esc(item.originalModel || '—')}</td>
+        <td class="py-3 px-4"><span class="badge-status ${isExchange ? 'on_hold' : 'rejected'}">${isExchange ? 'Exchange' : 'Refund'}</span></td>
+        <td class="py-3 px-4 text-gray-700">${outcome}</td>
+        <td class="py-3 px-4 text-gray-600">${esc(item.returnDate || '—')}</td>
+        <td class="py-3 px-4 hidden md:table-cell text-gray-600">${esc(processedBy)}</td>
+      </tr>
+    `;
+  }).join('');
+  refreshIcons();
+}
+
+async function openCashifyReturnDialog(orderId) {
+  const original = eligibleReturnPickups.find(item => item.id === orderId);
+  if (!original) {
+    showToast('This sale is no longer eligible for return', 'error');
+    return;
+  }
+
+  const originalSalePrice = Number(original.salePrice) || 0;
+  const exchangeOnly = original.soldVia === 'exchange';
+  if (originalSalePrice <= 0 && !exchangeOnly) {
+    showToast('This sale has no refundable sale amount', 'error');
+    return;
+  }
+
+  try {
+    const pickups = await getData('pickups', true);
+    const exchangePhones = Object.entries(pickups)
+      .filter(([id, item]) => id !== orderId && item && item.status === 'pickup' && !item.sold)
+      .map(([id, item]) => ({ id, ...item }))
+      .sort((a, b) => String(a.phoneModel || '').localeCompare(String(b.phoneModel || '')));
+    if (exchangeOnly && !exchangePhones.length) {
+      showToast('No Cashify inventory is available for this exchange return', 'error', 5000);
+      return;
+    }
+
+    const exchangeOptions = exchangePhones.map(item =>
+      `<option value="${esc(item.id)}">${esc(item.orderId || item.id)} — ${esc(item.phoneModel || 'Unknown model')} — ${esc(item.imei || 'No IMEI')}</option>`
+    ).join('');
+    const initialReturnType = exchangeOnly ? 'exchange' : 'money';
+    const selected = await Swal.fire({
+      title: 'Process Cashify Return',
+      html: `
+        <div class="text-left text-sm space-y-3">
+          <p><strong>Order:</strong> ${esc(original.orderId || original.id)} · ${esc(original.phoneModel || '—')}</p>
+          <p><strong>Original sale:</strong> ${formatINR(originalSalePrice)} · <strong>Buyer:</strong> ${esc(original.buyerName || '—')}</p>
+          <label class="block text-xs font-semibold text-gray-600">Return date
+            <input id="cashifyReturnDate" type="date" class="swal2-input" value="${getLocalYMD()}" style="width:100%;margin:6px 0 0;">
+          </label>
+          <label class="block text-xs font-semibold text-gray-600">Settlement type
+            <select id="cashifyReturnType" class="swal2-select" style="display:flex;width:100%;margin:6px 0 0;">
+              <option value="money" ${exchangeOnly ? 'disabled' : ''} ${initialReturnType === 'money' ? 'selected' : ''}>Refund money</option>
+              <option value="exchange" ${exchangePhones.length ? '' : 'disabled'} ${initialReturnType === 'exchange' ? 'selected' : ''}>Exchange with Cashify inventory</option>
+            </select>
+          </label>
+          <div id="cashifyRefundField">
+            <label class="block text-xs font-semibold text-gray-600">Refund amount (max ${formatINR(originalSalePrice)})
+              <input id="cashifyReturnAmount" type="number" class="swal2-input" min="0.01" max="${originalSalePrice}" step="0.01" value="${originalSalePrice}" style="width:100%;margin:6px 0 0;">
+            </label>
+          </div>
+          <div id="cashifyExchangeField" style="display:none;">
+            <label class="block text-xs font-semibold text-gray-600">Available exchange phone
+              <select id="cashifyExchangePickup" class="swal2-select" style="display:flex;width:100%;margin:6px 0 0;">
+                <option value="">Select an available Cashify phone</option>${exchangeOptions}
+              </select>
+            </label>
+          </div>
+        </div>`,
+      showCancelButton: true,
+      confirmButtonText: 'Review Return',
+      cancelButtonText: 'Cancel',
+      focusConfirm: false,
+      didOpen: () => {
+        const typeSelect = document.getElementById('cashifyReturnType');
+        const refundField = document.getElementById('cashifyRefundField');
+        const exchangeField = document.getElementById('cashifyExchangeField');
+        const exchangeSelected = typeSelect.value === 'exchange';
+        refundField.style.display = exchangeSelected ? 'none' : 'block';
+        exchangeField.style.display = exchangeSelected ? 'block' : 'none';
+        typeSelect.addEventListener('change', () => {
+          const exchangeSelected = typeSelect.value === 'exchange';
+          refundField.style.display = exchangeSelected ? 'none' : 'block';
+          exchangeField.style.display = exchangeSelected ? 'block' : 'none';
+        });
+      },
+      preConfirm: () => {
+        const type = document.getElementById('cashifyReturnType').value;
+        const returnDate = document.getElementById('cashifyReturnDate').value;
+        const returnAmount = Number(document.getElementById('cashifyReturnAmount').value);
+        const exchangePickupId = document.getElementById('cashifyExchangePickup').value;
+
+        if (!returnDate) {
+          Swal.showValidationMessage('Return date is required');
+          return false;
+        }
+        if (type === 'money' && (!Number.isFinite(returnAmount) || returnAmount <= 0 || returnAmount > originalSalePrice)) {
+          Swal.showValidationMessage('Refund must be greater than zero and no more than the original sale price');
+          return false;
+        }
+        if (type === 'exchange' && (!exchangePickupId || !exchangePhones.some(item => item.id === exchangePickupId))) {
+          Swal.showValidationMessage('Select an available Cashify exchange phone');
+          return false;
+        }
+        return { type, returnDate, returnAmount: type === 'money' ? returnAmount : 0, exchangePickupId };
+      }
+    });
+
+    if (!selected.isConfirmed) return;
+    const details = selected.value;
+    const exchangePhone = details.type === 'exchange'
+      ? exchangePhones.find(item => item.id === details.exchangePickupId)
+      : null;
+    const confirm = await Swal.fire({
+      title: 'Confirm Return',
+      html: `
+        <div class="text-left text-sm space-y-2">
+          <p><strong>Order:</strong> ${esc(original.orderId || original.id)}</p>
+          <p><strong>Phone:</strong> ${esc(original.phoneModel || '—')}</p>
+          <p><strong>Settlement:</strong> ${details.type === 'money'
+            ? `${formatINR(details.returnAmount)} refund`
+            : `Exchange with ${esc(exchangePhone.phoneModel || '—')} (${esc(exchangePhone.orderId || exchangePhone.id)})`}</p>
+          <p><strong>Return date:</strong> ${esc(details.returnDate)}</p>
+          <p class="text-red-600 font-semibold mt-3">The original sale will be returned to Cashify inventory.</p>
+        </div>`,
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonText: 'Process Return',
+      cancelButtonText: 'Go Back',
+      confirmButtonColor: '#dc2626'
+    });
+    if (!confirm.isConfirmed) return;
+
+    const [freshOriginalSnap, freshExchangeSnap] = await Promise.all([
+      db.ref(`pickups/${orderId}`).once('value'),
+      exchangePhone ? db.ref(`pickups/${exchangePhone.id}`).once('value') : Promise.resolve(null)
+    ]);
+    const freshOriginal = freshOriginalSnap.val();
+    if (!freshOriginal ||
+        freshOriginal.status !== 'pickup' ||
+        freshOriginal.sold !== true ||
+        freshOriginal.returned === true) {
+      showToast('This sale is no longer eligible for return', 'error');
+      await loadCashifyReturns(true);
+      return;
+    }
+    const freshOriginalSalePrice = Number(freshOriginal.salePrice) || 0;
+    if (details.type === 'money' &&
+        (freshOriginalSalePrice <= 0 || details.returnAmount > freshOriginalSalePrice)) {
+      showToast('Refund amount exceeds the current sale price; reopen the return form', 'error', 5000);
+      await loadCashifyReturns(true);
+      return;
+    }
+
+    let freshExchangePhone = null;
+    if (exchangePhone) {
+      freshExchangePhone = freshExchangeSnap.val();
+      if (!freshExchangePhone || freshExchangePhone.status !== 'pickup' || freshExchangePhone.sold) {
+        showToast('The selected exchange phone is no longer available; refresh and choose another', 'error', 5000);
+        await loadCashifyReturns(true);
+        return;
+      }
+    }
+
+    const returnId = db.ref('returns').push().key;
+    if (!returnId) throw new Error('Could not allocate a return record ID');
+
+    const now = Date.now();
+    const originalOrderId = freshOriginal.orderId || orderId;
+    const originalSaleDate = freshOriginal.saleDate ||
+      (freshOriginal.saleTimestamp ? getLocalYMD(new Date(freshOriginal.saleTimestamp)) : '—');
+    const returnRecord = {
+      returnId,
+      source: 'cashify',
+      originalPickupId: orderId,
+      originalOrderId,
+      originalModel: freshOriginal.phoneModel || '—',
+      originalImei: freshOriginal.imei || '—',
+      originalSalePrice: freshOriginalSalePrice,
+      originalSaleDate,
+      originalBuyerName: freshOriginal.buyerName || '',
+      returnDate: details.returnDate,
+      returnType: details.type,
+      returnAmount: details.returnAmount,
+      exchangePhoneSource: freshExchangePhone ? 'cashify' : null,
+      exchangePickupId: freshExchangePhone ? details.exchangePickupId : null,
+      exchangeOrderId: freshExchangePhone ? (freshExchangePhone.orderId || details.exchangePickupId) : null,
+      exchangeModel: freshExchangePhone ? (freshExchangePhone.phoneModel || '—') : null,
+      exchangeImei: freshExchangePhone ? (freshExchangePhone.imei || '—') : null,
+      createdAt: now,
+      createdBy: 'admin',
+      createdByName: 'Admin',
+      createdByUsername: 'admin'
+    };
+
+    const updates = {
+      [`returns/${returnId}`]: returnRecord,
+      [`pickups/${orderId}/sold`]: false,
+      [`pickups/${orderId}/returned`]: true,
+      [`pickups/${orderId}/returnDate`]: details.returnDate,
+      [`pickups/${orderId}/returnId`]: returnId,
+      [`pickups/${orderId}/lastSalePrice`]: freshOriginalSalePrice,
+      [`pickups/${orderId}/lastSaleDate`]: freshOriginal.saleDate || '',
+      [`pickups/${orderId}/lastBuyerName`]: freshOriginal.buyerName || '',
+      [`pickups/${orderId}/salePrice`]: null,
+      [`pickups/${orderId}/buyerName`]: null,
+      [`pickups/${orderId}/buyerContact`]: null,
+      [`pickups/${orderId}/saleDate`]: null,
+      [`pickups/${orderId}/saleTimestamp`]: null,
+      [`pickups/${orderId}/grossProfit`]: null,
+      [`pickups/${orderId}/finalNetProfit`]: null,
+      [`pickups/${orderId}/profit`]: null
+    };
+
+    if (freshExchangePhone) {
+      updates[`pickups/${details.exchangePickupId}/sold`] = true;
+      updates[`pickups/${details.exchangePickupId}/returned`] = false;
+      updates[`pickups/${details.exchangePickupId}/salePrice`] = 0;
+      updates[`pickups/${details.exchangePickupId}/buyerName`] = `Exchange for ${originalOrderId}`;
+      updates[`pickups/${details.exchangePickupId}/buyerContact`] = '';
+      updates[`pickups/${details.exchangePickupId}/saleDate`] = details.returnDate;
+      updates[`pickups/${details.exchangePickupId}/saleTimestamp`] = new Date().toISOString();
+      updates[`pickups/${details.exchangePickupId}/soldVia`] = 'exchange';
+      updates[`pickups/${details.exchangePickupId}/exchangeForReturnId`] = returnId;
+      updates[`pickups/${details.exchangePickupId}/exchangeForOrderId`] = originalOrderId;
+      updates[`pickups/${details.exchangePickupId}/salesBy`] = 'admin';
+      updates[`pickups/${details.exchangePickupId}/salesByName`] = 'Admin';
+      updates[`pickups/${details.exchangePickupId}/grossProfit`] = 0;
+      updates[`pickups/${details.exchangePickupId}/finalNetProfit`] = 0;
+      updates[`pickups/${details.exchangePickupId}/profit`] = 0;
+    }
+
+    await db.ref().update(updates);
+    invalidate('pickups', 'returns');
+    showToast(details.type === 'money' ? 'Cashify refund recorded and phone returned to inventory' : 'Cashify exchange processed', 'success', 5000);
+    await Promise.allSettled([
+      loadCashifyReturns(true),
+      loadSales(true),
+      loadInventory(true),
+      loadDashboard(true)
+    ]);
+  } catch (error) {
+    console.error('Cashify return processing failed:', error);
+    showToast('Could not process the Cashify return. No success was recorded.', 'error', 5000);
+  }
+}
+
+// ================================================================
 // SELL MODAL
 // ================================================================
 function openSellModal(orderId) {
@@ -1671,7 +2038,7 @@ function openSellModalWithOrder(order) {
 
   setVal('sellOrderId', order.orderId || order.id);
   setVal('sellModel', order.phoneModel || '—');
-  setVal('sellPurchasePrice', formatINR(order.value || 0));
+  setVal('sellPurchasePrice', formatINR(getCashifyAcquisitionCost(order)));
   setVal('sellSalePrice', '');
   setVal('sellBuyerName', '');
   setVal('sellBuyerContact', '');
@@ -1680,7 +2047,7 @@ function openSellModalWithOrder(order) {
   const preview = $('sellProfitPreview');
   if (preview) {
     preview.className = 'profit-preview neutral';
-    preview.textContent = 'Enter sale price to see profit (commission based on purchase price)';
+    preview.textContent = 'Enter sale price to see profit after purchase and coin costs';
   }
 
   const modal = $('sellModal');
@@ -1699,10 +2066,9 @@ function openSellModalWithOrder(order) {
 }
 
 function updateSellProfitPreview() {
-  const purchase = sellOrderData ? (sellOrderData.value || 0) : 0;
+  const purchase = sellOrderData ? getCashifyAcquisitionCost(sellOrderData) : 0;
   const sale = parseFloat(getVal('sellSalePrice')) || 0;
-  const commission = calculateCommission(purchase);
-  const grossProfit = sale - purchase - commission;
+  const grossProfit = sale - purchase;
   const finalProfit = grossProfit - overheadPerPhone;
 
   const preview = $('sellProfitPreview');
@@ -1714,7 +2080,7 @@ function updateSellProfitPreview() {
     setText('sellFinalProfit', formatINR(finalProfit));
 
     if (preview) {
-      preview.textContent = `Commission: ${formatINR(commission)} | Gross: ${formatINR(grossProfit)} | Final: ${formatINR(finalProfit)}`;
+      preview.textContent = `Purchase + coins: ${formatINR(purchase)} | Gross: ${formatINR(grossProfit)} | Final: ${formatINR(finalProfit)}`;
       preview.className = finalProfit >= 0 ? 'profit-preview positive' : 'profit-preview negative';
     }
 
@@ -1753,9 +2119,8 @@ async function confirmSell() {
     return;
   }
 
-  const purchasePrice = sellOrderData.value || 0;
-  const commission = calculateCommission(purchasePrice);
-  const grossProfit = salePrice - purchasePrice - commission;
+  const purchasePrice = getCashifyAcquisitionCost(sellOrderData);
+  const grossProfit = salePrice - purchasePrice;
   const finalProfit = grossProfit - overheadPerPhone;
 
   const confirm = await Swal.fire({
@@ -1764,9 +2129,9 @@ async function confirmSell() {
       <div class="text-left">
         <p><strong>Order:</strong> ${sellOrderData.orderId || sellOrderData.id}</p>
         <p><strong>Model:</strong> ${sellOrderData.phoneModel || '—'}</p>
-        <p><strong>Purchase:</strong> ${formatINR(purchasePrice)}</p>
+        <p><strong>Actual Cost:</strong> ${formatINR(purchasePrice)}</p>
         <p><strong>Sale Price:</strong> ${formatINR(salePrice)}</p>
-        <p><strong>Commission:</strong> ${formatINR(commission)}</p>
+        <p><strong>Coins Value:</strong> ${formatINR(getCashifyCoinValue(sellOrderData))}</p>
         <p><strong>Gross Profit:</strong> ${formatINR(grossProfit)}</p>
         <p><strong>Overhead/Phone:</strong> ${formatINR(overheadPerPhone)}</p>
         <p><strong>Final Net Profit:</strong> <span class="${finalProfit >= 0 ? 'text-green-600' : 'text-red-600'} font-bold">${formatINR(finalProfit)}</span></p>
@@ -1787,14 +2152,20 @@ async function confirmSell() {
   try {
     await db.ref('pickups/' + sellOrderData.id).update({
       sold: true,
+      returned: false,
+      soldVia: null,
+      exchangeForReturnId: null,
+      exchangeForOrderId: null,
       salePrice,
-      commission,
-      grossProfit,
-      finalNetProfit: finalProfit,
+      salesBy: 'admin',
+      salesByName: 'Admin',
+      saleTimestamp: new Date().toISOString(),
+      saleDate,
       buyerName,
       buyerContact: buyerContact || '',
-      saleDate,
-      saleTimestamp: new Date().toISOString()
+      profit: grossProfit,
+      grossProfit,
+      finalNetProfit: finalProfit,
     });
 
     invalidate('pickups');
@@ -1863,15 +2234,10 @@ async function viewOrder(orderId) {
       return;
     }
 
-    const purchase = item.value || 0;
-    const commission = item.commission !== undefined ? item.commission : calculateCommission(purchase);
-
     if (item.sold && item.profit === undefined) {
-      const netRevenue = (item.salePrice || 0) - commission;
-      item.profit = netRevenue - purchase;
+      item.profit = getCashifyGrossProfit(item);
     }
 
-    item.commission = commission;
     editData = { ...item, id: orderId };
 
     renderDetailView(item);
@@ -1898,18 +2264,19 @@ function renderDetailView(item) {
     const content = $('detailContent');
     if (!content) return;
 
-    let commissionDisplay = '—';
+    let coinValueDisplay = '—';
     let grossProfitDisplay = '—';
     let finalProfitDisplay = '—';
     let profitClass = '';
     let finalProfitClass = '';
 
     if (item.sold) {
-      const commission = item.commission !== undefined ? item.commission : calculateCommission(item.value || 0);
-      const grossProfit = item.profit !== undefined ? item.profit : ((item.salePrice || 0) - commission - (item.value || 0));
-      const finalProfit = grossProfit - overheadPerPhone;
+      const grossProfit = getCashifyGrossProfit(item);
+      const finalProfit = item.finalNetProfit !== undefined
+        ? Number(item.finalNetProfit) || 0
+        : grossProfit - overheadPerPhone;
 
-      commissionDisplay = formatINR(commission);
+      coinValueDisplay = formatINR(getCashifyCoinValue(item));
       grossProfitDisplay = formatINR(grossProfit);
       finalProfitDisplay = formatINR(finalProfit);
 
@@ -1922,7 +2289,8 @@ function renderDetailView(item) {
     if (item.sold) {
       saleHtml = `
         <div class="detail-item"><div class="label">Sale Price</div><div class="value green">${formatINR(item.salePrice || 0)}</div></div>
-        <div class="detail-item"><div class="label">Commission</div><div class="value amber">${commissionDisplay}</div></div>
+        <div class="detail-item"><div class="label">Coins Value</div><div class="value amber">${coinValueDisplay}</div></div>
+        <div class="detail-item"><div class="label">Actual Cost</div><div class="value">${formatINR(getCashifyAcquisitionCost(item))}</div></div>
         <div class="detail-item"><div class="label">Gross Profit</div><div class="value ${profitClass}">${grossProfitDisplay}</div></div>
         <div class="detail-item"><div class="label">Overhead / Phone</div><div class="value">${formatINR(overheadPerPhone)}</div></div>
         <div class="detail-item"><div class="label">Final Net Profit</div><div class="value ${finalProfitClass}">${finalProfitDisplay}</div></div>
@@ -2500,13 +2868,13 @@ async function saveEdit() {
   }
 
   if (editData.sold) {
-    const commission = calculateCommission(value);
-    const grossProfit = salePrice - commission - value;
+    const acquisitionCost = getCashifyAcquisitionCost(editData) + ((Number(value) || 0) - (Number(editData.value) || 0));
+    const grossProfit = salePrice - acquisitionCost;
     const finalProfit = grossProfit - overheadPerPhone;
 
     updated.sold = true;
+    updated.actualTotalCost = acquisitionCost;
     updated.salePrice = salePrice || 0;
-    updated.commission = commission;
     updated.buyerName = buyer || '';
     updated.buyerContact = buyerContact || '';
     updated.saleDate = saleDate || '';
@@ -2671,7 +3039,7 @@ function exportCSV() {
   const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
   const link = document.createElement('a');
   link.href = URL.createObjectURL(blob);
-  link.download = `flipkart_orders_${getLocalYMD()}.csv`;
+  link.download = `cashify_orders_${getLocalYMD()}.csv`;
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
@@ -2854,23 +3222,20 @@ async function updateDepositStats() {
   setText('depositsBadge', allDeposits.length);
 
   let stockValue = 0;
-  let totalCommission = 0;
+  let totalCoinValue = 0;
 
   const pickups = cache.pickups || await getData('pickups', false);
 
   Object.values(pickups).forEach(item => {
-    if (item.status === 'pickup') stockValue += item.value || 0;
-
-    if (item.status !== 'on_hold') {
-      totalCommission += item.commission !== undefined
-        ? item.commission
-        : calculateCommission(item.value || 0);
+    if (item.status === 'pickup') {
+      stockValue += getCashifyAcquisitionCost(item);
+      totalCoinValue += getCashifyCoinValue(item);
     }
   });
 
   setText('depositStockValue', formatINR(stockValue));
   setText('depositBalance', formatINR(total - stockValue));
-  setText('depositCommission', formatINR(totalCommission));
+  setText('depositCoinValue', formatINR(totalCoinValue));
 }
 
 // ---------- Table rendering ----------
@@ -3137,6 +3502,13 @@ function renderAgentsTable() {
       ? `<button onclick="promoteToAdmin('${item.username}')" class="btn-action promote" title="Promote to Admin"><i data-lucide="user-cog"></i></button>`
       : '';
 
+    const hasAccess = item.sales_access === true;
+    const btnClass = hasAccess ? 'btn-action approve' : 'btn-action hold';
+    const icon = hasAccess ? 'shield-check' : 'shield-off';
+    const title = hasAccess ? 'Revoke Sales Manager access' : 'Grant Sales Manager access';
+    const label = hasAccess ? 'Sales ✓' : 'Sales ✗';
+    const salesAccessBtn = `<button onclick="toggleSalesAccess('${item.username}', ${hasAccess})" class="${btnClass}" title="${title}" style="font-size:11px;padding:6px 10px;"><i data-lucide="${icon}"></i> ${label}</button>`;
+
     html += `
       <tr class="user-row border-b border-gray-50">
         <td class="py-3 px-4 text-gray-400 font-mono text-xs">${idx + 1}</td>
@@ -3153,6 +3525,7 @@ function renderAgentsTable() {
           <div class="promote-btn-wrap">
             ${leaveBtn}
             ${promoteBtn}
+            ${salesAccessBtn}
             <button onclick="viewAgentActivity('${item.username}')" class="btn-action activity"><i data-lucide="activity"></i></button>
             <button onclick="showChangePasswordModal('${item.username}')" class="btn-action edit"><i data-lucide="key"></i></button>
             <button onclick="forceLogout('${item.username}')" class="btn-action logout"><i data-lucide="log-out"></i></button>
@@ -3166,6 +3539,48 @@ function renderAgentsTable() {
   tbody.innerHTML = html;
   setText('agentsCount', agentsList.length + ' users');
   refreshIcons();
+}
+
+async function toggleSalesAccess(username, currentAccess) {
+  const isGranted = currentAccess === true;
+  const action = isGranted ? 'Revoke' : 'Grant';
+
+  const confirm = await Swal.fire({
+    title: `${action} Sales Access?`,
+    html: `
+      <div class="text-left text-sm space-y-2">
+        <p class="text-gray-600">Agent: <strong>${username}</strong></p>
+        <p class="text-gray-600">
+          ${isGranted
+            ? 'Revoking will immediately block this agent from logging into the <strong>Sales Manager</strong> app. Their Rider Portal login will still work normally.'
+            : 'Granting will allow this agent to log into the <strong>Sales Manager</strong> app using their existing Rider Portal username/password.'}
+        </p>
+        ${isGranted ? '<p class="text-xs text-rose-600 font-semibold mt-2">⚠️ The agent will be logged out of Sales Manager on next action.</p>' : ''}
+      </div>
+    `,
+    icon: 'question',
+    showCancelButton: true,
+    confirmButtonColor: isGranted ? '#dc2626' : '#059669',
+    cancelButtonColor: '#64748b',
+    confirmButtonText: `Yes, ${action}`,
+    cancelButtonText: 'Cancel'
+  });
+
+  if (!confirm.isConfirmed) return;
+
+  try {
+    await db.ref('users/' + username).update({
+      sales_access: !isGranted
+    });
+
+    invalidate('users');
+    showToast(`✅ Sales access ${isGranted ? 'revoked' : 'granted'} for ${username}`, 'success');
+
+    loadAgents(true);
+  } catch (e) {
+    console.error('Sales access toggle error:', e);
+    showToast('Failed to update sales access', 'error');
+  }
 }
 
 async function leaveAgent(username) {
@@ -6269,7 +6684,7 @@ async function refreshAll() {
   isRefreshing = true;
   showToast('🔄 Refreshing...', 'info');
 
-  invalidate('pickups', 'pending', 'users', 'deposits', 'attendance', 'salary_payments');
+  invalidate('pickups', 'pending', 'users', 'deposits', 'attendance', 'salary_payments', 'returns');
 
   await Promise.allSettled([
     loadDashboard(true),
@@ -6278,6 +6693,7 @@ async function refreshAll() {
     loadRejectedAdmin(true),
     loadInventory(true),
     loadSales(true),
+    loadCashifyReturns(true),
     loadDeposits(true),
     loadAgents(true),
     loadOutsidePickups(true)
@@ -6827,7 +7243,7 @@ async function approveOutsidePickup(pickupId) {
         <p><strong>Model:</strong> ${esc(p.phoneModel || '—')}</p>
         <p><strong>IMEI:</strong> <span class="font-mono">${esc(p.imei || '—')}</span></p>
         <p><strong>Value:</strong> ${formatINR(Number(p.value) || 0)}</p>
-        <p class="text-xs text-gray-600 mt-3 pt-2 border-t border-gray-200">This phone will be added to Flipkart Inventory.</p>
+        <p class="text-xs text-gray-600 mt-3 pt-2 border-t border-gray-200">This phone will be added to Cashify Inventory.</p>
       </div>`,
       icon: 'question',
       showCancelButton: true,
@@ -6985,7 +7401,7 @@ async function rejectOutsidePickup(pickupId) {
 
 function buildOutsidePickupMessage(p, inventoryCount) {
   const lines = [
-    '📦 *OUTSIDE PICKUP — FLIPKART*',
+    '📦 *OUTSIDE PICKUP — CASHIFY*',
     '',
     `Pickup ID: ${p.pickupId || '—'}`,
     `Rider: ${p.rider || p.agentName || '—'}`,
@@ -6998,7 +7414,7 @@ function buildOutsidePickupMessage(p, inventoryCount) {
   if (p.customerName && p.customerName !== 'N/A') lines.push(`Customer: ${p.customerName}`);
   if (p.aadhaarNumber) lines.push(`Aadhaar: ${p.aadhaarNumber}`);
   if (p.billNumber) lines.push(`Bill Number: ${p.billNumber}`);
-  lines.push('Status: Approved', `Total Flipkart Inventory: ${inventoryCount}`);
+  lines.push('Status: Approved', `Total Cashify Inventory: ${inventoryCount}`);
   return lines.join('\n');
 }
 
@@ -7351,7 +7767,7 @@ async function openRiderStatementFlow(username) {
   } catch (_) {}
 
   const res = await Swal.fire({
-    title: '📋 (FLIPKART) Rider Statement',
+    title: '📋 (CASHIFY) Rider Statement',
     html: `
       <div class="text-center font-sans">
         <p class="text-sm text-gray-600">View <strong>Pickup / Reject Statement</strong> for:</p>
@@ -7884,7 +8300,7 @@ async function generateRiderStatement(username, fromDate, toDate, showModelDetai
           <div class="bg-gradient-to-r from-indigo-600 to-purple-600 text-white p-4 rounded-xl mb-4">
             <div class="flex items-center justify-between flex-wrap gap-2">
               <div>
-                <h2 class="text-lg font-bold flex items-center gap-2">📋 (FLIPKART) Rider Statement</h2>
+                <h2 class="text-lg font-bold flex items-center gap-2">📋 (CASHIFY) Rider Statement</h2>
                 <p class="text-base font-bold mt-1">${esc(uData.name || username)}</p>
                 <p class="text-[11px] opacity-90 font-mono">${esc(username)}</p>
               </div>
@@ -7996,7 +8412,7 @@ function buildStatementPlainText(p) {
   const L = [];
 
   L.push(thick);
-  L.push('📋 (FLIPKART) RIDER STATEMENT');
+  L.push('📋 (CASHIFY) RIDER STATEMENT');
   L.push(thick);
   L.push('');
   L.push(`👤 Rider      : ${p.uData.name || p.username}`);
@@ -8080,3 +8496,5 @@ function buildStatementPlainText(p) {
 
   return L.join('\n');
 }
+
+window.toggleSalesAccess = toggleSalesAccess;
