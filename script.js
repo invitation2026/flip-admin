@@ -22,104 +22,6 @@ const db = firebase.database();
 const storage = firebase.storage();
 
 // ================================================================
-// AUTH — anonymous Firebase session + admin sign-in gate
-// ----------------------------------------------------------------
-// The gate keeps casual visitors out and stops the app from loading any
-// data before sign-in. Real authorisation is enforced by database rules;
-// this is the UI half of that pair.
-// ================================================================
-const ADMIN_SESSION_KEY = 'fk_admin_session';
-const ADMIN_SESSION_TTL = 48 * 60 * 60 * 1000; // 48 hours
-
-let currentAdmin = null;
-
-function getAuthInstance() {
-  try {
-    return (window.firebase && firebase.auth) ? firebase.auth() : null;
-  } catch (_) {
-    return null;
-  }
-}
-
-// Signs in anonymously when available. Never blocks the app: if the provider
-// is not enabled yet, the app keeps working under the current rules.
-async function ensureAnonymousAuth() {
-  const auth = getAuthInstance();
-  if (!auth) return false;
-  if (auth.currentUser) return true;
-  try {
-    await auth.signInAnonymously();
-    return true;
-  } catch (e) {
-    console.warn('Anonymous sign-in unavailable:', e && e.code);
-    return false;
-  }
-}
-
-function readAdminSession() {
-  try {
-    // localStorage so the 48-hour session survives tab close, browser restart,
-    // and new tabs. Previous version used sessionStorage (tab-scoped).
-    const raw = localStorage.getItem(ADMIN_SESSION_KEY);
-    if (!raw) return null;
-    const s = JSON.parse(raw);
-    if (!s || !s.username || s.role !== 'admin') return null;
-    if (!s.at || Date.now() - s.at > ADMIN_SESSION_TTL) return null;
-    return s;
-  } catch (_) {
-    return null;
-  }
-}
-
-function writeAdminSession(session) {
-  try { localStorage.setItem(ADMIN_SESSION_KEY, JSON.stringify(session)); } catch (_) {}
-}
-
-function clearAdminSession() {
-  try { localStorage.removeItem(ADMIN_SESSION_KEY); } catch (_) {}
-}
-
-async function attemptAdminLogin(username, password) {
-  const uname = String(username || '').trim();
-  if (!uname) throw new Error('Enter your username.');
-  if (!password) throw new Error('Enter your password.');
-
-  const snap = await db.ref('users/' + uname).once('value');
-  const user = snap.val();
-
-  if (!user) throw new Error('Username not found.');
-  if (String(user.password || '') !== String(password)) throw new Error('Incorrect password.');
-  if (String(user.role || '').toLowerCase() !== 'admin') throw new Error('This account does not have admin access.');
-  if (user.is_active === false) throw new Error('This account is inactive.');
-
-  return {
-    username: uname,
-    name: user.name || uname,
-    role: 'admin',
-    at: Date.now()
-  };
-}
-
-function renderSessionBar() {
-  if (!currentAdmin) return;
-
-  const nameEl = $('sidebarAdminName');
-  const roleEl = $('sidebarAdminRole');
-  const out = $('signOutBtn');
-
-  if (nameEl) nameEl.textContent = currentAdmin.name || currentAdmin.username;
-  if (roleEl) roleEl.textContent = 'Admin · ' + currentAdmin.username;
-  if (out) out.onclick = signOutAdmin;
-}
-
-function signOutAdmin() {
-  clearAdminSession();
-  const auth = getAuthInstance();
-  if (auth) auth.signOut().catch(() => {});
-  location.reload();
-}
-
-// ================================================================
 // HELPERS
 // ================================================================
 const $ = (id) => document.getElementById(id);
@@ -257,121 +159,15 @@ function invalidate(...nodes) {
   cacheVersion++;
 }
 
-const inflightReads = {};
-
 async function getData(node, force = false) {
   const isFresh = cache[node] && (Date.now() - cacheTime[node] < CACHE_TTL);
 
   if (!force && isFresh) return cache[node];
 
-  // Collapse concurrent reads of the same node into one request. Several
-  // loaders refresh together after a write, and without this each one would
-  // download the whole node again.
-  if (inflightReads[node]) return inflightReads[node];
-
-  inflightReads[node] = (async () => {
-    try {
-      const snap = await db.ref(node).once('value');
-      cache[node] = snap.val() || {};
-      cacheTime[node] = Date.now();
-      return cache[node];
-    } finally {
-      inflightReads[node] = null;
-    }
-  })();
-
-  return inflightReads[node];
-}
-
-// ================================================================
-// IMEI VALIDATION
-// ----------------------------------------------------------------
-// Policy (verified against the scanner's own rules):
-//   15 digits -> IMEI, Luhn check digit required
-//   16 digits -> IMEISV, last two digits are the software version and there
-//                is no check digit, so only digits + leading digit apply
-//   first digit must be 3-9 (TAC allocation)
-//
-// Legacy records that were already stored with an invalid value are handled
-// with `imeiSaveDecision`: editing other fields is never blocked, but any
-// change to the IMEI itself must produce a valid value.
-// ================================================================
-function normalizeImei(v) {
-  return String(v === undefined || v === null ? '' : v).replace(/[\s-]/g, '').trim();
-}
-
-function imeiLuhnOk(digits) {
-  if (!/^\d{15}$/.test(digits)) return false;
-  let sum = 0;
-  for (let i = 0; i < 15; i++) {
-    let d = Number(digits[i]);
-    if (i % 2 === 1) { d *= 2; if (d > 9) d -= 9; }
-    sum += d;
-  }
-  return sum % 10 === 0;
-}
-
-function inspectImei(raw) {
-  const value = normalizeImei(raw);
-
-  if (!value) {
-    return { ok: false, code: 'empty', value, message: 'IMEI is required.' };
-  }
-  if (!/^\d+$/.test(value)) {
-    return { ok: false, code: 'nondigit', value, message: 'IMEI must contain digits only.' };
-  }
-  if (value.length !== 15 && value.length !== 16) {
-    return { ok: false, code: 'length', value, message: `IMEI must be 15 digits (got ${value.length}). 16 digits is accepted for IMEISV.` };
-  }
-  if (!/^[3-9]/.test(value)) {
-    return { ok: false, code: 'leading', value, message: 'IMEI should start with a digit from 3 to 9.' };
-  }
-  if (value.length === 15 && !imeiLuhnOk(value)) {
-    return { ok: false, code: 'luhn', value, message: 'IMEI failed the checksum (Luhn) test. Re-check the digits.' };
-  }
-
-  return { ok: true, code: 'ok', value, format: value.length === 16 ? 'imeisv' : 'imei', message: '' };
-}
-
-/**
- * Decides whether a save may proceed.
- * - valid value            -> ok, changed?
- * - invalid but unchanged  -> ok with a warning (legacy record, other edits allowed)
- * - invalid and changed    -> blocked
- */
-function imeiSaveDecision(raw, original, label) {
-  const next = inspectImei(raw);
-  const previous = normalizeImei(original);
-  const changed = next.value !== previous;
-
-  if (next.ok) return { ok: true, changed, value: next.value, warn: null };
-
-  if (!changed && previous) {
-    return {
-      ok: true,
-      changed: false,
-      value: next.value,
-      warn: `${label} "${next.value}" is not a valid IMEI (${next.message}) and was kept unchanged. Correct it when you can.`
-    };
-  }
-
-  return { ok: false, changed, value: next.value, error: `${label}: ${next.message}` };
-}
-
-/**
- * Parses a money field without silently turning junk into 0.
- * Returns { ok: true, value } or { ok: false, error }.
- */
-function parseMoneyInput(raw, label) {
-  const text = String(raw === undefined || raw === null ? '' : raw).replace(/,/g, '').trim();
-  if (!text) return { ok: true, value: 0 };
-
-  const n = Number(text);
-  if (!isFinite(n)) return { ok: false, error: `${label} must be a number.` };
-  if (n < 0) return { ok: false, error: `${label} cannot be negative.` };
-  if (n > 100000000) return { ok: false, error: `${label} looks too large.` };
-
-  return { ok: true, value: Math.round(n * 100) / 100 };
+  const snap = await db.ref(node).once('value');
+  cache[node] = snap.val() || {};
+  cacheTime[node] = Date.now();
+  return cache[node];
 }
 
 // ================================================================
@@ -396,25 +192,6 @@ function calculateCommission(purchasePrice) {
   }
 
   return 0;
-}
-
-// Outside Inventory never carries a commission. Keep one shared rule so the
-// inventory table, sales, dashboard, deposits and sell/edit flows cannot drift.
-function isOutsideInventoryItem(item) {
-  return Boolean(item && (item.outsidePickup === true || item.outsidePickup === 'true' || item.outside_pickup === true));
-}
-
-function getInventoryCommission(item) {
-  if (!item || isOutsideInventoryItem(item)) return 0;
-
-  // Preserve the existing behaviour for normal inventory: a stored value wins,
-  // otherwise the purchase-price bracket is used.
-  if (item.commission !== undefined) {
-    const stored = Number(item.commission);
-    return Number.isFinite(stored) ? stored : 0;
-  }
-
-  return calculateCommission(Number(item.value) || 0);
 }
 
 // ================================================================
@@ -938,7 +715,7 @@ async function loadDashboard(force = false) {
       total++;
       if (item.status === 'on_hold') return;
 
-      const commission = getInventoryCommission(item);
+      const commission = item.commission !== undefined ? item.commission : calculateCommission(item.value || 0);
       totalCommission += commission;
 
       if (item.status === 'pickup') {
@@ -948,11 +725,7 @@ async function loadDashboard(force = false) {
           soldCount++;
           const netRevenue = (item.salePrice || 0) - commission;
           revenue += netRevenue;
-          // Outside Inventory sales must not inherit an old commission-based
-          // profit snapshot. Other records keep their existing stored profit.
-          const itemProfit = isOutsideInventoryItem(item)
-            ? (netRevenue - (item.value || 0))
-            : (item.profit !== undefined ? item.profit : (netRevenue - (item.value || 0)));
+          const itemProfit = item.profit !== undefined ? item.profit : (netRevenue - (item.value || 0));
           profit += itemProfit;
         } else {
           unsoldCount++;
@@ -1061,8 +834,6 @@ async function loadDashboard(force = false) {
 // ORDERS
 // ================================================================
 async function loadOrders(force = false) {
-  showTableSkeleton('ordersTableBody', 9);
-
   try {
     const data = await getData('pickups', force);
 
@@ -1195,21 +966,6 @@ function clearOrderSearch() {
   applyOrderFilter(currentOrderFilter);
 }
 
-// ================================================================
-// SKELETON LOADER
-// ================================================================
-function showTableSkeleton(tbodyId, colspan, rows = 6) {
-  const tbody = $(tbodyId);
-  if (!tbody || tbody.children.length) return;
-
-  let html = '';
-  for (let i = 0; i < rows; i++) {
-    const width = 55 + ((i * 13) % 35);
-    html += `<tr><td colspan="${colspan}" class="px-4 py-3"><span class="skeleton" style="width:${width}%"></span></td></tr>`;
-  }
-  tbody.innerHTML = html;
-}
-
 function renderOrdersTable() {
   const tbody = $('ordersTableBody');
   if (!tbody) return;
@@ -1245,10 +1001,7 @@ function renderOrdersTable() {
     html += `
       <tr class="order-row border-b border-gray-50">
         <td class="py-3 px-4 text-gray-400 font-mono text-xs">${num}</td>
-        <td class="py-3 px-4 font-mono font-bold text-gray-800 text-sm">
-          <div>${item.orderId || item.id}</div>
-          <div class="md:hidden mt-0.5 font-sans font-normal text-[11px] text-gray-500">${esc(item.phoneModel || '—')}${item.imei ? ' · ' + esc(item.imei) : ''}</div>
-        </td>
+        <td class="py-3 px-4 font-mono font-bold text-gray-800 text-sm">${item.orderId || item.id}</td>
         <td class="py-3 px-4"><span class="badge-status ${getStatusClass(item)}">${getStatusDisplay(item)}</span></td>
         <td class="py-3 px-4 hidden sm:table-cell text-gray-600 text-sm">${item.phoneModel || '—'}</td>
         <td class="py-3 px-4 hidden md:table-cell font-mono text-xs text-gray-500">${item.imei || '—'}</td>
@@ -1527,8 +1280,6 @@ async function toggleRejectApproval(orderId, approve) {
 // INVENTORY
 // ================================================================
 async function loadInventory(force = false) {
-  showTableSkeleton('inventoryTableBody', 8);
-
   try {
     const data = await getData('pickups', force);
 
@@ -1553,48 +1304,23 @@ async function loadInventory(force = false) {
   }
 }
 
-// Fuse indexes are expensive to build, so they are cached against the data
-// array itself. A reload replaces the array, which naturally invalidates it.
-const fuseCache = new WeakMap();
-
-function getFuseIndex(data, fields, minMatchCharLength) {
-  if (!window.Fuse) return null;
-
-  const key = fields.join('|') + '|' + minMatchCharLength;
-
-  if (data && typeof data === 'object') {
-    const cached = fuseCache.get(data);
-    if (cached && cached.key === key) return cached.fuse;
-  }
-
-  const fuse = new Fuse(data, {
-    keys: fields,
-    threshold: 0.3,
-    includeScore: true,
-    ignoreLocation: true,
-    ...(minMatchCharLength ? { minMatchCharLength } : {})
-  });
-
-  if (data && typeof data === 'object') fuseCache.set(data, { key, fuse });
-
-  return fuse;
-}
-
 function applyInventorySearch() {
   const query = getVal('inventorySearch').trim();
   let filtered = inventoryList.filter(item => {
-    const isOutsidePickup = isOutsideInventoryItem(item);
+    const isOutsidePickup = item.outsidePickup === true;
     if (inventoryTypeFilter === 'regular') return !isOutsidePickup;
     if (inventoryTypeFilter === 'outside') return isOutsidePickup;
     return true;
   });
 
   if (query && window.Fuse) {
-    const fuse = getFuseIndex(inventoryList, ['orderId', 'phoneModel', 'imei', 'customerName', 'color'], 0);
-    if (fuse) {
-      const allowed = new Set(filtered.map(item => item.id));
-      filtered = fuse.search(query).map(r => r.item).filter(item => allowed.has(item.id));
-    }
+    const fuse = new Fuse(filtered, {
+      keys: ['orderId', 'phoneModel', 'imei', 'customerName', 'color'],
+      threshold: 0.3,
+      includeScore: true,
+      ignoreLocation: true
+    });
+    filtered = fuse.search(query).map(r => r.item);
   }
 
   filteredInventory = filtered;
@@ -1629,20 +1355,16 @@ function renderInventoryTable() {
   let html = '';
 
   filteredInventory.forEach((item, idx) => {
-    const commission = getInventoryCommission(item);
-    const isOutside = isOutsideInventoryItem(item);
+    const commission = calculateCommission(item.value || 0);
 
     html += `
       <tr class="order-row border-b border-gray-50">
         <td class="py-3 px-4 text-gray-400 font-mono text-xs">${idx + 1}</td>
         <td class="py-3 px-4 font-mono font-bold text-gray-800 text-sm">${item.orderId || item.id}</td>
-        <td class="py-3 px-4 text-gray-600 text-sm">
-          <div>${item.phoneModel || '—'}</div>
-          <div class="md:hidden mt-0.5 font-mono text-[11px] text-gray-500">${esc(item.imei || '—')}</div>
-        </td>
+        <td class="py-3 px-4 text-gray-600 text-sm">${item.phoneModel || '—'}</td>
         <td class="py-3 px-4 hidden md:table-cell font-mono text-xs text-gray-500">${item.imei || '—'}</td>
         <td class="py-3 px-4 font-bold text-gray-700">${formatINR(item.value || 0)}</td>
-        <td class="py-3 px-4"><span class="commission-col${isOutside ? ' zero' : ''}"${isOutside ? ' title="Outside Inventory — commission not applicable"' : ''}>${formatINR(commission)}</span></td>
+        <td class="py-3 px-4"><span class="commission-col">${formatINR(commission)}</span></td>
         <td class="py-3 px-4 hidden lg:table-cell text-gray-600 text-sm">${item.customerName || '—'}</td>
         <td class="py-3 px-4">
           <button onclick="openSellModal('${item.id}')" class="btn-action sell"><i data-lucide="badge-dollar-sign"></i> Sell</button>
@@ -1665,8 +1387,6 @@ function refreshInventory() {
 // SALES
 // ================================================================
 async function loadSales(force = false) {
-  showTableSkeleton('salesTableBody', 13);
-
   try {
     const [data, users, allAttendance] = await Promise.all([
       getData('pickups', force),
@@ -1752,7 +1472,7 @@ async function loadSales(force = false) {
       .filter(([_, item]) => item.sold === true && item.status !== 'on_hold')
       .map(([id, item]) => {
         const purchase = item.value || 0;
-        const commission = getInventoryCommission(item);
+        const commission = item.commission !== undefined ? item.commission : calculateCommission(purchase);
         const grossProfit = (item.salePrice || 0) - purchase - commission;
         const finalNetProfit = grossProfit - overheadPerPhone;
 
@@ -1817,7 +1537,7 @@ function updateSalesSummary() {
 
   filteredSales.forEach(item => {
     const purchase = item.value || 0;
-    const c = getInventoryCommission(item);
+    const c = item.commission !== undefined ? item.commission : calculateCommission(purchase);
 
     revenue += (item.salePrice || 0) - c;
 
@@ -1850,7 +1570,7 @@ function renderSalesTable() {
 
   filteredSales.forEach((item, idx) => {
     const purchase = item.value || 0;
-    const commission = getInventoryCommission(item);
+    const commission = item.commission !== undefined ? item.commission : calculateCommission(purchase);
     const grossProfit = item.grossProfit !== undefined ? item.grossProfit : (item.salePrice - commission - purchase);
     const finalProfit = item.finalNetProfit !== undefined ? item.finalNetProfit : (grossProfit - overheadPerPhone);
     const profitClass = finalProfit >= 0 ? 'profit-green' : 'profit-red';
@@ -1859,10 +1579,7 @@ function renderSalesTable() {
       <tr class="order-row border-b border-gray-50">
         <td class="py-3 px-4 text-gray-400 font-mono text-xs">${idx + 1}</td>
         <td class="py-3 px-4 font-mono font-bold text-gray-800 text-sm">${item.orderId || item.id}</td>
-        <td class="py-3 px-4 text-gray-600 text-sm">
-          <div>${item.phoneModel || '—'}</div>
-          <div class="md:hidden mt-0.5 font-mono text-[11px] text-gray-500">${esc(item.imei || '—')}</div>
-        </td>
+        <td class="py-3 px-4 text-gray-600 text-sm">${item.phoneModel || '—'}</td>
         <td class="py-3 px-4 hidden md:table-cell font-mono text-xs text-gray-500">${item.imei || '—'}</td>
         <td class="py-3 px-4 text-gray-600">${formatINR(purchase)}</td>
         <td class="py-3 px-4 font-bold text-gray-800">${formatINR(item.salePrice || 0)}</td>
@@ -1896,7 +1613,7 @@ function exportSalesCSV() {
 
   const rows = filteredSales.map(item => {
     const purchase = item.value || 0;
-    const c = getInventoryCommission(item);
+    const c = item.commission !== undefined ? item.commission : calculateCommission(purchase);
     const gp = item.grossProfit !== undefined ? item.grossProfit : (item.salePrice - c - purchase);
     const fp = item.finalNetProfit !== undefined ? item.finalNetProfit : (gp - overheadPerPhone);
 
@@ -1963,9 +1680,7 @@ function openSellModalWithOrder(order) {
   const preview = $('sellProfitPreview');
   if (preview) {
     preview.className = 'profit-preview neutral';
-    preview.textContent = isOutsideInventoryItem(order)
-      ? 'Outside Inventory — no commission. Enter sale price to see profit.'
-      : 'Enter sale price to see profit (commission based on purchase price)';
+    preview.textContent = 'Enter sale price to see profit (commission based on purchase price)';
   }
 
   const modal = $('sellModal');
@@ -1986,7 +1701,7 @@ function openSellModalWithOrder(order) {
 function updateSellProfitPreview() {
   const purchase = sellOrderData ? (sellOrderData.value || 0) : 0;
   const sale = parseFloat(getVal('sellSalePrice')) || 0;
-  const commission = getInventoryCommission(sellOrderData);
+  const commission = calculateCommission(purchase);
   const grossProfit = sale - purchase - commission;
   const finalProfit = grossProfit - overheadPerPhone;
 
@@ -2021,51 +1736,42 @@ function closeSellModal() {
 }
 
 async function confirmSell() {
-  if (!sellOrderData || !sellOrderData.id) return;
+  if (!sellOrderData) return;
 
-  const sellBtn = $('confirmSellBtn');
-  if (sellBtn && sellBtn.dataset.busy === '1') return;
-
-  const priceCheck = parseMoneyInput(getVal('sellSalePrice'), 'Sale price');
-  if (!priceCheck.ok || !(priceCheck.value > 0)) {
-    showToast(priceCheck.ok ? 'Valid sale price required' : priceCheck.error, 'error');
-    return;
-  }
-
-  const salePrice = priceCheck.value;
+  const salePrice = parseFloat(getVal('sellSalePrice'));
   const buyerName = getVal('sellBuyerName').trim();
   const buyerContact = getVal('sellBuyerContact').trim();
   const saleDate = getVal('sellSaleDate');
+
+  if (!salePrice || salePrice <= 0) {
+    showToast('Valid sale price required', 'error');
+    return;
+  }
 
   if (!buyerName) {
     showToast('Buyer name required', 'error');
     return;
   }
 
-  if (!saleDate) {
-    showToast('Sale date required', 'error');
-    return;
-  }
-
-  const purchasePrice = Number(sellOrderData.value) || 0;
-  const commission = getInventoryCommission(sellOrderData);
+  const purchasePrice = sellOrderData.value || 0;
+  const commission = calculateCommission(purchasePrice);
   const grossProfit = salePrice - purchasePrice - commission;
-  const finalProfit = grossProfit - (Number(overheadPerPhone) || 0);
+  const finalProfit = grossProfit - overheadPerPhone;
 
   const confirm = await Swal.fire({
     title: 'Confirm Sale',
     html: `
       <div class="text-left">
-        <p><strong>Order:</strong> ${esc(sellOrderData.orderId || sellOrderData.id)}</p>
-        <p><strong>Model:</strong> ${esc(sellOrderData.phoneModel || '—')}</p>
+        <p><strong>Order:</strong> ${sellOrderData.orderId || sellOrderData.id}</p>
+        <p><strong>Model:</strong> ${sellOrderData.phoneModel || '—'}</p>
         <p><strong>Purchase:</strong> ${formatINR(purchasePrice)}</p>
         <p><strong>Sale Price:</strong> ${formatINR(salePrice)}</p>
         <p><strong>Commission:</strong> ${formatINR(commission)}</p>
         <p><strong>Gross Profit:</strong> ${formatINR(grossProfit)}</p>
-        <p><strong>Overhead/Phone:</strong> ${formatINR(Number(overheadPerPhone) || 0)}</p>
+        <p><strong>Overhead/Phone:</strong> ${formatINR(overheadPerPhone)}</p>
         <p><strong>Final Net Profit:</strong> <span class="${finalProfit >= 0 ? 'text-green-600' : 'text-red-600'} font-bold">${formatINR(finalProfit)}</span></p>
-        <p><strong>Buyer:</strong> ${esc(buyerName)}</p>
-        <p><strong>Sale Date:</strong> ${esc(saleDate)}</p>
+        <p><strong>Buyer:</strong> ${buyerName}</p>
+        <p><strong>Sale Date:</strong> ${saleDate}</p>
       </div>
     `,
     icon: 'question',
@@ -2078,56 +1784,18 @@ async function confirmSell() {
 
   if (!confirm.isConfirmed) return;
 
-  if (sellBtn) {
-    sellBtn.dataset.busy = '1';
-    sellBtn.disabled = true;
-    sellBtn.dataset.originalLabel = sellBtn.innerHTML;
-    sellBtn.textContent = 'Saving…';
-  }
-
   try {
-    const ref = db.ref('pickups/' + sellOrderData.id);
-    const saleTimestamp = new Date().toISOString();
-    const soldBy = currentAdmin ? (currentAdmin.username || currentAdmin.name || '') : '';
-
-    // Transaction: the write only lands if the phone is still unsold and in
-    // pickup status. Two admins (or admin + sales manager) cannot both win.
-    const tx = await ref.transaction((current) => {
-      if (!current) return;                         // record deleted meanwhile
-      if (current.sold === true) return;            // already sold
-      if (current.status !== 'pickup') return;      // held / rejected / rescheduled
-
-      current.sold = true;
-      current.salePrice = salePrice;
-      current.commission = commission;
-      current.grossProfit = grossProfit;
-      current.finalNetProfit = finalProfit;
-      current.profit = grossProfit;
-      current.buyerName = buyerName;
-      current.buyerContact = buyerContact || '';
-      current.saleDate = saleDate;
-      current.saleTimestamp = saleTimestamp;
-      if (soldBy) current.salesBy = soldBy;
-
-      return current;
+    await db.ref('pickups/' + sellOrderData.id).update({
+      sold: true,
+      salePrice,
+      commission,
+      grossProfit,
+      finalNetProfit: finalProfit,
+      buyerName,
+      buyerContact: buyerContact || '',
+      saleDate,
+      saleTimestamp: new Date().toISOString()
     });
-
-    if (!tx.committed) {
-      const snap = tx.snapshot ? tx.snapshot.val() : null;
-      closeSellModal();
-
-      if (!snap) {
-        showToast('This order no longer exists. Refresh the list.', 'error');
-      } else if (snap.sold === true) {
-        showToast('Already sold — someone else completed this sale. Refresh the list.', 'error');
-      } else {
-        showToast(`Cannot sell an order in "${snap.status || 'unknown'}" status.`, 'error');
-      }
-
-      invalidate('pickups');
-      await Promise.allSettled([loadInventory(true), loadDashboard(true)]);
-      return;
-    }
 
     invalidate('pickups');
     showToast(`✅ Sold! Final Net Profit: ${formatINR(finalProfit)}`, 'success');
@@ -2144,12 +1812,6 @@ async function confirmSell() {
   } catch (e) {
     console.error('Sale error:', e);
     showToast('Error saving sale', 'error');
-  } finally {
-    if (sellBtn) {
-      sellBtn.dataset.busy = '0';
-      sellBtn.disabled = false;
-      sellBtn.innerHTML = sellBtn.dataset.originalLabel || 'Confirm Sale';
-    }
   }
 }
 
@@ -2202,9 +1864,9 @@ async function viewOrder(orderId) {
     }
 
     const purchase = item.value || 0;
-    const commission = getInventoryCommission(item);
+    const commission = item.commission !== undefined ? item.commission : calculateCommission(purchase);
 
-    if (item.sold && (item.profit === undefined || isOutsideInventoryItem(item))) {
+    if (item.sold && item.profit === undefined) {
       const netRevenue = (item.salePrice || 0) - commission;
       item.profit = netRevenue - purchase;
     }
@@ -2243,7 +1905,7 @@ function renderDetailView(item) {
     let finalProfitClass = '';
 
     if (item.sold) {
-      const commission = getInventoryCommission(item);
+      const commission = item.commission !== undefined ? item.commission : calculateCommission(item.value || 0);
       const grossProfit = item.profit !== undefined ? item.profit : ((item.salePrice || 0) - commission - (item.value || 0));
       const finalProfit = grossProfit - overheadPerPhone;
 
@@ -2377,35 +2039,19 @@ async function holdOrderFromDetail() {
   if (!isConfirmed || !reason) return;
 
   try {
-    const ref = db.ref('pickups/' + detailOrderId);
+    const snap = await db.ref('pickups/' + detailOrderId).once('value');
+    const order = snap.val();
 
-    // A sold phone must never be moved to on_hold: that removes it from both
-    // inventory and sales while its money stays in the database.
-    const tx = await ref.transaction((current) => {
-      if (!current) return;
-      if (current.sold === true) return;
-      if (current.status !== 'pickup' && current.status !== 'reschedule') return;
-
-      current.previous_status = current.status;
-      current.status = 'on_hold';
-      current.hold_reason = reason;
-      return current;
-    });
-
-    if (!tx.committed) {
-      const snap = tx.snapshot ? tx.snapshot.val() : null;
-
-      if (!snap) {
-        showToast('Order not found', 'error');
-      } else if (snap.sold === true) {
-        showToast('A sold order cannot be put on hold. Revert the sale first.', 'error');
-      } else if (snap.status === 'on_hold') {
-        showToast('This order is already on hold.', 'error');
-      } else {
-        showToast(`This order cannot be held (current status: ${snap.status || 'unknown'}).`, 'error');
-      }
+    if (!order) {
+      showToast('Order not found', 'error');
       return;
     }
+
+    await db.ref('pickups/' + detailOrderId).update({
+      status: 'on_hold',
+      hold_reason: reason,
+      previous_status: order.status || 'pickup'
+    });
 
     invalidate('pickups');
     showToast('⏸️ Order put on hold', 'success');
@@ -2486,11 +2132,8 @@ async function revertSale() {
       buyerContact: null,
       saleDate: null,
       saleTimestamp: null,
-      commission: null,
-      profit: null,
       grossProfit: null,
-      finalNetProfit: null,
-      salesBy: null
+      finalNetProfit: null
     });
 
     invalidate('pickups');
@@ -2785,139 +2428,38 @@ async function saveEdit() {
     return;
   }
 
-  const saveBtn = $('saveEditBtn');
-  if (saveBtn && saveBtn.dataset.busy === '1') return;
-
-  const base = editData || {};
-
+  const orderId = getVal('edit-orderId').trim();
   const status = getVal('edit-status');
   const model = getVal('edit-model').trim();
-  const imei = normalizeImei(getVal('edit-imei'));
-  const imei2 = normalizeImei(getVal('edit-imei2'));
+  const imei = getVal('edit-imei').trim();
+  const imei2 = getVal('edit-imei2').trim();
+  const value = parseFloat(getVal('edit-value')) || 0;
   const customer = getVal('edit-customer').trim();
   const reason = getVal('edit-reason').trim();
   const ramVal = getVal('edit-ram') || '';
   const storageVal = getVal('edit-storage') || '';
   const networkVal = getVal('edit-network') || '';
   const datetimeVal = getVal('edit-datetime');
+  const salePrice = parseFloat(getVal('edit-salePrice')) || 0;
   const buyer = getVal('edit-buyer').trim() || '';
   const buyerContact = getVal('edit-buyerContact').trim() || '';
   const saleDate = getVal('edit-saleDate') || '';
+
+  if (!orderId) {
+    showToast('Order ID required', 'error');
+    return;
+  }
+
   const billNumberVal = getVal('edit-billNumber').trim();
   const aadhaarNumberVal = getVal('edit-aadhaarNumber').trim();
 
-  // ---- numbers: never silently coerce junk to 0 ----
-  const valueCheck = parseMoneyInput(getVal('edit-value'), 'Purchase value');
-  if (!valueCheck.ok) {
-    showToast(valueCheck.error, 'error');
-    return;
-  }
-  const value = valueCheck.value;
-
-  const saleCheck = parseMoneyInput(getVal('edit-salePrice'), 'Sale price');
-  if (!saleCheck.ok) {
-    showToast(saleCheck.error, 'error');
-    return;
-  }
-  const salePrice = saleCheck.value;
-
-  const isLive = status === 'pickup' || status === 'on_hold';
-
-  // A sold phone keeps status "pickup" until the sale is reverted. Moving it to
-  // hold/rejected would hide it from both inventory and sales.
-  if (base.sold && status !== 'pickup') {
-    showToast('Revert the sale before changing the status of a sold order.', 'error');
-    return;
-  }
-
-  if (!model && isLive) {
-    showToast('Phone model is required', 'error');
-    return;
-  }
-
-  // ---- IMEI: strict for new/changed values, advisory for untouched legacy ----
-  const warnings = [];
-
-  let imeiDecision;
-  if (!imei) {
-    if (isLive) {
-      showToast('IMEI is required for a pickup or held order', 'error');
-      return;
-    }
-    imeiDecision = { ok: true, changed: false, value: '', warn: null };
-  } else {
-    imeiDecision = imeiSaveDecision(imei, base.imei, 'IMEI 1');
-  }
-  if (!imeiDecision.ok) {
-    showToast(imeiDecision.error, 'error');
-    return;
-  }
-  if (imeiDecision.warn) warnings.push(imeiDecision.warn);
-
-  let imei2Decision = { ok: true, changed: false, value: '', warn: null };
-  if (imei2) {
-    imei2Decision = imeiSaveDecision(imei2, base.imei2, 'IMEI 2');
-    if (!imei2Decision.ok) {
-      showToast(imei2Decision.error, 'error');
-      return;
-    }
-    if (imei2Decision.warn) warnings.push(imei2Decision.warn);
-  }
-
-  if (imeiDecision.value && imei2Decision.value && imeiDecision.value === imei2Decision.value) {
-    showToast('IMEI 1 and IMEI 2 cannot be the same value', 'error');
-    return;
-  }
-
-  // ---- duplicate guard on BOTH slots; fails closed on a read error ----
-  const slotsToCheck = [];
-  if (imeiDecision.value && imeiDecision.changed) slotsToCheck.push({ label: 'IMEI 1', value: imeiDecision.value });
-  if (imei2Decision.value && imei2Decision.changed) slotsToCheck.push({ label: 'IMEI 2', value: imei2Decision.value });
-
-  if (slotsToCheck.length) {
-    let duplicates;
-    try {
-      duplicates = await Promise.all(slotsToCheck.map(async (slot) => {
-        const found = await findAdminImeiDuplicate(slot.value, detailOrderId);
-        return found ? { ...found, slotLabel: slot.label, matchedValue: slot.value } : null;
-      }));
-    } catch (e) {
-      console.error('Duplicate check failed:', e);
-      showToast(
-        e instanceof DuplicateCheckError
-          ? e.message
-          : 'Could not verify IMEI uniqueness. Check your connection and try again.',
-        'error'
-      );
-      return;
-    }
-
-    const hit = duplicates.find(Boolean);
-    if (hit) {
-      await showAdminDuplicateImeiWarning(hit.matchedValue, hit);
-      return;
-    }
-  }
-
-  // ---- a sold order needs its sale figures intact ----
-  if (base.sold) {
-    if (!(salePrice > 0)) {
-      showToast('Sale price must be greater than zero for a sold order', 'error');
-      return;
-    }
-    if (!saleDate) {
-      showToast('Sale date is required for a sold order', 'error');
-      return;
-    }
-  }
-
   let updated = {
-    orderId: detailOrderId,
+    orderId,
     status,
     phoneModel: model || '',
-    imei: imeiDecision.value,
-    imei2: imei2Decision.value,
-    value: value,
+    imei: imei || '',
+    imei2: imei2 || '',
+    value: value || 0,
     customerName: customer || '',
     reason: reason || '',
     ram: ramVal,
@@ -2926,8 +2468,8 @@ async function saveEdit() {
     networkType: networkVal,
     billNumber: billNumberVal,
     aadhaarNumber: aadhaarNumberVal,
-    timestamp: base.timestamp,
-    timestampIST: base.timestampIST || ''
+    timestamp: editData.timestamp,
+    timestampIST: editData.timestampIST || ''
   };
 
   if (datetimeVal) {
@@ -2957,13 +2499,13 @@ async function saveEdit() {
     }
   }
 
-  if (base.sold) {
-    const commission = getInventoryCommission({ ...base, value });
+  if (editData.sold) {
+    const commission = calculateCommission(value);
     const grossProfit = salePrice - commission - value;
-    const finalProfit = grossProfit - (Number(overheadPerPhone) || 0);
+    const finalProfit = grossProfit - overheadPerPhone;
 
     updated.sold = true;
-    updated.salePrice = salePrice;
+    updated.salePrice = salePrice || 0;
     updated.commission = commission;
     updated.buyerName = buyer || '';
     updated.buyerContact = buyerContact || '';
@@ -2973,10 +2515,10 @@ async function saveEdit() {
     updated.finalNetProfit = finalProfit;
   }
 
-  if (status === 'on_hold' && base.status !== 'on_hold') {
-    updated.previous_status = base.status;
+  if (status === 'on_hold' && editData.status !== 'on_hold') {
+    updated.previous_status = editData.status;
     updated.hold_reason = reason || 'Manually held';
-  } else if (status !== 'on_hold' && base.status === 'on_hold') {
+  } else if (status !== 'on_hold' && editData.status === 'on_hold') {
     updated.previous_status = null;
     updated.hold_reason = null;
   }
@@ -2993,55 +2535,41 @@ async function saveEdit() {
 
   if (!confirm.isConfirmed) return;
 
-  if (saveBtn) {
-    saveBtn.dataset.busy = '1';
-    saveBtn.disabled = true;
-    saveBtn.dataset.originalLabel = saveBtn.innerHTML;
-    saveBtn.textContent = 'Saving…';
-  }
-
   try {
     await db.ref('pickups/' + detailOrderId).update(updated);
 
     invalidate('pickups');
+    showToast('✅ Updated', 'success');
+
     isEditMode = false;
 
-    // Merge locally instead of re-reading the node we just wrote.
-    const item = { ...base, ...updated, id: detailOrderId };
-    editData = item;
+    const snap = await db.ref('pickups/' + detailOrderId).once('value');
+    const item = snap.val();
 
-    renderDetailView(item);
+    if (item) {
+      renderDetailView(item);
 
-    const detailActions = $('detailActions');
-    const detailSaveActions = $('detailSaveActions');
-    const detailEditBtn = $('detailEditBtn');
+      const detailActions = $('detailActions');
+      const detailSaveActions = $('detailSaveActions');
+      const detailEditBtn = $('detailEditBtn');
 
-    if (detailActions) detailActions.style.display = 'flex';
-    if (detailSaveActions) detailSaveActions.style.display = 'none';
+      if (detailActions) detailActions.style.display = 'flex';
+      if (detailSaveActions) detailSaveActions.style.display = 'none';
 
-    setText('detailModalTitle', 'Order Details');
+      setText('detailModalTitle', 'Order Details');
 
-    if (detailEditBtn) {
-      detailEditBtn.textContent = '✏️ Edit';
-      detailEditBtn.onclick = toggleEditMode;
-    }
+      if (detailEditBtn) {
+        detailEditBtn.textContent = '✏️ Edit';
+        detailEditBtn.onclick = toggleEditMode;
+      }
 
-    if (warnings.length) {
-      showToast('Saved. ' + warnings[0], 'warning', 6000);
-    } else {
-      showToast('✅ Updated', 'success');
+      editData = { ...item, id: detailOrderId };
     }
 
     refreshOrderRelated();
   } catch (e) {
     console.error(e);
     showToast('Error updating', 'error');
-  } finally {
-    if (saveBtn) {
-      saveBtn.dataset.busy = '0';
-      saveBtn.disabled = false;
-      saveBtn.innerHTML = saveBtn.dataset.originalLabel || 'Save Changes';
-    }
   }
 }
 
@@ -3071,21 +2599,13 @@ async function deleteOrder(orderId) {
       const aadhaarImages = getDocImages(item, 'aadhaar');
       const allImages = [...billImages, ...aadhaarImages];
 
-      // One failed image must not block the order deletion.
-      if (allImages.length) {
-        const results = await Promise.allSettled(allImages.map(url => _deleteImageFromStorageAdmin(url)));
-        const failed = results.filter(r => r.status === 'rejected').length;
-        if (failed) console.warn(`Order ${orderId}: ${failed} image(s) could not be removed from storage.`);
+      for (const url of allImages) {
+        await _deleteImageFromStorageAdmin(url);
       }
     }
 
-    const removals = await Promise.allSettled([
-      db.ref('pickups/' + orderId).remove(),
-      db.ref('pending/' + orderId).remove()
-    ]);
-
-    const failedRemoval = removals.find(r => r.status === 'rejected');
-    if (failedRemoval) throw failedRemoval.reason;
+    await db.ref('pickups/' + orderId).remove();
+    await db.ref('pending/' + orderId).remove();
 
     invalidate('pickups', 'pending');
     showToast('🗑️ Deleted', 'success');
@@ -3342,7 +2862,9 @@ async function updateDepositStats() {
     if (item.status === 'pickup') stockValue += item.value || 0;
 
     if (item.status !== 'on_hold') {
-      totalCommission += getInventoryCommission(item);
+      totalCommission += item.commission !== undefined
+        ? item.commission
+        : calculateCommission(item.value || 0);
     }
   });
 
@@ -5070,62 +4592,12 @@ async function blockAgent(username, date) {
 //   • All paid cycles are stored as immutable snapshots (never auto-deleted).
 //   • Undo = set status = 'UNDONE'. Cycle range recalculates from last
 //     ACTIVE payment automatically.
-//   • Adjustments: non-reverted, unsettled entries count; a payment marks
-//     them settled so the same adjustment cannot be paid twice.
+//   • Adjustments: include "settledInCycle" only for record; date-range
+//     filtering is the primary mechanism for cycle separation.
 //   • Activity incentive uses per-order override if set, else agent default.
 // ================================================================
 
-// ---------- Adjustment rules ----------
-// A fixed direction means the type itself decides the sign. "Other Adjustment"
-// is the only type where the admin can choose Add or Deduct.
-const ADJUSTMENT_TYPE_RULES = {
-  'Bonus': { effect: 'add', hint: 'Bonus always increases salary.' },
-  'Incentive': { effect: 'add', hint: 'Extra incentive always increases salary.' },
-  'Extra Incentive': { effect: 'add', hint: 'Extra incentive always increases salary.' },
-  'Extra Salary': { effect: 'add', hint: 'Extra salary always increases salary.' },
-  'Fuel/Travel Allowance': { effect: 'add', hint: 'Fuel / travel allowance always increases salary.' },
-  'Fuel / Travel Allowance': { effect: 'add', hint: 'Fuel / travel allowance always increases salary.' },
-  'Advance': { effect: 'deduct', hint: 'Salary advance is always deducted from salary.' },
-  'Penalty': { effect: 'deduct', hint: 'Penalty / cut is always deducted from salary.' },
-  'Other Adjustment': { effect: null, hint: 'Choose whether this other adjustment adds to or deducts from salary.' }
-};
-
-function getAdjustmentRule(type) {
-  return ADJUSTMENT_TYPE_RULES[type] || { effect: null, hint: 'Choose the salary direction for this adjustment.' };
-}
-
-// Prevent double-clicks from writing the same salary mutation twice.
-let salaryPaymentSaveInFlight = false;
-let salaryAdjustmentSaveInFlight = false;
-
-// New entries are stored with their rule-mandated effect. Existing records keep
-// their already-saved effect so historical salary totals do not silently change.
-function resolveAdjustmentEffect(adj) {
-  const stored = adj && adj.effect;
-  if (stored === 'add' || stored === 'deduct' || stored === 'neutral') return stored;
-  return getAdjustmentRule(adj && adj.type).effect || 'neutral';
-}
-
 // ---------- Cycle helpers ----------
-// A partial payment must not close the cycle, otherwise its remainder is lost.
-// Legacy payments have no flag and behaved as closing payments, so only an
-// explicit `false` keeps a cycle open.
-function paymentClosesCycle(payment) {
-  return !payment || payment.closesCycle !== false;
-}
-
-function getLastClosingPayment(allPayments, agentUsername) {
-  return getActivePaymentsForAgent(allPayments, agentUsername)
-    .find(paymentClosesCycle) || null;
-}
-
-function getPaymentCycleEndDate(payment) {
-  if (!payment) return '';
-  const paymentDate = payment.paymentDate || '';
-  const cycleEnd = payment.cycleEndDate || '';
-  return cycleEnd > paymentDate ? cycleEnd : paymentDate;
-}
-
 function getActivePaymentsForAgent(allPayments, agentUsername) {
   const agentPays = allPayments[agentUsername] || {};
   return Object.values(agentPays)
@@ -5168,11 +4640,9 @@ function computeCycleRangeForAgent(mode, uData, lastActivePayment, selectedDate)
     return { start: joinDateStr || '2020-01-01', end: today };
   }
   if (mode === 'current_cycle') {
-    const lastClosingEnd = lastActivePayment ? getPaymentCycleEndDate(lastActivePayment) : '';
-    if (lastClosingEnd) {
-      // Use the paid cycle's end date so a back-dated payment cannot reopen
-      // days that were already covered by that cycle.
-      return { start: addDays(lastClosingEnd, 1), end: today };
+    if (lastActivePayment && lastActivePayment.paymentDate) {
+      const nextDay = addDays(lastActivePayment.paymentDate, 1);
+      return { start: nextDay, end: today };
     }
     return { start: joinDateStr || '2020-01-01', end: today };
   }
@@ -5190,10 +4660,6 @@ function computeCycleTotals({ uname, uData, cycleStart, cycleEnd, allAttendance,
   let totalRejectIncentive = 0;
   let totalBonus = 0;
   let totalDeduction = 0;
-  let currentPeriodBonus = 0;
-  let currentPeriodDeduction = 0;
-  let previousBalanceBonus = 0;
-  let previousBalanceDeduction = 0;
 
   let presentDays = 0;
   let halfDays = 0;
@@ -5277,20 +4743,8 @@ function computeCycleTotals({ uname, uData, cycleStart, cycleEnd, allAttendance,
     if (adj.settledInCycle) continue;
 
     const amt = Number(adj.amount) || 0;
-    if (!amt) continue;
-
-    const effect = resolveAdjustmentEffect(adj);
-    const isPreviousBalance = adj.adjustTarget === 'previous_balance';
-
-    if (effect === 'add') {
-      totalBonus += amt;
-      if (isPreviousBalance) previousBalanceBonus += amt;
-      else currentPeriodBonus += amt;
-    } else if (effect === 'deduct') {
-      totalDeduction += amt;
-      if (isPreviousBalance) previousBalanceDeduction += amt;
-      else currentPeriodDeduction += amt;
-    }
+    if (adj.effect === 'add') totalBonus += amt;
+    else if (adj.effect === 'deduct') totalDeduction += amt;
 
     usedAdjustmentIds.push(adj.id);
   }
@@ -5308,10 +4762,6 @@ function computeCycleTotals({ uname, uData, cycleStart, cycleEnd, allAttendance,
     totalBaseSalary,
     totalBonus,
     totalDeduction,
-    currentPeriodBonus,
-    currentPeriodDeduction,
-    previousBalanceBonus,
-    previousBalanceDeduction,
     grandTotal,
     totalPickupIncentive,
     totalRejectIncentive,
@@ -5390,14 +4840,6 @@ function buildSalaryCard({
           <div class="text-base sm:text-lg font-black text-emerald-800 mt-0.5 sm:mt-1">${formatINR(t.grandTotal)}</div>
         </div>
       </div>
-
-      ${((t.previousBalanceBonus || 0) + (t.previousBalanceDeduction || 0)) > 0 ? `
-        <div class="mb-2 sm:mb-3 px-2 sm:px-3 py-1.5 rounded-lg bg-slate-50 border border-slate-200 text-[9px] sm:text-[10px] text-slate-600 flex flex-wrap items-center gap-x-3 gap-y-1">
-          <span class="font-bold uppercase tracking-wide">↪ Previous Balance (included above)</span>
-          <span>Added: <strong class="text-emerald-700">+${formatINR(t.previousBalanceBonus || 0)}</strong></span>
-          <span>Deducted: <strong class="text-rose-700">-${formatINR(t.previousBalanceDeduction || 0)}</strong></span>
-        </div>
-      ` : ''}
 
       <div class="mb-2 sm:mb-3 p-2 sm:p-3 rounded-lg sm:rounded-xl bg-amber-50 border border-dashed border-amber-300">
         <div class="flex items-center gap-1 sm:gap-2 mb-1.5 sm:mb-2 flex-wrap">
@@ -5525,10 +4967,9 @@ async function loadSalaryData(force = false) {
 
     for (const [uname, uData] of Object.entries(agents)) {
       const lastActivePayment = getLastActivePayment(allPayments, uname);
-      const lastClosingPayment = getLastClosingPayment(allPayments, uname);
       const lastPaidDate = lastActivePayment ? lastActivePayment.paymentDate : null;
 
-      const { start: cycleStart, end: cycleEnd } = computeCycleRangeForAgent(mode, uData, lastClosingPayment, selectedDate);
+      const { start: cycleStart, end: cycleEnd } = computeCycleRangeForAgent(mode, uData, lastActivePayment, selectedDate);
 
       const totals = computeCycleTotals({
         uname, uData,
@@ -5551,7 +4992,7 @@ async function loadSalaryData(force = false) {
       globalPending += totals.agentPendingCount;
 
       const joinDateDisplay = uData.joinDate || '—';
-      const paidCyclesCount = agentPaysActive.filter(paymentClosesCycle).length;
+      const paidCyclesCount = getActivePaymentsForAgent(allPayments, uname).length;
 
       const periodAttr = JSON.stringify({
         mode: 'current_cycle',
@@ -5643,21 +5084,12 @@ async function openPaidModal(agentUsername) {
       return (b.createdAt || 0) - (a.createdAt || 0);
     });
   const lastActivePayment = activePayments[0] || null;
-  const lastClosingPayment = activePayments.find(paymentClosesCycle) || null;
   const lastPaidDate = lastActivePayment ? lastActivePayment.paymentDate : null;
 
   const today = getLocalYMD();
   const joinDateStr = uData.joinDate || null;
-  const lastClosingEnd = lastClosingPayment ? getPaymentCycleEndDate(lastClosingPayment) : '';
-  const cycleStart = lastClosingEnd
-    ? addDays(lastClosingEnd, 1)
-    : (joinDateStr || '2020-01-01');
+  const cycleStart = lastPaidDate ? addDays(lastPaidDate, 1) : (joinDateStr || '2020-01-01');
   const cycleEnd = today;
-
-  if (cycleStart > cycleEnd) {
-    showToast(`Next cycle starts on ${cycleStart}. No pending cycle to pay right now.`, 'info', 4500);
-    return;
-  }
 
   const [pickups, allAttendance, allAdjustmentsSnap] = await Promise.all([
     getData('pickups', false),
@@ -5688,11 +5120,6 @@ async function openPaidModal(agentUsername) {
     .reduce((s, p) => s + (Number(p.amount) || 0), 0);
   const pending = Math.max(0, totals.grandTotal - alreadyPaid);
 
-  if (pending <= 0) {
-    showToast('No pending salary for this cycle.', 'info');
-    return;
-  }
-
   const step1 = await Swal.fire({
     title: '💰 Mark Salary as Paid?',
     html: `
@@ -5708,7 +5135,7 @@ async function openPaidModal(agentUsername) {
           ${alreadyPaid > 0 ? `<div class="flex justify-between text-xs mt-1 text-gray-600"><span>Already Paid:</span><strong>${formatINR(alreadyPaid)}</strong></div>` : ''}
           <div class="flex justify-between text-sm mt-2 pt-2 border-t border-gray-200"><span class="font-bold">Pending:</span><strong class="text-rose-600">${formatINR(pending)}</strong></div>
         </div>
-        <p class="text-[11px] text-gray-500 font-semibold mt-2">✔️ Pay the full pending amount to close this cycle. Partial payments stay in the same cycle.</p>
+        <p class="text-[11px] text-gray-500 font-semibold mt-2">✔️ Mark as Paid → cycle will close & a new fresh cycle starts automatically.</p>
         <p class="text-[11px] text-gray-400">Pickup/Reject incentives are excluded from Grand Total. Can be undone anytime.</p>
       </div>
     `,
@@ -5739,7 +5166,7 @@ async function openPaidModal(agentUsername) {
           <label class="block font-semibold text-gray-700 mb-1 text-xs">Note (optional)</label>
           <input type="text" id="paid_note" class="swal2-input" placeholder="e.g. UPI transfer">
         </div>
-        <p class="text-[11px] text-gray-400">ℹ️ A partial payment keeps the remaining balance in this cycle; a full payment closes it.</p>
+        <p class="text-[11px] text-gray-400">ℹ️ After payment, a new cycle will start the next day.</p>
       </div>
     `,
     showCancelButton: true,
@@ -5752,10 +5179,7 @@ async function openPaidModal(agentUsername) {
       const dt = document.getElementById('paid_date').value;
       const note = document.getElementById('paid_note').value.trim();
       if (!amt || amt <= 0) { Swal.showValidationMessage('Enter a valid amount'); return false; }
-      if (amt > pending + 0.009) { Swal.showValidationMessage(`Amount cannot exceed pending salary (${formatINR(pending)})`); return false; }
       if (!dt) { Swal.showValidationMessage('Select payment date'); return false; }
-      if (dt < cycleStart) { Swal.showValidationMessage(`Payment date cannot be before this cycle started (${cycleStart})`); return false; }
-      if (dt > today) { Swal.showValidationMessage('Payment date cannot be in the future'); return false; }
       return { amt, dt, note };
     }
   });
@@ -5763,34 +5187,8 @@ async function openPaidModal(agentUsername) {
   if (!step2.isConfirmed) return;
   const { amt, dt, note } = step2.value;
 
-  if (salaryPaymentSaveInFlight) {
-    showToast('A payment is already being saved. Please wait.', 'info');
-    return;
-  }
-
-  // Guard against re-opening the modal and submitting the exact same payment
-  // twice within a few seconds.
-  const duplicatePayment = activePayments.find(p =>
-    p && p.status !== 'UNDONE' &&
-    Math.abs((Number(p.createdAt) || 0) - Date.now()) < 10000 &&
-    Number(p.amount) === Number(amt) &&
-    p.paymentDate === dt &&
-    p.cycleStartDate === cycleStart &&
-    p.cycleEndDate === cycleEnd
-  );
-  if (duplicatePayment) {
-    showToast('The same payment was just recorded. Duplicate blocked.', 'error');
-    return;
-  }
-
-  const remainingBeforePayment = Math.max(0, Number(pending) || 0);
-  const isFullPayment = Number(amt) >= (remainingBeforePayment - 0.009);
-  const settlesCycle = remainingBeforePayment <= 0 || isFullPayment;
-
-  salaryPaymentSaveInFlight = true;
-
   try {
-    const payId = 'pay_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
+    const payId = 'pay_' + Date.now();
     const entry = {
       id: payId,
       agent: agentUsername,
@@ -5815,9 +5213,7 @@ async function openPaidModal(agentUsername) {
       cyclePresentDays: totals.presentDays,
       cycleHalfDays: totals.halfDays,
       cycleAbsentDays: totals.absentDays,
-      cycleAdjustmentIds: settlesCycle ? (totals.usedAdjustmentIds || []) : [],
-      closesCycle: settlesCycle,
-      cycleRemainingBeforePayment: remainingBeforePayment,
+      cycleAdjustmentIds: totals.usedAdjustmentIds || [],
 
       // Meta
       status: 'PAID',
@@ -5825,36 +5221,27 @@ async function openPaidModal(agentUsername) {
       createdBy: 'admin'
     };
 
-    // Payment + adjustment settlement are written in ONE multi-path update.
-    // If either part fails, neither part lands (no half-settled cycle).
-    const updates = {
-      [`salary_payments/${agentUsername}/${payId}`]: entry
-    };
+    await db.ref('salary_payments/' + agentUsername + '/' + payId).set(entry);
 
-    if (settlesCycle && totals.usedAdjustmentIds && totals.usedAdjustmentIds.length) {
+    // Mark adjustments as settled (linked to this cycle) for cleaner next-cycle filtering
+    if (totals.usedAdjustmentIds && totals.usedAdjustmentIds.length) {
+      const adjUpdates = {};
       for (const adjId of totals.usedAdjustmentIds) {
-        updates[`adjustments/${agentUsername}/${adjId}/settledInCycle`] = payId;
-        updates[`adjustments/${agentUsername}/${adjId}/settledAt`] = Date.now();
+        adjUpdates[`adjustments/${agentUsername}/${adjId}/settledInCycle`] = payId;
+        adjUpdates[`adjustments/${agentUsername}/${adjId}/settledAt`] = Date.now();
       }
+      await db.ref().update(adjUpdates);
     }
-
-    await db.ref().update(updates);
 
     invalidate('salary_payments');
     showToast(`✅ Payment of ${formatINR(amt)} recorded`, 'success');
-    if (settlesCycle) {
-      showToast(`🔄 Cycle closed. New cycle starts from ${addDays(cycleEnd, 1)}`, 'info', 4500);
-    } else {
-      showToast(`⏳ Partial payment saved. ${formatINR(remainingBeforePayment - amt)} still pending in this cycle.`, 'info', 5000);
-    }
+    showToast(`🔄 Cycle closed. New cycle starts from ${addDays(dt, 1)}`, 'info', 4500);
 
     loadSalaryData(true);
     loadDashboard(true);
   } catch (e) {
     console.error(e);
     showToast('Failed to save payment', 'error');
-  } finally {
-    salaryPaymentSaveInFlight = false;
   }
 }
 
@@ -5899,28 +5286,23 @@ async function undoPaidCycle(agentUsername, payId) {
 
   if (!confirm.isConfirmed) return;
 
-  if (salaryPaymentSaveInFlight) {
-    showToast('Another salary action is in progress. Please wait.', 'info');
-    return;
-  }
-  salaryPaymentSaveInFlight = true;
-
   try {
     const updates = {
-      [`salary_payments/${agentUsername}/${payId}/status`]: 'UNDONE',
-      [`salary_payments/${agentUsername}/${payId}/undoneAt`]: Date.now(),
-      [`salary_payments/${agentUsername}/${payId}/undoneBy`]: 'admin'
+      status: 'UNDONE',
+      undoneAt: Date.now(),
+      undoneBy: 'admin'
     };
 
-    if (Array.isArray(entry.cycleAdjustmentIds) && entry.cycleAdjustmentIds.length) {
-      for (const adjId of entry.cycleAdjustmentIds) {
-        updates[`adjustments/${agentUsername}/${adjId}/settledInCycle`] = null;
-        updates[`adjustments/${agentUsername}/${adjId}/settledAt`] = null;
-      }
-    }
+    await db.ref(`salary_payments/${agentUsername}/${payId}`).update(updates);
 
-    // One atomic write: status + adjustment release cannot partially apply.
-    await db.ref().update(updates);
+    if (Array.isArray(entry.cycleAdjustmentIds) && entry.cycleAdjustmentIds.length) {
+      const adjUpdates = {};
+      for (const adjId of entry.cycleAdjustmentIds) {
+        adjUpdates[`adjustments/${agentUsername}/${adjId}/settledInCycle`] = null;
+        adjUpdates[`adjustments/${agentUsername}/${adjId}/settledAt`] = null;
+      }
+      await db.ref().update(adjUpdates);
+    }
 
     invalidate('salary_payments');
     showToast('↩️ Paid cycle undone. Data restored.', 'success');
@@ -5932,8 +5314,6 @@ async function undoPaidCycle(agentUsername, payId) {
   } catch (e) {
     console.error(e);
     showToast('Failed to undo payment', 'error');
-  } finally {
-    salaryPaymentSaveInFlight = false;
   }
 }
 
@@ -5957,26 +5337,20 @@ async function redoPaidCycle(agentUsername, payId) {
 
   if (!confirm.isConfirmed) return;
 
-  if (salaryPaymentSaveInFlight) {
-    showToast('Another salary action is in progress. Please wait.', 'info');
-    return;
-  }
-  salaryPaymentSaveInFlight = true;
-
   try {
-    const updates = {
-      [`salary_payments/${agentUsername}/${payId}/status`]: 'PAID',
-      [`salary_payments/${agentUsername}/${payId}/redoneAt`]: Date.now()
-    };
+    await db.ref(`salary_payments/${agentUsername}/${payId}`).update({
+      status: 'PAID',
+      redoneAt: Date.now()
+    });
 
     if (Array.isArray(entry.cycleAdjustmentIds) && entry.cycleAdjustmentIds.length) {
+      const adjUpdates = {};
       for (const adjId of entry.cycleAdjustmentIds) {
-        updates[`adjustments/${agentUsername}/${adjId}/settledInCycle`] = payId;
-        updates[`adjustments/${agentUsername}/${adjId}/settledAt`] = Date.now();
+        adjUpdates[`adjustments/${agentUsername}/${adjId}/settledInCycle`] = payId;
+        adjUpdates[`adjustments/${agentUsername}/${adjId}/settledAt`] = Date.now();
       }
+      await db.ref().update(adjUpdates);
     }
-
-    await db.ref().update(updates);
 
     invalidate('salary_payments');
     showToast('✅ Cycle re-applied', 'success');
@@ -5988,8 +5362,6 @@ async function redoPaidCycle(agentUsername, payId) {
   } catch (e) {
     console.error(e);
     showToast('Failed to re-apply', 'error');
-  } finally {
-    salaryPaymentSaveInFlight = false;
   }
 }
 
@@ -6030,26 +5402,17 @@ async function deletePaidCycle(agentUsername, payId) {
 
   if (!confirm.isConfirmed) return;
 
-  if (salaryPaymentSaveInFlight) {
-    showToast('Another salary action is in progress. Please wait.', 'info');
-    return;
-  }
-  salaryPaymentSaveInFlight = true;
-
   try {
-    const updates = {
-      [`salary_payments/${agentUsername}/${payId}`]: null
-    };
-
     if (Array.isArray(entry.cycleAdjustmentIds) && entry.cycleAdjustmentIds.length) {
+      const adjUpdates = {};
       for (const adjId of entry.cycleAdjustmentIds) {
-        updates[`adjustments/${agentUsername}/${adjId}/settledInCycle`] = null;
-        updates[`adjustments/${agentUsername}/${adjId}/settledAt`] = null;
+        adjUpdates[`adjustments/${agentUsername}/${adjId}/settledInCycle`] = null;
+        adjUpdates[`adjustments/${agentUsername}/${adjId}/settledAt`] = null;
       }
+      await db.ref().update(adjUpdates);
     }
 
-    // Delete + release adjustments atomically.
-    await db.ref().update(updates);
+    await db.ref(`salary_payments/${agentUsername}/${payId}`).remove();
 
     invalidate('salary_payments');
     showToast('🗑️ Paid cycle deleted from Firebase', 'success');
@@ -6061,8 +5424,6 @@ async function deletePaidCycle(agentUsername, payId) {
   } catch (e) {
     console.error(e);
     showToast('Failed to delete paid cycle', 'error');
-  } finally {
-    salaryPaymentSaveInFlight = false;
   }
 }
 
@@ -6090,12 +5451,9 @@ async function openPaymentHistoryModal(agentUsername) {
     } else {
       rows = list.map((p, i) => {
         const isUndone = p.status === 'UNDONE';
-        const isPartial = !isUndone && p.closesCycle === false;
         const statusBadge = isUndone
           ? '<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-gray-200 text-gray-700">↩️ UNDONE</span>'
-          : (isPartial
-            ? '<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800">⏳ PARTIAL</span>'
-            : '<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800">✅ PAID</span>');
+          : '<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800">✅ PAID</span>';
 
         const cycle = p.cycleStartDate === p.cycleEndDate
           ? (p.cycleStartDate || '—')
@@ -6111,14 +5469,14 @@ async function openPaymentHistoryModal(agentUsername) {
 
         return `
           <tr class="border-b border-gray-100 hover:bg-gray-50 text-xs ${rowStyle}">
-            <td data-label="#" class="py-2.5 px-3 text-gray-500 font-mono">${i + 1}</td>
-            <td data-label="Payment Date" class="py-2.5 px-3 font-semibold text-gray-800">${p.paymentDate || '—'}</td>
-            <td data-label="Cycle Period" class="py-2.5 px-3 text-gray-600">${cycle}</td>
-            <td data-label="Grand Total" class="py-2.5 px-3 font-bold text-gray-800">${formatINR(p.cycleGrandTotal || 0)}</td>
-            <td data-label="Paid Amount" class="py-2.5 px-3 font-bold text-emerald-600">${formatINR(p.amount || 0)}</td>
-            <td data-label="Status" class="py-2.5 px-3">${statusBadge}</td>
-            <td data-label="Note" class="py-2.5 px-3 text-gray-500 max-w-[140px] truncate" title="${esc(p.note || '')}">${p.note || '—'}</td>
-            <td data-label="Actions" class="py-2.5 px-3 text-right whitespace-nowrap">${undoBtn}${deleteBtn}</td>
+            <td class="py-2.5 px-3 text-gray-500 font-mono">${i + 1}</td>
+            <td class="py-2.5 px-3 font-semibold text-gray-800">${p.paymentDate || '—'}</td>
+            <td class="py-2.5 px-3 text-gray-600">${cycle}</td>
+            <td class="py-2.5 px-3 font-bold text-gray-800">${formatINR(p.cycleGrandTotal || 0)}</td>
+            <td class="py-2.5 px-3 font-bold text-emerald-600">${formatINR(p.amount || 0)}</td>
+            <td class="py-2.5 px-3">${statusBadge}</td>
+            <td class="py-2.5 px-3 text-gray-500 max-w-[140px] truncate" title="${esc(p.note || '')}">${p.note || '—'}</td>
+            <td class="py-2.5 px-3 text-right whitespace-nowrap">${undoBtn}${deleteBtn}</td>
           </tr>
         `;
       }).join('');
@@ -6130,15 +5488,14 @@ async function openPaymentHistoryModal(agentUsername) {
     await Swal.fire({
       title: `📜 Paid History — ${uData.name || agentUsername}`,
       width: '1050px',
-      customClass: { popup: 'salary-history-popup' },
       html: `
         <div class="text-left py-2 font-sans">
           <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
             <span class="text-xs text-gray-500">Active cycles: <strong>${activeList.length}</strong> · Total cycles: <strong>${list.length}</strong></span>
             <span class="text-xs text-gray-500">Total paid: <strong class="text-emerald-600">${formatINR(totalPaid)}</strong></span>
           </div>
-          <div class="salary-history-scroll max-h-[460px] overflow-y-auto border border-gray-200 rounded-xl">
-            <table class="salary-history-table w-full text-left">
+          <div class="max-h-[460px] overflow-y-auto border border-gray-200 rounded-xl">
+            <table class="w-full text-left">
               <thead class="bg-gray-50 border-b border-gray-200 text-gray-600 text-[11px] uppercase font-bold sticky top-0">
                 <tr>
                   <th class="py-2.5 px-3">#</th>
@@ -6199,12 +5556,9 @@ async function openAllPaymentsHistoryModal() {
     } else {
       rows = list.map((p, i) => {
         const isUndone = p.status === 'UNDONE';
-        const isPartial = !isUndone && p.closesCycle === false;
         const statusBadge = isUndone
           ? '<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-gray-200 text-gray-700">↩️ UNDONE</span>'
-          : (isPartial
-            ? '<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800">⏳ PARTIAL</span>'
-            : '<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800">✅ PAID</span>');
+          : '<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800">✅ PAID</span>';
 
         const cycle = p.cycleStartDate === p.cycleEndDate
           ? (p.cycleStartDate || '—')
@@ -6222,14 +5576,14 @@ async function openAllPaymentsHistoryModal() {
 
         return `
           <tr class="border-b border-gray-100 hover:bg-gray-50 text-xs ${rowStyle}">
-            <td data-label="#" class="py-2.5 px-3 text-gray-500 font-mono">${i + 1}</td>
-            <td data-label="Agent" class="py-2.5 px-3 font-semibold text-gray-800">${agentName} <span class="text-gray-400 font-mono">(${p.agent})</span></td>
-            <td data-label="Payment Date" class="py-2.5 px-3 font-semibold text-gray-800">${p.paymentDate || '—'}</td>
-            <td data-label="Cycle Period" class="py-2.5 px-3 text-gray-600">${cycle}</td>
-            <td data-label="Grand Total" class="py-2.5 px-3 font-bold text-gray-800">${formatINR(p.cycleGrandTotal || 0)}</td>
-            <td data-label="Paid Amount" class="py-2.5 px-3 font-bold text-emerald-600">${formatINR(p.amount || 0)}</td>
-            <td data-label="Status" class="py-2.5 px-3">${statusBadge}</td>
-            <td data-label="Actions" class="py-2.5 px-3 text-right whitespace-nowrap">${undoBtn}${deleteBtn}</td>
+            <td class="py-2.5 px-3 text-gray-500 font-mono">${i + 1}</td>
+            <td class="py-2.5 px-3 font-semibold text-gray-800">${agentName} <span class="text-gray-400 font-mono">(${p.agent})</span></td>
+            <td class="py-2.5 px-3 font-semibold text-gray-800">${p.paymentDate || '—'}</td>
+            <td class="py-2.5 px-3 text-gray-600">${cycle}</td>
+            <td class="py-2.5 px-3 font-bold text-gray-800">${formatINR(p.cycleGrandTotal || 0)}</td>
+            <td class="py-2.5 px-3 font-bold text-emerald-600">${formatINR(p.amount || 0)}</td>
+            <td class="py-2.5 px-3">${statusBadge}</td>
+            <td class="py-2.5 px-3 text-right whitespace-nowrap">${undoBtn}${deleteBtn}</td>
           </tr>
         `;
       }).join('');
@@ -6241,15 +5595,14 @@ async function openAllPaymentsHistoryModal() {
     await Swal.fire({
       title: `📜 All Paid Cycles (All Agents)`,
       width: '1100px',
-      customClass: { popup: 'salary-history-popup' },
       html: `
         <div class="text-left py-2 font-sans">
           <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
             <span class="text-xs text-gray-500">Active cycles: <strong>${activeList.length}</strong> · Total cycles: <strong>${list.length}</strong></span>
             <span class="text-xs text-gray-500">Total paid: <strong class="text-emerald-600">${formatINR(totalPaid)}</strong></span>
           </div>
-          <div class="salary-history-scroll max-h-[500px] overflow-y-auto border border-gray-200 rounded-xl">
-            <table class="salary-history-table w-full text-left">
+          <div class="max-h-[500px] overflow-y-auto border border-gray-200 rounded-xl">
+            <table class="w-full text-left">
               <thead class="bg-gray-50 border-b border-gray-200 text-gray-600 text-[11px] uppercase font-bold sticky top-0">
                 <tr>
                   <th class="py-2.5 px-3">#</th>
@@ -6296,10 +5649,9 @@ async function openAddAdjustmentModal(defaultAgent = '') {
   const { value: formValues } = await Swal.fire({
     title: '➕ Add Payment / Adjustment',
     width: '560px',
-    customClass: { popup: 'salary-adjustment-popup' },
     html: `
       <div class="text-left text-xs space-y-3 font-sans pt-1">
-        <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+        <div class="grid grid-cols-2 gap-2">
           <div>
             <label class="block font-semibold text-gray-700 mb-1">Select Agent</label>
             <select id="adj_agent" class="w-full p-2 border border-gray-300 rounded-lg text-sm bg-white">
@@ -6308,22 +5660,22 @@ async function openAddAdjustmentModal(defaultAgent = '') {
           </div>
           <div>
             <label class="block font-semibold text-gray-700 mb-1">Type</label>
-            <select id="adj_type" onchange="syncAdjustmentFormRules()" class="w-full p-2 border border-gray-300 rounded-lg text-sm bg-white">
+            <select id="adj_type" class="w-full p-2 border border-gray-300 rounded-lg text-sm bg-white">
               <option value="Bonus">🎁 Bonus (Add)</option>
               <option value="Incentive">⭐ Extra Incentive (Add)</option>
               <option value="Extra Salary">💵 Extra Salary (Add)</option>
               <option value="Advance">💸 Salary Advance (Deduct)</option>
               <option value="Penalty">⚠️ Penalty / Cut (Deduct)</option>
               <option value="Fuel/Travel Allowance">⛽ Fuel / Travel Allowance (Add)</option>
-              <option value="Other Adjustment">📝 Other Adjustment (Choose Direction)</option>
+              <option value="Other Adjustment">📝 Other Adjustment</option>
             </select>
           </div>
         </div>
 
-        <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+        <div class="grid grid-cols-2 gap-2">
           <div>
             <label class="block font-semibold text-gray-700 mb-1">Amount (₹)</label>
-            <input type="number" id="adj_amount" min="0.01" step="0.01" placeholder="e.g. 500" class="w-full p-2 border border-gray-300 rounded-lg text-sm" />
+            <input type="number" id="adj_amount" min="1" placeholder="e.g. 500" class="w-full p-2 border border-gray-300 rounded-lg text-sm" />
           </div>
           <div>
             <label class="block font-semibold text-gray-700 mb-1">Date & Time</label>
@@ -6337,23 +5689,30 @@ async function openAddAdjustmentModal(defaultAgent = '') {
         <div class="p-3 bg-gray-50 border border-gray-200 rounded-xl space-y-2">
           <div class="font-semibold text-gray-800 text-[11px] uppercase tracking-wide">Adjustment Rules</div>
 
-          <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1">
+          <div class="flex items-center justify-between">
             <span class="text-gray-700 font-medium">Salary Effect:</span>
-            <select id="adj_is_deduction" class="p-1.5 border border-gray-300 rounded text-xs bg-white w-full sm:w-auto">
+            <select id="adj_is_deduction" class="p-1 border border-gray-300 rounded text-xs bg-white">
               <option value="add">➕ Add to Salary (Earnings)</option>
               <option value="deduct">➖ Deduct from Salary</option>
+              <option value="neutral">Neutral (Record only)</option>
             </select>
           </div>
-          <p id="adj_effect_hint" class="text-[10px] text-indigo-700 bg-indigo-50 border border-indigo-100 rounded-lg px-2 py-1 leading-snug"></p>
 
-          <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1">
+          <div class="flex items-center justify-between">
+            <span class="text-gray-700 font-medium">Deduct from Pickup/Reject Incentives?</span>
+            <select id="adj_deduct_incentives" class="p-1 border border-gray-300 rounded text-xs bg-white">
+              <option value="no">No (Base salary only)</option>
+              <option value="yes">Yes (Can cut from incentives)</option>
+            </select>
+          </div>
+
+          <div class="flex items-center justify-between">
             <span class="text-gray-700 font-medium">Adjustment Period:</span>
-            <select id="adj_adjust_target" onchange="syncAdjustmentFormRules()" class="p-1.5 border border-gray-300 rounded text-xs bg-white w-full sm:w-auto">
-              <option value="current">Current Period Salary</option>
+            <select id="adj_adjust_target" class="p-1 border border-gray-300 rounded text-xs bg-white">
+              <option value="current">Current Month Salary</option>
               <option value="previous_balance">Previous Balance / Carry Forward</option>
             </select>
           </div>
-          <p id="adj_period_hint" class="text-[10px] text-gray-500 leading-snug"></p>
         </div>
 
         <div>
@@ -6362,75 +5721,33 @@ async function openAddAdjustmentModal(defaultAgent = '') {
         </div>
       </div>
     `,
-    didOpen: () => {
-      syncAdjustmentFormRules();
-    },
     showCancelButton: true,
     confirmButtonText: '💾 Save Adjustment',
     confirmButtonColor: '#4f46e5',
     cancelButtonColor: '#64748b',
     preConfirm: () => {
       const agent = document.getElementById('adj_agent').value;
-      const amountRaw = Number(document.getElementById('adj_amount').value);
+      const amount = Number(document.getElementById('adj_amount').value);
       const type = document.getElementById('adj_type').value;
       const date = document.getElementById('adj_date').value;
       const time = document.getElementById('adj_time').value;
-      const selectedEffect = document.getElementById('adj_is_deduction').value;
+      const effect = document.getElementById('adj_is_deduction').value;
+      const deductIncentives = document.getElementById('adj_deduct_incentives').value;
       const adjustTarget = document.getElementById('adj_adjust_target').value;
       const reason = document.getElementById('adj_reason').value.trim();
-      const rule = getAdjustmentRule(type);
-      const effect = rule.effect || selectedEffect;
 
       if (!agent) { Swal.showValidationMessage('Select an agent'); return false; }
-      if (!Number.isFinite(amountRaw) || amountRaw <= 0) { Swal.showValidationMessage('Enter a valid amount greater than 0'); return false; }
+      if (!amount || amount <= 0) { Swal.showValidationMessage('Enter a valid amount'); return false; }
       if (!date) { Swal.showValidationMessage('Select a date'); return false; }
-      if (!['add', 'deduct'].includes(effect)) { Swal.showValidationMessage('Select a valid salary effect'); return false; }
-      if (rule.effect && selectedEffect !== rule.effect) {
-        Swal.showValidationMessage(`${type} can only ${rule.effect === 'add' ? 'add to' : 'deduct from'} salary`);
-        return false;
-      }
 
-      return {
-        agent,
-        amount: Math.round(amountRaw * 100) / 100,
-        type,
-        date,
-        time,
-        effect,
-        adjustTarget,
-        reason
-      };
+      return { agent, amount, type, date, time, effect, deductIncentives, adjustTarget, reason };
     }
   });
 
   if (!formValues) return;
 
-  if (salaryAdjustmentSaveInFlight) {
-    showToast('An adjustment is already being saved. Please wait.', 'info');
-    return;
-  }
-  salaryAdjustmentSaveInFlight = true;
-
   try {
-    const now = Date.now();
-
-    // Guard against a rapid re-open + re-submit of the exact same entry.
-    const existingSnap = await db.ref('adjustments/' + formValues.agent).once('value');
-    const existing = existingSnap.val() || {};
-    const duplicate = Object.values(existing).find(a =>
-      a && a.status !== 'REVERTED' &&
-      Math.abs((Number(a.createdAt) || 0) - now) < 15000 &&
-      a.type === formValues.type &&
-      Number(a.amount) === formValues.amount &&
-      a.date === formValues.date &&
-      (a.time || '12:00') === (formValues.time || '12:00')
-    );
-    if (duplicate) {
-      showToast('The same adjustment was just saved. Duplicate blocked.', 'error');
-      return;
-    }
-
-    const adjId = 'adj_' + now + '_' + Math.random().toString(36).slice(2, 7);
+    const adjId = 'adj_' + Date.now();
     const entry = {
       id: adjId,
       agent: formValues.agent,
@@ -6438,14 +5755,14 @@ async function openAddAdjustmentModal(defaultAgent = '') {
       type: formValues.type,
       date: formValues.date,
       time: formValues.time || '12:00',
-      timestamp: new Date(`${formValues.date}T${formValues.time || '12:00'}`).getTime() || now,
+      timestamp: new Date(`${formValues.date}T${formValues.time || '12:00'}`).getTime() || Date.now(),
       effect: formValues.effect,
-      deductIncentives: false,
+      deductIncentives: formValues.deductIncentives === 'yes',
       adjustTarget: formValues.adjustTarget,
       reason: formValues.reason || 'None',
 
       // History meta
-      createdAt: now,
+      createdAt: Date.now(),
       createdBy: 'admin',
       createdByName: 'Admin',
       status: 'ACTIVE', // ACTIVE | REVERTED
@@ -6460,38 +5777,6 @@ async function openAddAdjustmentModal(defaultAgent = '') {
   } catch (e) {
     console.error('Error saving adjustment:', e);
     showToast('Failed to save adjustment', 'error');
-  } finally {
-    salaryAdjustmentSaveInFlight = false;
-  }
-}
-
-function syncAdjustmentFormRules() {
-  const typeEl = document.getElementById('adj_type');
-  const effectEl = document.getElementById('adj_is_deduction');
-  const hintEl = document.getElementById('adj_effect_hint');
-  const periodEl = document.getElementById('adj_adjust_target');
-  const periodHintEl = document.getElementById('adj_period_hint');
-  if (!typeEl || !effectEl || !hintEl) return;
-
-  const type = typeEl.value;
-  const rule = getAdjustmentRule(type);
-
-  if (rule.effect) {
-    effectEl.value = rule.effect;
-    effectEl.disabled = true;
-    effectEl.classList.add('bg-gray-100', 'text-gray-600', 'cursor-not-allowed');
-    hintEl.textContent = `${rule.hint} Direction is locked for ${type}.`;
-  } else {
-    effectEl.disabled = false;
-    effectEl.classList.remove('bg-gray-100', 'text-gray-600', 'cursor-not-allowed');
-    if (!['add', 'deduct'].includes(effectEl.value)) effectEl.value = 'add';
-    hintEl.textContent = rule.hint;
-  }
-
-  if (periodEl && periodHintEl) {
-    periodHintEl.textContent = periodEl.value === 'previous_balance'
-      ? 'Carried from an earlier unpaid balance. It is still included in this salary total exactly once.'
-      : 'Applies to the current open salary cycle.';
   }
 }
 
@@ -6536,9 +5821,8 @@ async function openAdjustmentHistoryModal(agentUsername = null) {
       rowsHtml = '<tr><td colspan="8" class="text-center py-6 text-gray-400">No adjustment entries found.</td></tr>';
     } else {
       rowsHtml = list.map(item => {
-        const effect = resolveAdjustmentEffect(item);
-        const isAdd = effect === 'add';
-        const isDeduct = effect === 'deduct';
+        const isAdd = item.effect === 'add';
+        const isDeduct = item.effect === 'deduct';
         const colorClass = isAdd ? 'text-emerald-700 bg-emerald-50' : (isDeduct ? 'text-rose-700 bg-rose-50' : 'text-gray-700 bg-gray-50');
         const sign = isAdd ? '+₹' : (isDeduct ? '-₹' : '₹');
 
@@ -6573,14 +5857,14 @@ async function openAdjustmentHistoryModal(agentUsername = null) {
 
         return `
           <tr class="border-b border-gray-100 hover:bg-gray-50 text-xs ${isReverted ? 'opacity-60' : ''}">
-            <td data-label="Date / Time" class="py-2.5 px-3 font-medium text-gray-800 whitespace-nowrap">${item.date || '—'} <span class="text-gray-400 font-mono">${item.time || ''}</span></td>
-            <td data-label="Agent" class="py-2.5 px-3 font-semibold text-gray-700">${item.agent}</td>
-            <td data-label="Type" class="py-2.5 px-3"><span class="px-2 py-0.5 rounded font-semibold ${colorClass}">${item.type || '—'}</span><div class="text-[9px] text-gray-400 mt-0.5">${item.adjustTarget === 'previous_balance' ? 'Previous Balance' : 'Current Period'}</div></td>
-            <td data-label="Amount" class="py-2.5 px-3 font-bold ${isAdd ? 'text-emerald-600' : (isDeduct ? 'text-rose-600' : 'text-gray-800')}">${sign}${item.amount || 0}</td>
-            <td data-label="Reason" class="py-2.5 px-3 text-gray-600 max-w-[160px] truncate" title="${esc(item.reason || '')}">${esc(item.reason || '—')}</td>
-            <td data-label="Cycle" class="py-2.5 px-3 text-gray-600 whitespace-nowrap">${cycleLabel}</td>
-            <td data-label="Status" class="py-2.5 px-3">${statusBadge}<div class="text-[9px] text-gray-400 mt-0.5">by ${item.createdByName || item.createdBy || 'admin'} · ${createdInfo}</div></td>
-            <td data-label="Action" class="py-2.5 px-3 text-right whitespace-nowrap">${revertBtn}</td>
+            <td class="py-2.5 px-3 font-medium text-gray-800 whitespace-nowrap">${item.date || '—'} <span class="text-gray-400 font-mono">${item.time || ''}</span></td>
+            <td class="py-2.5 px-3 font-semibold text-gray-700">${item.agent}</td>
+            <td class="py-2.5 px-3"><span class="px-2 py-0.5 rounded font-semibold ${colorClass}">${item.type || '—'}</span></td>
+            <td class="py-2.5 px-3 font-bold ${isAdd ? 'text-emerald-600' : (isDeduct ? 'text-rose-600' : 'text-gray-800')}">${sign}${item.amount || 0}</td>
+            <td class="py-2.5 px-3 text-gray-600 max-w-[160px] truncate" title="${esc(item.reason || '')}">${esc(item.reason || '—')}</td>
+            <td class="py-2.5 px-3 text-gray-600 whitespace-nowrap">${cycleLabel}</td>
+            <td class="py-2.5 px-3">${statusBadge}<div class="text-[9px] text-gray-400 mt-0.5">by ${item.createdByName || item.createdBy || 'admin'} · ${createdInfo}</div></td>
+            <td class="py-2.5 px-3 text-right whitespace-nowrap">${revertBtn}</td>
           </tr>
         `;
       }).join('');
@@ -6589,17 +5873,16 @@ async function openAdjustmentHistoryModal(agentUsername = null) {
     await Swal.fire({
       title: agentUsername ? `Adjustment History: ${agentUsername}` : '📋 All Payments & Adjustments',
       width: '1150px',
-      customClass: { popup: 'salary-history-popup' },
       html: `
         <div class="text-left py-2 font-sans">
           <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
             <span class="text-xs text-gray-500 font-medium">Total entries: <strong>${list.length}</strong></span>
-            <button onclick="Swal.close(); openAddAdjustmentModal('${agentUsername || ''}')" class="px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-xs font-semibold hover:bg-indigo-700">
+            <button onclick="Swal.close(); openAddAdjustmentModal('${agentUsername || ''}')" class="px-3 py-1 bg-indigo-600 text-white rounded-lg text-xs font-semibold hover:bg-indigo-700">
               ➕ Add New
             </button>
           </div>
-          <div class="salary-history-scroll max-h-[460px] overflow-y-auto border border-gray-200 rounded-xl">
-            <table class="salary-history-table w-full text-left">
+          <div class="max-h-[460px] overflow-y-auto border border-gray-200 rounded-xl">
+            <table class="w-full text-left">
               <thead class="bg-gray-50 border-b border-gray-200 text-gray-600 text-[11px] uppercase font-bold sticky top-0">
                 <tr>
                   <th class="py-2.5 px-3">Date/Time</th>
@@ -6942,8 +6225,15 @@ function setupLiveSearch(inputId, dropdownId, dataSource, fields) {
     let results = [];
 
     if (window.Fuse) {
-      const fuse = getFuseIndex(data, searchFields, 2);
-      results = fuse ? fuse.search(query) : [];
+      const fuse = new Fuse(data, {
+        keys: searchFields,
+        threshold: 0.3,
+        includeScore: true,
+        ignoreLocation: true,
+        minMatchCharLength: 2
+      });
+
+      results = fuse.search(query);
     } else {
       const lower = query.toLowerCase();
 
@@ -7104,7 +6394,7 @@ function injectSalaryHeaderButtons() {
 // ================================================================
 // INIT
 // ================================================================
-function bootApp() {
+document.addEventListener('DOMContentLoaded', () => {
   refreshIcons();
   loadDashboard(true);
 
@@ -7149,104 +6439,6 @@ function bootApp() {
   }, 300000);
 
   showToast('👋 Welcome', 'info', 2000);
-}
-
-// ================================================================
-// AUTH GATE BOOT
-// ----------------------------------------------------------------
-// No data is loaded until an admin session exists. The gate is UI-level;
-// the database rules are the real boundary.
-// ================================================================
-async function initAuthGate() {
-  const gate = $('authGate');
-  if (!gate) {
-    bootApp();
-    return;
-  }
-
-  const existing = readAdminSession();
-  if (existing) {
-    currentAdmin = existing;
-    gate.remove();
-    document.body.classList.remove('locked');
-    renderSessionBar();
-    await ensureAnonymousAuth();
-    bootApp();
-    return;
-  }
-
-  document.body.classList.add('locked');
-
-  const form = $('authForm');
-  const userInput = $('authUsername');
-  const passInput = $('authPassword');
-  const errorEl = $('authError');
-  const submitBtn = $('authSubmit');
-
-  const showError = (msg) => {
-    if (!errorEl) return;
-    errorEl.textContent = msg;
-    errorEl.classList.add('show');
-  };
-
-  if (userInput) userInput.focus();
-
-  if (!form) return;
-
-  form.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    if (submitBtn && submitBtn.disabled) return;
-
-    if (errorEl) {
-      errorEl.textContent = '';
-      errorEl.classList.remove('show');
-    }
-
-    if (submitBtn) {
-      submitBtn.disabled = true;
-      submitBtn.dataset.label = submitBtn.textContent;
-      submitBtn.textContent = 'Signing in…';
-    }
-
-    try {
-      await ensureAnonymousAuth();
-
-      const session = await attemptAdminLogin(
-        userInput ? userInput.value : '',
-        passInput ? passInput.value : ''
-      );
-
-      writeAdminSession(session);
-      currentAdmin = session;
-
-      gate.remove();
-      document.body.classList.remove('locked');
-      renderSessionBar();
-      bootApp();
-      showToast('Signed in as ' + (session.name || session.username), 'success', 2500);
-    } catch (err) {
-      const message = String((err && err.message) || 'Sign in failed.');
-      showError(
-        /permission|denied/i.test(message)
-          ? 'Sign-in was blocked by the database. Ask the owner to check the rules.'
-          : message
-      );
-      if (passInput) {
-        passInput.value = '';
-        passInput.focus();
-      }
-    } finally {
-      if (submitBtn) {
-        submitBtn.disabled = false;
-        submitBtn.textContent = submitBtn.dataset.label || 'Sign in';
-      }
-    }
-  });
-}
-
-document.addEventListener('DOMContentLoaded', () => {
-  refreshIcons();
-  initAuthGate();
 });
 
 // ================================================================
@@ -7409,85 +6601,6 @@ if (outsidePickupsTableBody) {
   });
 }
 
-// ---- IMEI duplicate guard (shared by admin edit flows) ----
-// A phone is identified by either slot, so BOTH imei and imei2 are compared.
-// Held and sold records count as existing phones; rejected ones are reusable.
-// On a read failure this throws instead of returning null — a network error
-// must never silently authorise a duplicate.
-class DuplicateCheckError extends Error {}
-
-async function findAdminImeiDuplicate(imei, excludePickupId) {
-  const target = normalizeImei(imei);
-  if (!target) return null;
-
-  const matchesSlot = (rec) =>
-    normalizeImei(rec.imei) === target || normalizeImei(rec.imei2) === target;
-
-  const slotOf = (rec) => normalizeImei(rec.imei) === target ? 'imei' : 'imei2';
-
-  let pickupsSnap, outsideSnap;
-  try {
-    [pickupsSnap, outsideSnap] = await Promise.all([
-      db.ref('pickups').once('value'),
-      db.ref('outside_pickups').once('value')
-    ]);
-  } catch (e) {
-    console.error('IMEI duplicate check failed:', e);
-    throw new DuplicateCheckError('Could not verify IMEI uniqueness. Check your connection and try again.');
-  }
-
-  for (const [id, rec] of Object.entries(pickupsSnap.val() || {})) {
-    if (!rec) continue;
-    if (excludePickupId && (id === excludePickupId || rec.orderId === excludePickupId)) continue;
-    if (rec.status !== 'pickup' && rec.status !== 'on_hold') continue;
-    if (!matchesSlot(rec)) continue;
-    return {
-      pickupId: id,
-      phoneModel: rec.phoneModel || '',
-      status: rec.status === 'on_hold' ? 'On hold' : (rec.sold ? 'Sold' : 'Pickup Completed'),
-      rider: rec.rider || rec.agent || '',
-      date: rec.date || rec.timestampIST || '',
-      slot: slotOf(rec)
-    };
-  }
-
-  for (const [id, rec] of Object.entries(outsideSnap.val() || {})) {
-    if (!rec) continue;
-    if (excludePickupId && (id === excludePickupId || rec.pickupId === excludePickupId)) continue;
-    if ((rec.status || 'pending') === 'rejected') continue;
-    if (!matchesSlot(rec)) continue;
-    return {
-      pickupId: id,
-      phoneModel: rec.phoneModel || '',
-      status: rec.status === 'approved' ? 'Approved (in inventory)' : 'Pending Approval',
-      rider: rec.rider || rec.agentName || rec.agent || '',
-      date: rec.date || rec.timestampIST || '',
-      slot: slotOf(rec)
-    };
-  }
-
-  return null;
-}
-
-async function showAdminDuplicateImeiWarning(imei, duplicate) {
-  await Swal.fire({
-    icon: 'warning',
-    title: 'Duplicate Entry: This IMEI number already exists.',
-    html: `
-      <div class="text-left text-sm space-y-1">
-        <p>IMEI: <strong class="font-mono">${esc(imei)}</strong></p>
-        <p>Existing Model: <strong>${esc(duplicate.phoneModel || '—')}</strong></p>
-        <p>Existing Pickup ID: <strong class="font-mono">${esc(duplicate.pickupId)}</strong></p>
-        <p>Status: <strong>${esc(duplicate.status)}</strong></p>
-        ${duplicate.rider ? `<p>Rider: <strong>${esc(duplicate.rider)}</strong></p>` : ''}
-        ${duplicate.date ? `<p class="text-xs text-gray-500">Date: ${esc(duplicate.date)}</p>` : ''}
-        ${duplicate.slot === 'imei2' ? `<p class="text-xs text-amber-700 mt-1">Matched on <strong>IMEI 2</strong> of the existing record.</p>` : ''}
-        <p class="text-xs text-red-600 mt-2">This change was NOT saved. The same IMEI cannot be added twice.</p>
-      </div>`,
-    confirmButtonColor: '#dc2626'
-  });
-}
-
 async function editOutsidePickup(pickupId) {
   if (!pickupId) return;
 
@@ -7550,27 +6663,9 @@ async function editOutsidePickup(pickupId) {
           return false;
         }
 
-        const phoneModel = document.getElementById('op-edit-model').value.trim();
-        const imei = normalizeImei(document.getElementById('op-edit-imei').value);
-
-        if (pickup.inventoryCreated === true && !phoneModel) {
-          Swal.showValidationMessage('Phone model is required for an approved pickup.');
-          return false;
-        }
-
-        const originalImei = normalizeImei(pickup.imei);
-        if (imei) {
-          const check = inspectImei(imei);
-          const changed = imei !== originalImei;
-          if (!check.ok && (changed || !originalImei)) {
-            Swal.showValidationMessage(check.message);
-            return false;
-          }
-        }
-
         return {
-          phoneModel,
-          imei,
+          phoneModel: document.getElementById('op-edit-model').value.trim(),
+          imei: document.getElementById('op-edit-imei').value.trim(),
           value,
           ram: document.getElementById('op-edit-ram').value.trim(),
           storage: document.getElementById('op-edit-storage').value.trim(),
@@ -7584,34 +6679,6 @@ async function editOutsidePickup(pickupId) {
     });
     if (!result.isConfirmed) return;
 
-    // Changing the IMEI must not introduce a duplicate (also when an approved
-    // pickup is synced back into inventory below).
-    const newImei = normalizeImei(result.value.imei);
-    const oldImei = normalizeImei(pickup.imei);
-    const imeiWarning = (newImei && !inspectImei(newImei).ok && newImei === oldImei)
-      ? inspectImei(newImei).message
-      : '';
-
-    if (newImei && newImei !== oldImei) {
-      let duplicate;
-      try {
-        duplicate = await findAdminImeiDuplicate(newImei, pickupId);
-      } catch (err) {
-        showToast(
-          err instanceof DuplicateCheckError
-            ? err.message
-            : 'Could not verify IMEI uniqueness. Check your connection and try again.',
-          'error'
-        );
-        return;
-      }
-
-      if (duplicate) {
-        await showAdminDuplicateImeiWarning(newImei, duplicate);
-        return;
-      }
-    }
-
     const updates = {};
     Object.entries(result.value).forEach(([field, value]) => {
       updates[`outside_pickups/${pickupId}/${field}`] = value;
@@ -7622,7 +6689,7 @@ async function editOutsidePickup(pickupId) {
     if (pickup.inventoryCreated === true) {
       const inventorySnap = await db.ref('pickups/' + pickupId).once('value');
       const inventoryItem = inventorySnap.val();
-      if (!inventoryItem || !isOutsideInventoryItem(inventoryItem) || inventoryItem.orderId !== pickupId) {
+      if (!inventoryItem || inventoryItem.outsidePickup !== true || inventoryItem.orderId !== pickupId) {
         showToast('Linked inventory item was not found; pickup was not updated', 'error');
         return;
       }
@@ -7637,7 +6704,7 @@ async function editOutsidePickup(pickupId) {
 
     await db.ref().update(updates);
     invalidate('pickups');
-    showToast(imeiWarning ? `Saved. IMEI kept unchanged: ${imeiWarning}` : 'Outside pickup updated', imeiWarning ? 'warning' : 'success', imeiWarning ? 6000 : 3000);
+    showToast('Outside pickup updated', 'success');
     await loadOutsidePickups(true);
     if (pickup.inventoryCreated === true && currentPageView === 'inventory') await loadInventory(true);
     if (currentPageView === 'dashboard') loadDashboard(true);
@@ -7676,7 +6743,7 @@ async function deleteOutsidePickup(pickupId) {
     if (hasLinkedInventory) {
       const inventorySnap = await db.ref('pickups/' + pickupId).once('value');
       const inventoryItem = inventorySnap.val();
-      if (inventoryItem && (!isOutsideInventoryItem(inventoryItem) || inventoryItem.orderId !== pickupId)) {
+      if (inventoryItem && (inventoryItem.outsidePickup !== true || inventoryItem.orderId !== pickupId)) {
         showToast('Linked inventory item could not be verified; nothing was deleted', 'error');
         return;
       }
@@ -7831,9 +6898,6 @@ async function approveOutsidePickup(pickupId) {
       status: 'pickup',
       sold: false,
       outsidePickup: true,
-      // Outside Inventory is commission-free by rule. Store the zero explicitly
-      // so future reads never regenerate a commission from the purchase value.
-      commission: 0,
       phoneModel: p.phoneModel || '',
       imei: p.imei || '',
       value: Number(p.value) || 0,
@@ -7859,7 +6923,7 @@ async function approveOutsidePickup(pickupId) {
       const pickups = currentPickups || {};
       const existing = pickups[pickupId];
       if (existing) {
-        if (isOutsideInventoryItem(existing) && existing.orderId === pickupId) return pickups;
+        if (existing.outsidePickup === true && existing.orderId === pickupId) return pickups;
         transactionIssue = 'Pickup ID already exists in inventory.';
         return;
       }

@@ -5,7 +5,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
     <meta name="theme-color" content="#0f172a" />
     <title>Admin · Flipkart</title>
 <!-- ============ 1.1: External Libraries ============ -->
@@ -13,7 +13,6 @@
 <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-app.js"></script>
 <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-database.js"></script>
 <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-storage.js"></script>   <!-- 🔥 NEW -->
-<script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-auth.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 <script src="https://unpkg.com/lucide@latest"></script>
 <script src="https://cdn.jsdelivr.net/npm/fuse.js@7.0.0"></script>
@@ -115,7 +114,6 @@
         .toast-fixed.success { background: #065f46; }
         .toast-fixed.error { background: #991b1b; }
         .toast-fixed.info { background: #1e40af; }
-.toast-fixed.warning { background: #92400e; }
         .edit-field { border: 2px solid #e2e8f0; border-radius: 10px; padding: 8px 12px; width: 100%; font-size: 14px; outline: none; transition: border 0.2s; background: #fff; }
         .edit-field:focus { border-color: #4f46e5; box-shadow: 0 0 0 3px rgba(79,70,229,0.1); }
         .edit-label { font-size: 10px; font-weight: 700; color: #64748b; text-transform: uppercase; letter-spacing: 0.5px; display: block; margin-bottom: 3px; }
@@ -551,187 +549,6 @@
         /* ===== SWEETALERT Z-INDEX FIX ===== */
         .swal2-container { z-index: 99999 !important; }
 
-        /* ===== SALARY HISTORY / ADJUSTMENT MODALS — MOBILE =====
-           Desktop keeps the existing wide tables. On phones the same rows are
-           shown as labelled cards so nothing overflows or gets clipped. */
-        @media (max-width: 640px) {
-            .swal2-container.swal2-center { padding: 8px !important; }
-
-            .salary-history-popup,
-            .salary-adjustment-popup {
-                width: calc(100vw - 16px) !important;
-                max-width: calc(100vw - 16px) !important;
-                max-height: calc(100dvh - 32px) !important;
-                margin: 8px auto !important;
-                border-radius: 18px !important;
-                overflow: hidden !important;
-            }
-
-            .salary-history-popup {
-                display: flex !important;
-                flex-direction: column !important;
-                padding: 0 !important;
-            }
-
-            .salary-history-popup .swal2-title,
-            .salary-adjustment-popup .swal2-title {
-                font-size: 15px !important;
-                line-height: 1.3 !important;
-                text-align: left !important;
-                padding: 14px 44px 8px 14px !important;
-                margin: 0 !important;
-                flex: 0 0 auto;
-            }
-
-            .salary-history-popup .swal2-close,
-            .salary-adjustment-popup .swal2-close {
-                position: absolute !important;
-                top: 8px !important;
-                right: 8px !important;
-                width: 32px !important;
-                height: 32px !important;
-                font-size: 26px !important;
-                z-index: 3;
-            }
-
-            .salary-history-popup .swal2-html-container {
-                margin: 0 !important;
-                padding: 0 10px 10px !important;
-                min-height: 0 !important;
-                flex: 1 1 auto;
-                overflow: hidden !important;
-            }
-
-            .salary-history-popup .swal2-html-container > div {
-                padding-top: 0 !important;
-            }
-
-            .salary-history-popup .salary-history-scroll {
-                max-height: calc(100dvh - 170px) !important;
-                overflow-y: auto !important;
-                overflow-x: hidden !important;
-                border: 0 !important;
-                border-radius: 0 !important;
-                -webkit-overflow-scrolling: touch;
-                overscroll-behavior: contain;
-                padding-bottom: 2px;
-            }
-
-            .salary-history-popup .salary-history-table,
-            .salary-history-popup .salary-history-table tbody,
-            .salary-history-popup .salary-history-table tr,
-            .salary-history-popup .salary-history-table td {
-                display: block !important;
-                width: 100% !important;
-            }
-
-            .salary-history-popup .salary-history-table thead {
-                display: none !important;
-            }
-
-            .salary-history-popup .salary-history-table tr {
-                border: 1px solid #e2e8f0 !important;
-                border-radius: 12px !important;
-                background: #fff;
-                margin: 0 0 8px !important;
-                padding: 8px 10px !important;
-            }
-
-            .salary-history-popup .salary-history-table tbody tr:last-child {
-                margin-bottom: 0 !important;
-            }
-
-            .salary-history-popup .salary-history-table td {
-                display: flex !important;
-                align-items: flex-start !important;
-                justify-content: space-between !important;
-                gap: 10px !important;
-                text-align: right !important;
-                white-space: normal !important;
-                max-width: none !important;
-                overflow: visible !important;
-                text-overflow: clip !important;
-                padding: 4px 0 !important;
-                border: 0 !important;
-                font-size: 12px !important;
-                line-height: 1.45;
-            }
-
-            .salary-history-popup .salary-history-table td::before {
-                content: attr(data-label);
-                flex: 0 0 38%;
-                text-align: left;
-                font-size: 9px;
-                line-height: 1.5;
-                font-weight: 800;
-                letter-spacing: 0.04em;
-                text-transform: uppercase;
-                color: #94a3b8;
-            }
-
-            .salary-history-popup .salary-history-table td[data-label="#"] {
-                display: none !important;
-            }
-
-            .salary-history-popup .salary-history-table td[data-label="Status"] {
-                align-items: center;
-            }
-
-            .salary-history-popup .salary-history-table td[data-label="Status"]::before {
-                align-self: center;
-            }
-
-            .salary-history-popup .salary-history-table td[data-label="Actions"],
-            .salary-history-popup .salary-history-table td[data-label="Action"] {
-                align-items: center;
-                justify-content: flex-end;
-                padding-top: 8px !important;
-                margin-top: 4px;
-                border-top: 1px dashed #e2e8f0 !important;
-            }
-
-            .salary-history-popup .salary-history-table td[data-label="Actions"]::before,
-            .salary-history-popup .salary-history-table td[data-label="Action"]::before {
-                flex-basis: auto;
-                margin-right: auto;
-            }
-
-            .salary-history-popup .salary-history-table td button {
-                min-height: 32px;
-                padding: 5px 10px !important;
-                font-size: 11px !important;
-            }
-
-            .salary-adjustment-popup {
-                overflow-y: auto !important;
-                padding: 0 0 4px !important;
-            }
-
-            .salary-adjustment-popup .swal2-html-container {
-                margin: 0 !important;
-                padding: 0 12px 8px !important;
-                overflow: visible !important;
-                font-size: 12px !important;
-            }
-
-            .salary-adjustment-popup .swal2-html-container input,
-            .salary-adjustment-popup .swal2-html-container select {
-                font-size: 16px !important;
-                min-height: 40px;
-            }
-
-            .salary-adjustment-popup .swal2-actions {
-                padding: 6px 12px 12px !important;
-                gap: 8px;
-            }
-
-            .salary-adjustment-popup .swal2-actions button {
-                flex: 1 1 0;
-                margin: 0 !important;
-                font-size: 12px !important;
-            }
-        }
-
         /* ===== TABLE WRAP FOR MOBILE ===== */
         .table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
 
@@ -874,153 +691,9 @@
             border-color: #a7f3d0;
             background: #ecfdf5;
         }
-
-        /* ===== AUTH GATE ===== */
-        .auth-gate {
-            position: fixed;
-            inset: 0;
-            z-index: 200;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            padding: 20px;
-            background: #0f172a;
-            background-image: radial-gradient(1100px 520px at 50% -10%, rgba(79, 70, 229, .26), transparent 62%);
-        }
-        .auth-card {
-            width: 100%;
-            max-width: 380px;
-            background: #fff;
-            border-radius: 18px;
-            padding: 28px 26px 24px;
-            box-shadow: 0 24px 60px -12px rgba(15, 23, 42, .45);
-        }
-        .auth-brand { display: flex; align-items: center; gap: 12px; margin-bottom: 22px; }
-        .auth-mark {
-            width: 42px; height: 42px; border-radius: 12px;
-            background: linear-gradient(135deg, #4f46e5, #7c3aed);
-            color: #fff; display: flex; align-items: center; justify-content: center;
-            font-weight: 800; font-size: 17px; letter-spacing: -0.5px;
-            box-shadow: 0 6px 16px -4px rgba(79, 70, 229, .55);
-        }
-        .auth-brand h2 { font-size: 15px; font-weight: 700; color: #0f172a; margin: 0; letter-spacing: -0.2px; }
-        .auth-brand p { font-size: 11.5px; color: #94a3b8; margin: 2px 0 0; font-weight: 500; }
-        .auth-field { margin-bottom: 14px; }
-        .auth-field label {
-            display: block; font-size: 11px; font-weight: 700; letter-spacing: .4px;
-            text-transform: uppercase; color: #64748b; margin-bottom: 6px;
-        }
-        .auth-field input {
-            width: 100%; padding: 11px 13px; border: 1px solid #e2e8f0; border-radius: 10px;
-            font-size: 14px; color: #0f172a; outline: none; background: #fff;
-            transition: border-color .15s, box-shadow .15s;
-        }
-        .auth-field input:focus { border-color: #818cf8; box-shadow: 0 0 0 3px rgba(99, 102, 241, .14); }
-        .auth-error {
-            display: none; margin: 0 0 12px; padding: 9px 12px;
-            background: #fef2f2; border: 1px solid #fecaca; border-radius: 9px;
-            color: #b91c1c; font-size: 12.5px; font-weight: 500;
-        }
-        .auth-error.show { display: block; }
-        .auth-submit {
-            width: 100%; padding: 11px; border: none; border-radius: 10px;
-            background: #4f46e5; color: #fff; font-size: 14px; font-weight: 600;
-            cursor: pointer; transition: background .15s;
-        }
-        .auth-submit:hover:not(:disabled) { background: #4338ca; }
-        .auth-submit:disabled { opacity: .6; cursor: not-allowed; }
-        .auth-foot { margin: 16px 0 0; text-align: center; font-size: 11px; color: #94a3b8; }
-        body.locked { overflow: hidden; }
-
-        /* ===== POLISH LAYER =====
-           Presentation only. No layout, spacing or workflow changes. */
-        :root {
-            --fk-primary: #4f46e5;
-            --fk-ink: #0f172a;
-            --fk-muted: #64748b;
-            --fk-line: #e2e8f0;
-            --fk-surface: #ffffff;
-        }
-
-        /* Numbers line up in columns: money, IMEI, IDs, dates */
-        .stat-card p,
-        table td,
-        table th,
-        .font-mono,
-        .detail-item .value,
-        .commission-col,
-        .commission-badge,
-        .profit-green,
-        .profit-red,
-        .deposit-stats .num,
-        .salary-global-stats .num,
-        .profit-preview {
-            font-variant-numeric: tabular-nums;
-            font-feature-settings: 'tnum' 1;
-        }
-
-        /* Table chrome */
-        .table-wrap table { border-collapse: separate; border-spacing: 0; }
-        .table-wrap thead th {
-            background: #f8fafc;
-            font-size: 11px;
-            font-weight: 700;
-            letter-spacing: 0.35px;
-            text-transform: uppercase;
-            color: #64748b;
-            border-bottom: 1px solid var(--fk-line);
-            white-space: nowrap;
-        }
-        .order-row:last-child { border-bottom: none; }
-        .order-row:hover { background: #f8fafc; }
-
-        /* Stat cards: a long rupee value must never stretch the grid */
-        .stat-card { min-width: 0; }
-        .stat-card > div { min-width: 0; }
-        .stat-card > div > div:last-child { min-width: 0; }
-        .stat-card p.stat-money {
-            font-size: clamp(15px, 1.4vw, 22px);
-            letter-spacing: -0.2px;
-            line-height: 1.25;
-            white-space: nowrap;
-        }
-
-        /* Keyboard focus, without changing mouse behaviour */
-        :where(button, a, input, select, textarea, [onclick]):focus-visible {
-            outline: 2px solid var(--fk-primary);
-            outline-offset: 2px;
-            border-radius: 8px;
-        }
-
-        /* Skeleton placeholder for table loads */
-        .skeleton {
-            display: block;
-            height: 12px;
-            border-radius: 6px;
-            background: linear-gradient(90deg, #eef2f7 25%, #e2e8f0 37%, #eef2f7 63%);
-            background-size: 400% 100%;
-            animation: skeletonShimmer 1.2s ease-in-out infinite;
-        }
-        @keyframes skeletonShimmer {
-            0% { background-position: 100% 0; }
-            100% { background-position: 0 0; }
-        }
-
-        /* Respect the OS motion preference */
-        @media (prefers-reduced-motion: reduce) {
-            *, *::before, *::after {
-                animation-duration: 0.01ms !important;
-                animation-iteration-count: 1 !important;
-                transition-duration: 0.01ms !important;
-                scroll-behavior: auto !important;
-            }
-            .stat-card:hover,
-            .salary-summary-card:hover { transform: none; }
-            .skeleton { animation: none; }
-        }
     </style>
 </head>
-<body class="locked">
+<body>
 
 <!-- ================================================================ -->
 <!-- SECTION 2: TOAST NOTIFICATION                                    -->
@@ -1096,17 +769,13 @@
 
         <div class="mt-auto pt-6 border-t border-gray-100 px-3">
             <div class="flex items-center gap-3">
-                <div class="w-8 h-8 bg-gray-200 rounded-full flex items-center justify-center flex-shrink-0">
+                <div class="w-8 h-8 bg-gray-200 rounded-full flex items-center justify-center">
                     <i data-lucide="user" class="w-4 h-4 text-gray-600"></i>
                 </div>
-                <div class="min-w-0 flex-1">
-                    <p class="text-xs font-bold text-gray-800 truncate" id="sidebarAdminName">Admin</p>
-                    <p class="text-[10px] text-gray-400 truncate" id="sidebarAdminRole">Supervisor</p>
+                <div>
+                    <p class="text-xs font-bold text-gray-800">Admin</p>
+                    <p class="text-[10px] text-gray-400">Supervisor</p>
                 </div>
-                <button id="signOutBtn" onclick="signOutAdmin()" title="Sign out" aria-label="Sign out"
-                    class="p-1.5 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50 transition flex-shrink-0">
-                    <i data-lucide="log-out" class="w-4 h-4"></i>
-                </button>
             </div>
             <button onclick="refreshAll()" class="mt-3 w-full text-xs font-medium text-gray-500 hover:text-gray-800 flex items-center justify-center gap-1.5 py-2 rounded-lg hover:bg-gray-50 transition">
                 <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i> Refresh
@@ -1226,7 +895,7 @@
                             <i data-lucide="indian-rupee" class="w-5 h-5 text-emerald-600"></i>
                         </div>
                         <div>
-                            <p class="text-2xl font-bold text-gray-800 stat-money" id="statRevenue">₹0</p>
+                            <p class="text-2xl font-bold text-gray-800" id="statRevenue">₹0</p>
                             <p class="text-xs text-gray-500 font-medium">Revenue (After Commission)</p>
                         </div>
                     </div>
@@ -1237,7 +906,7 @@
                             <i data-lucide="badge-dollar-sign" class="w-5 h-5 text-amber-600"></i>
                         </div>
                         <div>
-                            <p class="text-2xl font-bold text-gray-800 stat-money" id="statProfit">₹0</p>
+                            <p class="text-2xl font-bold text-gray-800" id="statProfit">₹0</p>
                             <p class="text-xs text-gray-500 font-medium">Total Profit</p>
                         </div>
                     </div>
@@ -1245,15 +914,15 @@
             </div>
 
             <!-- ===== 5.3: Stats Grid (Row 3 - Final Net Profit & more) ===== -->
-            <div class="grid grid-cols-1 sm:grid-cols-3 2xl:grid-cols-5 gap-3 sm:gap-4 mb-6">
-                <div class="stat-card glass rounded-2xl p-4 shadow-sm">
+            <div class="grid grid-cols-1 sm:grid-cols-5 gap-3 sm:gap-4 mb-6">
+                <div class="stat-card glass rounded-2xl p-4 shadow-sm col-span-1 sm:col-span-2 md:col-span-1">
                     <div class="flex items-center gap-3">
                         <div class="w-10 h-10 bg-teal-100 rounded-xl flex items-center justify-center">
                             <i data-lucide="wallet" class="w-5 h-5 text-teal-600"></i>
                         </div>
                         <div>
-                            <p class="text-2xl font-bold text-gray-800 stat-money" id="statFinalProfit">₹0</p>
-                            <p class="text-xs text-gray-500 font-medium">Net After Deposits</p>
+                            <p class="text-2xl font-bold text-gray-800" id="statFinalProfit">₹0</p>
+                            <p class="text-xs text-gray-500 font-medium">Final Net Profit</p>
                         </div>
                     </div>
                 </div>
@@ -1263,7 +932,7 @@
                             <i data-lucide="indian-rupee" class="w-5 h-5 text-indigo-600"></i>
                         </div>
                         <div>
-                            <p class="text-2xl font-bold text-gray-800 stat-money" id="statStockValue">₹0</p>
+                            <p class="text-2xl font-bold text-gray-800" id="statStockValue">₹0</p>
                             <p class="text-xs text-gray-500 font-medium">Stock Value</p>
                         </div>
                     </div>
@@ -1296,7 +965,7 @@
                             <i data-lucide="indian-rupee" class="w-5 h-5 text-red-600"></i>
                         </div>
                         <div>
-                            <p class="text-2xl font-bold text-gray-800 stat-money" id="statCommission">₹0</p>
+                            <p class="text-2xl font-bold text-gray-800" id="statCommission">₹0</p>
                             <p class="text-xs text-gray-500 font-medium">Total Commission</p>
                         </div>
                     </div>
@@ -1976,7 +1645,7 @@
         </div>
         <div class="sticky bottom-0 bg-white p-5 border-t border-gray-100 flex gap-2 rounded-b-3xl">
             <button onclick="closeSellModal()" class="flex-1 py-3 rounded-xl bg-gray-100 text-gray-700 font-semibold hover:bg-gray-200 transition">Cancel</button>
-            <button id="confirmSellBtn" onclick="confirmSell()" class="flex-1 py-3 rounded-xl bg-green-600 text-white font-semibold hover:bg-green-700 transition flex items-center justify-center gap-2"><i data-lucide="check-circle" class="w-4 h-4"></i> Confirm Sale</button>
+            <button onclick="confirmSell()" class="flex-1 py-3 rounded-xl bg-green-600 text-white font-semibold hover:bg-green-700 transition flex items-center justify-center gap-2"><i data-lucide="check-circle" class="w-4 h-4"></i> Confirm Sale</button>
         </div>
     </div>
 </div>
@@ -2001,7 +1670,7 @@
         </div>
         <div id="detailSaveActions" style="display:none;" class="sticky bottom-0 bg-white border-t border-gray-100 p-4 flex gap-2 justify-end">
             <button onclick="cancelEdit()" class="px-5 py-2.5 rounded-xl bg-gray-100 text-gray-700 font-semibold hover:bg-gray-200 transition">Cancel</button>
-            <button id="saveEditBtn" onclick="saveEdit()" class="px-5 py-2.5 rounded-xl bg-indigo-600 text-white font-semibold hover:bg-indigo-700 transition flex items-center gap-2"><i data-lucide="save" class="w-4 h-4"></i> Save Changes</button>
+            <button onclick="saveEdit()" class="px-5 py-2.5 rounded-xl bg-indigo-600 text-white font-semibold hover:bg-indigo-700 transition flex items-center gap-2"><i data-lucide="save" class="w-4 h-4"></i> Save Changes</button>
         </div>
     </div>
 </div>
@@ -2049,35 +1718,7 @@
 </div>
 
 <!-- ================================================================ -->
-<!-- SECTION 21: AUTH GATE (blocks data load until signed in)        -->
-<!-- ================================================================ -->
-<div id="authGate" class="auth-gate" role="dialog" aria-modal="true" aria-labelledby="authTitle">
-    <div class="auth-card">
-        <div class="auth-brand">
-            <div class="auth-mark">F</div>
-            <div>
-                <h2 id="authTitle">Flipkart Admin</h2>
-                <p>Authorised access only</p>
-            </div>
-        </div>
-        <form id="authForm" autocomplete="off" novalidate>
-            <div class="auth-field">
-                <label for="authUsername">Username</label>
-                <input id="authUsername" type="text" autocapitalize="none" autocorrect="off" spellcheck="false" required />
-            </div>
-            <div class="auth-field">
-                <label for="authPassword">Password</label>
-                <input id="authPassword" type="password" required />
-            </div>
-            <p class="auth-error" id="authError"></p>
-            <button class="auth-submit" id="authSubmit" type="submit">Sign in</button>
-        </form>
-        <p class="auth-foot">Session stays signed in for 48 hours on this device.</p>
-    </div>
-</div>
-
-<!-- ================================================================ -->
-<!-- SECTION 22: SCRIPT INCLUDE                                      -->
+<!-- SECTION 21: SCRIPT INCLUDE                                      -->
 <!-- ================================================================ -->
 <script src="script.js"></script>
 </body>
