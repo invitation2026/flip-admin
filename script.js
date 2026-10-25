@@ -176,7 +176,8 @@ const cache = {
   users: null,
   deposits: null,
   attendance: null,
-  salary_payments: null
+  salary_payments: null,
+  returns: null
 };
 
 const cacheTime = {
@@ -185,7 +186,8 @@ const cacheTime = {
   users: 0,
   deposits: 0,
   attendance: 0,
-  salary_payments: 0
+  salary_payments: 0,
+  returns: 0
 };
 
 function invalidate(...nodes) {
@@ -205,6 +207,116 @@ async function getData(node, force = false) {
   cache[node] = snap.val() || {};
   cacheTime[node] = Date.now();
   return cache[node];
+}
+
+// Value a sold phone exactly the way the Sales table does. Dashboard, Sales and
+// the detail modal all use this, otherwise the same phone shows two different
+// Final Net Profit figures (legacy records store `profit` with a different
+// commission than the bracket rule computes today).
+function getSoldValuation(item, overhead) {
+  const purchase = Number(item.value) || 0;
+  const commission = item.commission !== undefined
+    ? Number(item.commission) || 0
+    : calculateCommission(purchase);
+
+  const grossProfit = (Number(item.salePrice) || 0) - purchase - commission;
+
+  // Keep the profit booked on the day of the sale; only recompute when the
+  // record predates snapshotting.
+  const hasStoredFinal = item.finalNetProfit !== undefined && item.finalNetProfit !== null;
+  const finalNetProfit = hasStoredFinal ? Number(item.finalNetProfit) : (grossProfit - overhead);
+
+  return {
+    commission,
+    grossProfit,
+    finalNetProfit,
+    effectiveOverhead: hasStoredFinal ? (grossProfit - finalNetProfit) : overhead
+  };
+}
+
+// ================================================================
+// OVERHEAD PER PHONE — single source of truth
+// ----------------------------------------------------------------
+// Dashboard and Sales used to compute this independently (Dashboard used
+// Deposits, Sales used Salaries + Incentives), so their "Final Net Profit"
+// never matched. Both now call this one helper.
+//
+// `prefetched` lets a caller that already loaded pickups/users/attendance
+// pass them in, so this never triggers extra network reads.
+// ================================================================
+async function computeLiveOverheadPerPhone(force = false, prefetched = null) {
+  if (!force && overheadCache.version === cacheVersion && overheadCache.value > 0) {
+    return overheadCache.value;
+  }
+
+  let data;
+  let users;
+  let allAttendance;
+
+  if (prefetched) {
+    ({ data, users, allAttendance } = prefetched);
+  } else {
+    [data, users, allAttendance] = await Promise.all([
+      getData('pickups', force),
+      getData('users', force),
+      getData('attendance', force)
+    ]);
+  }
+
+  data = data || {};
+  users = users || {};
+  allAttendance = allAttendance || {};
+
+  let totalOverhead = 0;
+  const today = new Date();
+
+  // 1) Salaries — attendance based
+  for (const [uname, uData] of Object.entries(users)) {
+    if (!uData || (uData.role || 'agent') !== 'agent') continue;
+
+    const perDay = (uData.salary || 0) / 30;
+    const joinDate = uData.joinDate ? new Date(uData.joinDate + 'T00:00:00')
+                   : uData.createdAt ? new Date(uData.createdAt)
+                   : new Date(today);
+
+    let d = new Date(joinDate);
+    while (d <= today) {
+      const dateStr = getLocalYMD(d);
+      const att = (allAttendance[uname] || {})[dateStr] || {};
+
+      if (att.status === 'present' && att.salary_counted !== false) {
+        totalOverhead += att.half_day === true ? perDay * 0.5 : perDay;
+      }
+
+      d.setDate(d.getDate() + 1);
+    }
+  }
+
+  // 2) Activity incentives (honours per-activity overrides)
+  Object.values(data).forEach(item => {
+    if (!item || item.status === 'on_hold' || !item.agent) return;
+
+    const u = users[item.agent];
+    if (!u || (u.role || 'agent') !== 'agent') return;
+
+    if (item.status === 'pickup') {
+      totalOverhead += getActivityIncentive(item, u, 'pickup');
+    } else if (item.status === 'rejected' && Boolean(item.incentive_approved)) {
+      totalOverhead += getActivityIncentive(item, u, 'reject');
+    }
+  });
+
+  let soldCount = 0;
+  Object.values(data).forEach(item => {
+    if (item && item.status === 'pickup' && item.sold) soldCount++;
+  });
+
+  const result = soldCount > 0 ? totalOverhead / soldCount : 0;
+
+  overheadCache = { version: cacheVersion, value: result };
+  overheadPerPhone = result;
+
+  return result;
 }
 
 // ================================================================
@@ -717,6 +829,7 @@ function refreshCurrentPage(force = false) {
   else if (currentPageView === 'rejected') loadRejectedAdmin(force);
   else if (currentPageView === 'inventory') loadInventory(force);
   else if (currentPageView === 'sales') loadSales(force);
+  else if (currentPageView === 'returns') loadReturns(force);
   else if (currentPageView === 'deposits') loadDeposits(force);
   else if (currentPageView === 'attendance') loadAttendance(force);
   else if (currentPageView === 'salary') loadSalaryData(force);
@@ -729,12 +842,13 @@ function refreshCurrentPage(force = false) {
 // ================================================================
 async function loadDashboard(force = false) {
   try {
-    const [pickups, pending, users, deposits, attendance] = await Promise.all([
+    const [pickups, pending, users, deposits, attendance, returns] = await Promise.all([
       getData('pickups', force),
       getData('pending', force),
       getData('users', force),
       getData('deposits', force),
-      getData('attendance', force)
+      getData('attendance', force),
+      getData('returns', force)
     ]);
 
     let total = 0;
@@ -762,8 +876,9 @@ async function loadDashboard(force = false) {
           soldCount++;
           const netRevenue = (item.salePrice || 0) - commission;
           revenue += netRevenue;
-          const itemProfit = item.profit !== undefined ? item.profit : (netRevenue - (item.value || 0));
-          profit += itemProfit;
+          // Same gross-profit rule as the Sales page — do not prefer the stored
+          // `profit` here, or the two pages disagree on legacy records
+          profit += netRevenue - (item.value || 0);
         } else {
           unsoldCount++;
           totalStockValue += item.value || 0;
@@ -791,14 +906,20 @@ async function loadDashboard(force = false) {
       }
     }
 
-    let depositTotalAmount = 0;
-    Object.values(deposits).forEach(d => {
-      depositTotalAmount += d.amount || 0;
+    // Final Net Profit is summed per sold phone using the exact same rule as the
+    // Sales page: stored snapshot when present, otherwise gross − live overhead.
+    // Summing per item (instead of `profit − overhead × soldCount`) is what keeps
+    // this number identical to `salesTotalFinalProfit` even for older sales that
+    // were stored with a different overhead.
+    const liveOverheadPerPhone = await computeLiveOverheadPerPhone(force, {
+      data: pickups, users, allAttendance: attendance
     });
 
-    const totalOverhead = depositTotalAmount;
-    const dashOverheadPerPhone = soldCount > 0 ? totalOverhead / soldCount : 0;
-    const finalNetProfit = profit - (dashOverheadPerPhone * soldCount);
+    let finalNetProfit = 0;
+    Object.values(pickups).forEach(item => {
+      if (!item || item.status !== 'pickup' || !item.sold) return;
+      finalNetProfit += getSoldValuation(item, liveOverheadPerPhone).finalNetProfit;
+    });
 
     setText('statTotal', total);
     setText('statPickup', pickupCount);
@@ -819,6 +940,7 @@ async function loadDashboard(force = false) {
     setText('rejectedBadge', rejectedCount);
     setText('inventoryBadge', unsoldCount);
     setText('salesBadge', soldCount);
+    setText('returnsBadge', Object.keys(returns || {}).length);
     setText('agentsBadge', totalAgents);
     setText('attendanceBadge', presentToday + '/' + totalAgents);
     setText('depositsBadge', Object.keys(deposits).length);
@@ -1431,96 +1553,15 @@ async function loadSales(force = false) {
       getData('attendance', force)
     ]);
 
-    if (!force && overheadCache.version === cacheVersion && overheadCache.value > 0) {
-      overheadPerPhone = overheadCache.value;
-    } else {
-      let totalOverhead = 0;
-      const today = new Date();
-
-      for (const [uname, uData] of Object.entries(users)) {
-        const role = uData.role || 'agent';
-        if (role !== 'agent') continue;
-
-        const monthlySalary = uData.salary || 0;
-        const perDaySalary = monthlySalary / 30;
-
-        let joinDate = null;
-        if (uData.joinDate) joinDate = new Date(uData.joinDate + 'T00:00:00');
-        else if (uData.createdAt) joinDate = new Date(uData.createdAt);
-        if (!joinDate) joinDate = new Date(today);
-
-        let agentBaseSalary = 0;
-        let currentDate = new Date(joinDate);
-
-        while (currentDate <= today) {
-          const dateStr = getLocalYMD(currentDate);
-          const att = (allAttendance[uname] && allAttendance[uname][dateStr]) || {};
-
-          const isPresent = att.status === 'present';
-          const salaryCounted = att.salary_counted !== false;
-
-          if (isPresent && salaryCounted) {
-            let dayAmount = perDaySalary;
-
-            if (att.half_day === true) {
-              dayAmount = perDaySalary * 0.5;
-            }
-
-            agentBaseSalary += dayAmount;
-          }
-
-          currentDate.setDate(currentDate.getDate() + 1);
-        }
-
-        totalOverhead += agentBaseSalary;
-      }
-
-      let totalPickupIncentives = 0;
-      let totalRejectIncentives = 0;
-
-      Object.values(data).forEach(item => {
-        if (item.status === 'on_hold') return;
-
-        const agent = item.agent;
-        if (!agent) return;
-
-        const uData = users[agent];
-        if (!uData || (uData.role || 'agent') !== 'agent') return;
-
-        if (item.status === 'pickup') {
-          totalPickupIncentives += getActivityIncentive(item, uData, 'pickup');
-        } else if (item.status === 'rejected' && Boolean(item.incentive_approved)) {
-          totalRejectIncentives += getActivityIncentive(item, uData, 'reject');
-        }
-      });
-
-      totalOverhead += totalPickupIncentives + totalRejectIncentives;
-
-      let totalSold = 0;
-      Object.values(data).forEach(item => {
-        if (item.status === 'pickup' && item.sold) totalSold++;
-      });
-
-      overheadPerPhone = totalSold > 0 ? totalOverhead / totalSold : 0;
-      overheadCache = { version: cacheVersion, value: overheadPerPhone };
-    }
+    overheadPerPhone = await computeLiveOverheadPerPhone(force, { data, users, allAttendance });
 
     salesList = Object.entries(data)
       .filter(([_, item]) => item.sold === true && item.status !== 'on_hold')
-      .map(([id, item]) => {
-        const purchase = item.value || 0;
-        const commission = item.commission !== undefined ? item.commission : calculateCommission(purchase);
-        const grossProfit = (item.salePrice || 0) - purchase - commission;
-        const finalNetProfit = grossProfit - overheadPerPhone;
-
-        return {
-          id,
-          ...item,
-          commission,
-          grossProfit,
-          finalNetProfit
-        };
-      });
+      .map(([id, item]) => ({
+        id,
+        ...item,
+        ...getSoldValuation(item, overheadPerPhone)
+      }));
 
     salesList.sort((a, b) => (b.saleTimestamp || b.timestamp || 0) - (a.saleTimestamp || a.timestamp || 0));
 
@@ -1609,7 +1650,10 @@ function renderSalesTable() {
     const purchase = item.value || 0;
     const commission = item.commission !== undefined ? item.commission : calculateCommission(purchase);
     const grossProfit = item.grossProfit !== undefined ? item.grossProfit : (item.salePrice - commission - purchase);
-    const finalProfit = item.finalNetProfit !== undefined ? item.finalNetProfit : (grossProfit - overheadPerPhone);
+    const hasStoredFinal = item.finalNetProfit !== undefined && item.finalNetProfit !== null;
+    const finalProfit = hasStoredFinal ? Number(item.finalNetProfit) : (grossProfit - overheadPerPhone);
+    // Show the overhead this sale was charged, so each row reads Gross − Overhead = Final
+    const rowOverhead = hasStoredFinal ? (grossProfit - finalProfit) : overheadPerPhone;
     const profitClass = finalProfit >= 0 ? 'profit-green' : 'profit-red';
 
     html += `
@@ -1622,7 +1666,7 @@ function renderSalesTable() {
         <td class="py-3 px-4 font-bold text-gray-800">${formatINR(item.salePrice || 0)}</td>
         <td class="py-3 px-4"><span class="commission-badge">${formatINR(commission)}</span></td>
         <td class="py-3 px-4 font-bold text-indigo-600">${formatINR(grossProfit)}</td>
-        <td class="py-3 px-4 text-amber-600 font-semibold">${formatINR(overheadPerPhone)}</td>
+        <td class="py-3 px-4 text-amber-600 font-semibold">${formatINR(rowOverhead)}</td>
         <td class="py-3 px-4 font-bold ${profitClass}">${formatINR(finalProfit)}</td>
         <td class="py-3 px-4 hidden lg:table-cell text-gray-600 text-sm">${item.buyerName || '—'}</td>
         <td class="py-3 px-4 text-xs text-gray-500">${item.saleDate || item.timestampIST || '—'} (${item.agent || '—'})</td>
@@ -1831,7 +1875,15 @@ async function confirmSell() {
       buyerName,
       buyerContact: buyerContact || '',
       saleDate,
-      saleTimestamp: new Date().toISOString()
+      saleTimestamp: new Date().toISOString(),
+      // A re-sale clears any prior return/exchange state, otherwise the phone
+      // stays phantom-sold (sold:true + returned:true) and can never be returned again
+      returned: false,
+      returnId: null,
+      returnDate: null,
+      soldVia: null,
+      exchangeForReturnId: null,
+      exchangeForOrderId: null
     });
 
     invalidate('pickups');
@@ -1923,6 +1975,20 @@ async function viewOrder(orderId) {
       if (detailHoldBtn) detailHoldBtn.style.display = 'inline-flex';
       if (detailUnholdBtn) detailUnholdBtn.style.display = 'none';
     }
+
+    // "Revert Sale" is only meaningful for a phone that is currently sold
+    const detailRevertBtn = $('detailRevertBtn');
+    if (detailRevertBtn) {
+      if (item.sold === true) {
+        detailRevertBtn.style.display = 'inline-flex';
+        // Wrapper, not `= revertSale`: a direct handler would receive the click
+        // event as its `orderId` argument and write to pickups/[object Object]
+        detailRevertBtn.onclick = () => revertSale();
+      } else {
+        detailRevertBtn.style.display = 'none';
+        detailRevertBtn.onclick = null;
+      }
+    }
   } catch (err) {
     console.error(err);
     content.innerHTML = `<div class="empty-state"><i data-lucide="alert-circle"></i><p class="text-sm font-medium text-red-500">Error loading order</p></div>`;
@@ -1938,17 +2004,18 @@ function renderDetailView(item) {
     let commissionDisplay = '—';
     let grossProfitDisplay = '—';
     let finalProfitDisplay = '—';
+    let overheadDisplay = '—';
     let profitClass = '';
     let finalProfitClass = '';
 
     if (item.sold) {
-      const commission = item.commission !== undefined ? item.commission : calculateCommission(item.value || 0);
-      const grossProfit = item.profit !== undefined ? item.profit : ((item.salePrice || 0) - commission - (item.value || 0));
-      const finalProfit = grossProfit - overheadPerPhone;
+      const valuation = getSoldValuation(item, overheadPerPhone);
+      const { commission, grossProfit, finalNetProfit: finalProfit, effectiveOverhead } = valuation;
 
       commissionDisplay = formatINR(commission);
       grossProfitDisplay = formatINR(grossProfit);
       finalProfitDisplay = formatINR(finalProfit);
+      overheadDisplay = formatINR(effectiveOverhead);
 
       profitClass = grossProfit >= 0 ? 'green' : 'red';
       finalProfitClass = finalProfit >= 0 ? 'green' : 'red';
@@ -1961,7 +2028,7 @@ function renderDetailView(item) {
         <div class="detail-item"><div class="label">Sale Price</div><div class="value green">${formatINR(item.salePrice || 0)}</div></div>
         <div class="detail-item"><div class="label">Commission</div><div class="value amber">${commissionDisplay}</div></div>
         <div class="detail-item"><div class="label">Gross Profit</div><div class="value ${profitClass}">${grossProfitDisplay}</div></div>
-        <div class="detail-item"><div class="label">Overhead / Phone</div><div class="value">${formatINR(overheadPerPhone)}</div></div>
+        <div class="detail-item"><div class="label">Overhead / Phone</div><div class="value">${overheadDisplay}</div></div>
         <div class="detail-item"><div class="label">Final Net Profit</div><div class="value ${finalProfitClass}">${finalProfitDisplay}</div></div>
         <div class="detail-item"><div class="label">Buyer</div><div class="value">${item.buyerName || '—'}</div></div>
         <div class="detail-item"><div class="label">Buyer Contact</div><div class="value">${item.buyerContact || '—'}</div></div>
@@ -2145,8 +2212,10 @@ async function unholdOrderFromDetail() {
   }
 }
 
-async function revertSale() {
-  if (!detailOrderId) return;
+async function revertSale(orderId) {
+  // Guard against an event object being passed straight from an onclick handler
+  const targetId = (typeof orderId === 'string' && orderId) ? orderId : detailOrderId;
+  if (!targetId) return;
 
   const confirm = await Swal.fire({
     title: 'Revert Sale?',
@@ -2162,7 +2231,7 @@ async function revertSale() {
   if (!confirm.isConfirmed) return;
 
   try {
-    await db.ref('pickups/' + detailOrderId).update({
+    await db.ref('pickups/' + targetId).update({
       sold: false,
       salePrice: null,
       buyerName: null,
@@ -2170,7 +2239,17 @@ async function revertSale() {
       saleDate: null,
       saleTimestamp: null,
       grossProfit: null,
-      finalNetProfit: null
+      finalNetProfit: null,
+      profit: null,
+      commission: null,
+      // Clear any return/exchange state so a reverted phone can be sold and
+      // returned normally again instead of being stuck as a phantom return
+      returned: false,
+      returnId: null,
+      returnDate: null,
+      soldVia: null,
+      exchangeForReturnId: null,
+      exchangeForOrderId: null
     });
 
     invalidate('pickups');
@@ -2560,6 +2639,16 @@ async function saveEdit() {
     updated.hold_reason = null;
   }
 
+  // A per-order incentive override only means something while the order is in
+  // the status it was granted for. Moving between rejected <-> pickup would
+  // otherwise resurrect the old override if the order ever went back.
+  const wasRejected = editData.status === 'rejected';
+  const isRejected = status === 'rejected';
+  if (wasRejected !== isRejected) {
+    updated.pickup_incentive_override = null;
+    updated.reject_incentive_override = null;
+  }
+
   const confirm = await Swal.fire({
     title: 'Save Changes?',
     icon: 'question',
@@ -2645,12 +2734,50 @@ async function deleteOrder(orderId) {
       for (const url of allImages) {
         await _deleteImageFromStorageAdmin(url);
       }
+
+      // Linked return: never leave an orphan returns/{id} behind, and free the
+      // exchange phone that was handed out for it (guarded, so a phone that was
+      // later re-sold is left untouched).
+      if (item.returnId) {
+        const retSnap = await db.ref('returns/' + item.returnId).once('value');
+        const ret = retSnap.val();
+
+        if (ret && ret.returnType === 'exchange' && ret.exchangePickupId) {
+          const exSnap = await db.ref('pickups/' + ret.exchangePickupId).once('value');
+          const exData = exSnap.val();
+
+          const stillLinkedToThisReturn =
+            exData &&
+            exData.sold === true &&
+            exData.soldVia === 'exchange' &&
+            exData.exchangeForReturnId === item.returnId &&
+            Number(exData.salePrice) === 0;
+
+          if (stillLinkedToThisReturn) {
+            await db.ref('pickups/' + ret.exchangePickupId).update({
+              sold: false, salePrice: null, buyerName: null, buyerContact: null,
+              saleDate: null, saleTimestamp: null, soldVia: null,
+              exchangeForReturnId: null, exchangeForOrderId: null,
+              salesBy: null, salesByName: null,
+              commission: null, grossProfit: null, finalNetProfit: null, profit: null
+            });
+          }
+        }
+
+        await db.ref('returns/' + item.returnId).remove();
+      }
+
+      // Approved outside pickups keep their own node; without this it stays
+      // stuck in the "approved" list forever because its inventory row is gone.
+      if (item.outsidePickup === true) {
+        await db.ref('outside_pickups/' + (item.orderId || orderId)).remove();
+      }
     }
 
     await db.ref('pickups/' + orderId).remove();
     await db.ref('pending/' + orderId).remove();
 
-    invalidate('pickups', 'pending');
+    invalidate('pickups', 'pending', 'returns');
     showToast('🗑️ Deleted', 'success');
 
     closeDetail();
@@ -5748,14 +5875,6 @@ async function openAddAdjustmentModal(defaultAgent = '') {
               <option value="yes">Yes (Can cut from incentives)</option>
             </select>
           </div>
-
-          <div class="flex items-center justify-between">
-            <span class="text-gray-700 font-medium">Adjustment Period:</span>
-            <select id="adj_adjust_target" class="p-1 border border-gray-300 rounded text-xs bg-white">
-              <option value="current">Current Month Salary</option>
-              <option value="previous_balance">Previous Balance / Carry Forward</option>
-            </select>
-          </div>
         </div>
 
         <div>
@@ -5776,14 +5895,13 @@ async function openAddAdjustmentModal(defaultAgent = '') {
       const time = document.getElementById('adj_time').value;
       const effect = document.getElementById('adj_is_deduction').value;
       const deductIncentives = document.getElementById('adj_deduct_incentives').value;
-      const adjustTarget = document.getElementById('adj_adjust_target').value;
       const reason = document.getElementById('adj_reason').value.trim();
 
       if (!agent) { Swal.showValidationMessage('Select an agent'); return false; }
       if (!amount || amount <= 0) { Swal.showValidationMessage('Enter a valid amount'); return false; }
       if (!date) { Swal.showValidationMessage('Select a date'); return false; }
 
-      return { agent, amount, type, date, time, effect, deductIncentives, adjustTarget, reason };
+      return { agent, amount, type, date, time, effect, deductIncentives, reason };
     }
   });
 
@@ -5801,7 +5919,6 @@ async function openAddAdjustmentModal(defaultAgent = '') {
       timestamp: new Date(`${formValues.date}T${formValues.time || '12:00'}`).getTime() || Date.now(),
       effect: formValues.effect,
       deductIncentives: formValues.deductIncentives === 'yes',
-      adjustTarget: formValues.adjustTarget,
       reason: formValues.reason || 'None',
 
       // History meta
@@ -6362,7 +6479,7 @@ async function refreshAll() {
   isRefreshing = true;
   showToast('🔄 Refreshing...', 'info');
 
-  invalidate('pickups', 'pending', 'users', 'deposits', 'attendance', 'salary_payments');
+  invalidate('pickups', 'pending', 'users', 'deposits', 'attendance', 'salary_payments', 'returns');
 
   await Promise.allSettled([
     loadDashboard(true),
@@ -6371,6 +6488,7 @@ async function refreshAll() {
     loadRejectedAdmin(true),
     loadInventory(true),
     loadSales(true),
+    loadReturns(true),
     loadDeposits(true),
     loadAgents(true),
     loadOutsidePickups(true)
@@ -8199,3 +8317,484 @@ function buildStatementPlainText(p) {
 }
 
 window.toggleSalesAccess = toggleSalesAccess;
+
+// ================================================================
+// RETURNS — ADMIN PANEL MODULE
+// ================================================================
+let allReturns = [];
+let filteredReturns = [];
+let returnsCurrentPage = 1;
+const returnsPageSize = 15;
+let currentReturnTypeFilter = 'all';
+
+async function loadReturns(force = false) {
+  try {
+    const data = await getData('returns', force);
+    allReturns = Object.entries(data || {})
+      .map(([id, item]) => ({ id, ...item }))
+      .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+    setText('returnsBadge', allReturns.length);
+    applyReturnsFilters();
+  } catch (e) {
+    console.error('Returns load error:', e);
+    showToast('Error loading returns', 'error');
+  }
+}
+
+function setReturnTypeFilter(filter) {
+  currentReturnTypeFilter = filter;
+  document.querySelectorAll('[data-return-type-filter]').forEach(b =>
+    b.classList.toggle('active', b.dataset.returnTypeFilter === filter));
+  applyReturnsFilters();
+}
+
+function applyReturnsFilters() {
+  let filtered = [...allReturns];
+  const dateFrom = getVal('returnDateFrom');
+  const dateTo   = getVal('returnDateTo');
+  const query    = (getVal('returnSearch') || '').trim().toLowerCase();
+
+  if (currentReturnTypeFilter !== 'all')
+    filtered = filtered.filter(r => r.returnType === currentReturnTypeFilter);
+  if (dateFrom) filtered = filtered.filter(r => (r.returnDate || '') >= dateFrom);
+  if (dateTo)   filtered = filtered.filter(r => (r.returnDate || '') <= dateTo);
+  if (query) {
+    filtered = filtered.filter(r => {
+      const blob = [r.originalOrderId, r.originalModel, r.originalImei,
+                    r.originalBuyerName, r.exchangeModel, r.exchangeImei]
+                    .filter(Boolean).join(' ').toLowerCase();
+      return blob.includes(query);
+    });
+  }
+  filteredReturns = filtered;
+  returnsCurrentPage = 1;
+  renderReturnsTable();
+}
+
+function clearReturnFilters() {
+  setVal('returnDateFrom', '');
+  setVal('returnDateTo', '');
+  setVal('returnSearch', '');
+  currentReturnTypeFilter = 'all';
+  document.querySelectorAll('[data-return-type-filter]').forEach(b =>
+    b.classList.toggle('active', b.dataset.returnTypeFilter === 'all'));
+  applyReturnsFilters();
+}
+
+function renderReturnsTable() {
+  const tbody = $('returnsTableBody');
+  if (!tbody) return;
+  const total = filteredReturns.length;
+  const totalPages = Math.ceil(total / returnsPageSize) || 1;
+  if (returnsCurrentPage > totalPages) returnsCurrentPage = totalPages;
+  const start = (returnsCurrentPage - 1) * returnsPageSize;
+  const end = Math.min(start + returnsPageSize, total);
+  const pageItems = filteredReturns.slice(start, end);
+
+  setText('returnCountDisplay', total + ' returns');
+  setText('returnPageInfo', returnsCurrentPage + ' / ' + totalPages);
+  if ($('prevReturnPageBtn')) $('prevReturnPageBtn').disabled = returnsCurrentPage <= 1;
+  if ($('nextReturnPageBtn')) $('nextReturnPageBtn').disabled = returnsCurrentPage >= totalPages;
+
+  if (!pageItems.length) {
+    tbody.innerHTML = `<tr><td colspan="8"><div class="empty-state"><i data-lucide="inbox"></i><p class="text-sm font-medium">No returns match</p></div></td></tr>`;
+    refreshIcons(); return;
+  }
+
+  tbody.innerHTML = pageItems.map((r, i) => {
+    const n = start + i + 1;
+    const typeBadge = r.returnType === 'money'
+      ? `<span class="badge-status rejected">💵 Money</span>`
+      : `<span class="badge-status approved">📱 Exchange</span>`;
+    return `
+      <tr class="order-row border-b border-gray-50">
+        <td class="py-3 px-4 text-gray-400 font-mono text-xs">${n}</td>
+        <td class="py-3 px-4 font-mono font-bold text-gray-800 text-sm">${esc(r.originalOrderId || '—')}</td>
+        <td class="py-3 px-4 text-gray-600 text-sm">${esc(r.originalModel || '—')}</td>
+        <td class="py-3 px-4 hidden md:table-cell font-mono text-xs text-gray-500">${esc(r.originalImei || '—')}</td>
+        <td class="py-3 px-4 font-bold text-gray-700">${formatINR(Number(r.originalSalePrice) || 0)}</td>
+        <td class="py-3 px-4">${typeBadge}</td>
+        <td class="py-3 px-4 hidden sm:table-cell text-xs text-gray-500">${esc(r.returnDate || '—')}</td>
+        <td class="py-3 px-4">
+          <div class="flex items-center gap-1.5">
+            <button onclick="viewReturnDetail('${r.id}')" class="btn-action view"><i data-lucide="eye"></i></button>
+            <button onclick="deleteReturn('${r.id}')" class="btn-action delete"><i data-lucide="trash-2"></i></button>
+          </div>
+        </td>
+      </tr>`;
+  }).join('');
+  refreshIcons();
+}
+
+function prevReturnsPage() { if (returnsCurrentPage > 1) { returnsCurrentPage--; renderReturnsTable(); } }
+function nextReturnsPage() {
+  const tp = Math.ceil(filteredReturns.length / returnsPageSize);
+  if (returnsCurrentPage < tp) { returnsCurrentPage++; renderReturnsTable(); }
+}
+
+function exportReturnsCSV() {
+  if (!filteredReturns.length) { showToast('No returns to export', 'error'); return; }
+  const headers = ['Return ID','Original Order ID','Model','IMEI','Original Sale Price',
+    'Original Sale Date','Original Buyer','Return Date','Type','Return Amount',
+    'Exchange Model','Exchange IMEI','Exchange Source','Created By','Created At'];
+  const rows = filteredReturns.map(r => [
+    r.returnId || r.id, r.originalOrderId || '', r.originalModel || '',
+    r.originalImei || '', r.originalSalePrice || 0, r.originalSaleDate || '',
+    r.originalBuyerName || '', r.returnDate || '', r.returnType || '',
+    r.returnAmount || 0, r.exchangeModel || '', r.exchangeImei || '',
+    r.exchangePhoneSource || '',
+    r.createdByName || r.createdBy || '',
+    r.createdAt ? new Date(r.createdAt).toLocaleString('en-IN') : ''
+  ]);
+  let csv = '\uFEFF' + headers.join(',') + '\n';
+  rows.forEach(row => {
+    csv += row.map(v => `"${String(v).replace(/"/g,'""')}"`).join(',') + '\n';
+  });
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(blob);
+  link.download = `returns_${getLocalYMD()}.csv`;
+  document.body.appendChild(link); link.click();
+  document.body.removeChild(link); URL.revokeObjectURL(link.href);
+  showToast('📥 Returns CSV exported', 'success');
+}
+
+async function viewReturnDetail(returnId) {
+  const r = allReturns.find(x => x.id === returnId);
+  if (!r) { showToast('Return not found', 'error'); return; }
+  const html = `
+    <div class="text-left text-sm space-y-3">
+      <div class="bg-red-50 border border-red-200 rounded-xl p-3">
+        <div class="text-[10px] font-bold text-red-700 uppercase">Return ID</div>
+        <div class="font-mono font-bold text-sm">${esc(r.returnId || r.id)}</div>
+      </div>
+      <div class="grid grid-cols-2 gap-2">
+        <div><span class="text-gray-500">Order ID:</span> <strong>${esc(r.originalOrderId || '—')}</strong></div>
+        <div><span class="text-gray-500">Model:</span> <strong>${esc(r.originalModel || '—')}</strong></div>
+        <div class="col-span-2"><span class="text-gray-500">IMEI:</span> <strong class="font-mono text-xs">${esc(r.originalImei || '—')}</strong></div>
+        <div><span class="text-gray-500">Sale Price:</span> <strong>${formatINR(Number(r.originalSalePrice) || 0)}</strong></div>
+        <div><span class="text-gray-500">Sale Date:</span> <strong>${esc(r.originalSaleDate || '—')}</strong></div>
+        <div class="col-span-2"><span class="text-gray-500">Buyer:</span> <strong>${esc(r.originalBuyerName || '—')}</strong></div>
+        <div><span class="text-gray-500">Return Date:</span> <strong>${esc(r.returnDate || '—')}</strong></div>
+        <div><span class="text-gray-500">Type:</span> <strong>${r.returnType === 'money' ? '💵 Money' : '📱 Exchange'}</strong></div>
+        ${r.returnType === 'money'
+          ? `<div class="col-span-2"><span class="text-gray-500">Amount Returned:</span> <strong>${formatINR(Number(r.returnAmount) || 0)}</strong></div>`
+          : `<div class="col-span-2"><span class="text-gray-500">Exchange Phone:</span> <strong>${esc(r.exchangeModel || '—')} (${esc(r.exchangeImei || '—')})</strong></div>
+             <div class="col-span-2"><span class="text-gray-500">Exchange Order:</span> <strong class="font-mono text-xs">${esc(r.exchangeOrderId || '—')}</strong></div>`}
+        <div class="col-span-2 text-[11px] text-gray-400">By ${esc(r.createdByName || r.createdBy || '—')} · ${new Date(r.createdAt || 0).toLocaleString('en-IN')}</div>
+      </div>
+    </div>`;
+  const res = await Swal.fire({
+    title: 'Return Details', html, width: 'min(560px, 96vw)',
+    showCancelButton: true,
+    confirmButtonText: 'Close', cancelButtonText: 'Delete Return',
+    confirmButtonColor: '#4f46e5', cancelButtonColor: '#dc2626'
+  });
+  if (res.dismiss === Swal.DismissReason.cancel) deleteReturn(returnId);
+}
+
+async function deleteReturn(returnId) {
+  const r = allReturns.find(x => x.id === returnId);
+  if (!r) { showToast('Return not found', 'error'); return; }
+  const confirm = await Swal.fire({
+    title: 'Delete Return?',
+    html: `<div class="text-left text-sm"><p><strong>Order:</strong> ${esc(r.originalOrderId)}</p>
+      <p><strong>Model:</strong> ${esc(r.originalModel)}</p>
+      <p class="text-red-600 mt-2">Deletes the return record AND restores the phone back to <b>Sold</b> state${r.returnType === 'exchange' ? ' · Exchange phone will also be reverted to available' : ''}.</p></div>`,
+    icon: 'warning', showCancelButton: true,
+    confirmButtonColor: '#dc2626', cancelButtonColor: '#64748b',
+    confirmButtonText: 'Yes, Delete', cancelButtonText: 'Cancel'
+  });
+  if (!confirm.isConfirmed) return;
+
+  try {
+    const warnings = [];
+
+    // 1. Restore original pickup (skip if it was re-sold after the return)
+    const pickSnap = await db.ref('pickups/' + r.originalPickupId).once('value');
+    const pickup = pickSnap.val();
+    if (pickup) {
+      if (pickup.sold === true) {
+        warnings.push('original phone was re-sold after this return');
+      } else {
+        const restoredSalePrice = Number(r.originalSalePrice || pickup.lastSalePrice || 0);
+        const purchase = Number(pickup.value || 0);
+        const commission = calculateCommission(purchase);
+        const grossProfit = restoredSalePrice - purchase - commission;
+        await db.ref('pickups/' + r.originalPickupId).update({
+          sold: true, returned: false,
+          returnDate: null, returnId: null,
+          salePrice: restoredSalePrice,
+          buyerName: r.originalBuyerName || pickup.lastBuyerName || '',
+          buyerContact: pickup.buyerContact || '',
+          saleDate: r.originalSaleDate || pickup.lastSaleDate || '',
+          // Restore the original sale timestamp so the phone keeps its place in
+          // the Sales list (sorted by saleTimestamp) instead of jumping to the top
+          saleTimestamp: r.originalSaleTimestamp || pickup.lastSaleTimestamp || new Date().toISOString(),
+          commission, grossProfit, profit: grossProfit,
+          finalNetProfit: grossProfit
+        });
+      }
+    }
+
+    // 2. Revert exchange phone — only if it is still the exchange sale, not a later re-sale
+    if (r.returnType === 'exchange' && r.exchangePickupId) {
+      const exSnap = await db.ref('pickups/' + r.exchangePickupId).once('value');
+      const exData = exSnap.val();
+      if (exData) {
+        const stillLinkedToThisReturn =
+          exData.sold === true &&
+          exData.soldVia === 'exchange' &&
+          exData.exchangeForReturnId === returnId &&
+          Number(exData.salePrice) === 0;
+
+        if (stillLinkedToThisReturn) {
+          await db.ref('pickups/' + r.exchangePickupId).update({
+            sold: false, salePrice: null, buyerName: null, buyerContact: null,
+            saleDate: null, saleTimestamp: null, soldVia: null,
+            exchangeForReturnId: null, exchangeForOrderId: null,
+            salesBy: null, salesByName: null,
+            commission: null, grossProfit: null, finalNetProfit: null, profit: null
+          });
+        } else if (exData.sold === true) {
+          warnings.push('exchange phone was re-sold');
+        }
+      }
+    }
+
+    // 3. Delete return record
+    await db.ref('returns/' + returnId).remove();
+
+    invalidate('pickups', 'returns');
+    if (warnings.length) {
+      showToast('🗑️ Return deleted · left untouched: ' + warnings.join(' · '), 'info', 5000);
+    } else {
+      showToast('🗑️ Return deleted · phone restored to Sold', 'success');
+    }
+    await loadReturns(true);
+    loadDashboard(true);
+    if (currentPageView === 'inventory') loadInventory(true);
+    if (currentPageView === 'sales') loadSales(true);
+  } catch (e) {
+    console.error('Delete return error:', e);
+    showToast('Failed to delete return', 'error');
+  }
+}
+
+// ---------- ADD RETURN ----------
+async function refreshAdminReturnExchangeOptions() {
+  const pickupId = $('admin_return_pickup')?.value;
+  const exSel = $('admin_return_exchange');
+  if (!exSel) return;
+  const data = await getData('pickups', false);
+  const options = Object.entries(data || {})
+    .filter(([id, item]) => item && item.status === 'pickup' && !item.sold && id !== pickupId)
+    .map(([id, item]) => `<option value="${id}">${esc(item.orderId || id)} — ${esc(item.phoneModel || '—')} — ${esc(item.imei || '—')}</option>`)
+    .join('');
+  exSel.innerHTML = options || '<option value="">No available phones</option>';
+
+  // Disable the Exchange type when there is no other unsold phone to give
+  const exTypeOpt = document.querySelector('#admin_return_type option[value="exchange"]');
+  if (exTypeOpt) exTypeOpt.disabled = !options;
+  if (!options) {
+    const typeSel = $('admin_return_type');
+    if (typeSel && typeSel.value === 'exchange') {
+      typeSel.value = 'money';
+      toggleAdminReturnType();
+    }
+  }
+}
+
+function toggleAdminReturnType() {
+  const t = $('admin_return_type')?.value;
+  if ($('admin_return_money_wrap')) $('admin_return_money_wrap').style.display = t === 'money' ? 'block' : 'none';
+  if ($('admin_return_exchange_wrap')) $('admin_return_exchange_wrap').style.display = t === 'exchange' ? 'block' : 'none';
+}
+
+async function openAddReturnModal() {
+  const data = await getData('pickups', false);
+  const soldPhones = Object.entries(data || {})
+    .filter(([_, item]) => item && item.status === 'pickup' && item.sold === true && item.returned !== true)
+    .map(([id, item]) => ({ id, ...item }))
+    .sort((a, b) => new Date(b.saleTimestamp || 0) - new Date(a.saleTimestamp || 0));
+
+  if (!soldPhones.length) {
+    Swal.fire({ icon: 'info', title: 'No Sold Phones', text: 'No sold phones available to return.' });
+    return;
+  }
+
+  const options = soldPhones.map(p =>
+    `<option value="${p.id}">${esc(p.orderId || p.id)} — ${esc(p.phoneModel || '—')} — IMEI: ${esc(p.imei || '—')} — ${formatINR(Number(p.salePrice) || 0)}</option>`
+  ).join('');
+
+  const result = await Swal.fire({
+    title: 'Add Return',
+    width: 'min(560px, 96vw)',
+    html: `
+      <div class="text-left space-y-3 font-sans">
+        <div>
+          <label for="admin_return_pickup" class="block text-xs font-semibold text-gray-600 mb-1">Sold Phone</label>
+          <select id="admin_return_pickup" onchange="refreshAdminReturnExchangeOptions()" style="display:block;width:100%;margin:0;padding:8px 10px;border:1px solid #d9d9d9;border-radius:6px;font-size:12px;background:#fff;color:#1f2937;">${options}</select>
+        </div>
+        <div>
+          <label for="admin_return_date" class="block text-xs font-semibold text-gray-600 mb-1">Return Date</label>
+          <input type="date" id="admin_return_date" class="swal2-input" style="width:100%;margin:0;" value="${getLocalYMD()}">
+        </div>
+        <div>
+          <label for="admin_return_type" class="block text-xs font-semibold text-gray-600 mb-1">Return Type</label>
+          <select id="admin_return_type" style="display:block;width:100%;margin:0;padding:8px 10px;border:1px solid #d9d9d9;border-radius:6px;font-size:13px;background:#fff;color:#1f2937;" onchange="toggleAdminReturnType()">
+            <option value="money">💵 Money Given</option>
+            <option value="exchange">📱 Phone Exchange</option>
+          </select>
+        </div>
+        <div id="admin_return_money_wrap">
+          <label for="admin_return_amount" class="block text-xs font-semibold text-gray-600 mb-1">Amount Returned (₹)</label>
+          <input type="number" id="admin_return_amount" class="swal2-input" style="width:100%;margin:0;" min="0" step="1" placeholder="Amount">
+        </div>
+        <div id="admin_return_exchange_wrap" style="display:none;">
+          <label for="admin_return_exchange" class="block text-xs font-semibold text-gray-600 mb-1">Exchange Phone (from inventory)</label>
+          <select id="admin_return_exchange" style="display:block;width:100%;margin:0;padding:8px 10px;border:1px solid #d9d9d9;border-radius:6px;font-size:12px;background:#fff;color:#1f2937;"></select>
+        </div>
+      </div>`,
+    showCancelButton: true,
+    confirmButtonText: 'Process Return',
+    confirmButtonColor: '#dc2626',
+    cancelButtonColor: '#64748b',
+    didOpen: () => { refreshAdminReturnExchangeOptions(); },
+    preConfirm: () => {
+      const pickupId = $('admin_return_pickup').value;
+      const date = $('admin_return_date').value;
+      const type = $('admin_return_type').value;
+      const amount = parseFloat($('admin_return_amount')?.value || 0);
+      const exchangeId = $('admin_return_exchange')?.value;
+      if (!pickupId) { Swal.showValidationMessage('Select a phone'); return false; }
+      if (!date) { Swal.showValidationMessage('Select return date'); return false; }
+      if (type === 'money' && (!amount || amount <= 0)) { Swal.showValidationMessage('Enter amount'); return false; }
+      if (type === 'exchange' && !exchangeId) { Swal.showValidationMessage('Select exchange phone'); return false; }
+      if (type === 'exchange' && exchangeId === pickupId) { Swal.showValidationMessage('Exchange phone must be different'); return false; }
+      return { pickupId, date, type, amount, exchangeId };
+    }
+  });
+
+  if (!result.isConfirmed || !result.value) return;
+  await processAdminReturn(result.value);
+}
+
+async function processAdminReturn({ pickupId, date, type, amount, exchangeId }) {
+  try {
+    const pickSnap = await db.ref('pickups/' + pickupId).once('value');
+    const pickup = pickSnap.val();
+    if (!pickup || pickup.sold !== true || pickup.returned === true) {
+      showToast('Phone is no longer eligible for return', 'error'); return;
+    }
+
+    let exchangePhone = null;
+    if (type === 'exchange') {
+      const exSnap = await db.ref('pickups/' + exchangeId).once('value');
+      exchangePhone = exSnap.val();
+      if (!exchangePhone || exchangePhone.sold === true) {
+        showToast('Exchange phone not available', 'error'); return;
+      }
+    }
+
+    const returnId = 'ret_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5);
+    const originalSalePrice = Number(pickup.salePrice) || 0;
+
+    const record = {
+      returnId, source: 'flipkart',
+      originalPickupId: pickupId,
+      originalOrderId: pickup.orderId || pickupId,
+      originalModel: pickup.phoneModel || '—',
+      originalImei: pickup.imei || '—',
+      originalSalePrice,
+      originalSaleDate: pickup.saleDate || '',
+      originalSaleTimestamp: pickup.saleTimestamp || '',
+      originalBuyerName: pickup.buyerName || '',
+      returnDate: date,
+      returnType: type,
+      returnAmount: type === 'money' ? amount : 0,
+      exchangePhoneSource: type === 'exchange' ? 'flipkart' : null,
+      exchangePickupId: type === 'exchange' ? exchangeId : null,
+      exchangeOrderId: type === 'exchange' ? (exchangePhone.orderId || exchangeId) : null,
+      exchangeModel: type === 'exchange' ? (exchangePhone.phoneModel || '—') : null,
+      exchangeImei: type === 'exchange' ? (exchangePhone.imei || '—') : null,
+      createdAt: Date.now(),
+      createdBy: 'admin', createdByName: 'Admin', createdByUsername: 'admin'
+    };
+
+    await db.ref('returns/' + returnId).set(record);
+
+    // Single atomic multi-path write: original returned + exchange sold,
+    // so a failure can never leave the pair half-updated.
+    const updates = {
+      [`pickups/${pickupId}/sold`]: false,
+      [`pickups/${pickupId}/returned`]: true,
+      [`pickups/${pickupId}/returnDate`]: date,
+      [`pickups/${pickupId}/returnId`]: returnId,
+      [`pickups/${pickupId}/lastSalePrice`]: originalSalePrice,
+      [`pickups/${pickupId}/lastSaleDate`]: pickup.saleDate || '',
+      [`pickups/${pickupId}/lastSaleTimestamp`]: pickup.saleTimestamp || '',
+      [`pickups/${pickupId}/lastBuyerName`]: pickup.buyerName || '',
+      [`pickups/${pickupId}/salePrice`]: null,
+      [`pickups/${pickupId}/buyerName`]: null,
+      [`pickups/${pickupId}/buyerContact`]: null,
+      [`pickups/${pickupId}/saleDate`]: null,
+      [`pickups/${pickupId}/saleTimestamp`]: null,
+      [`pickups/${pickupId}/grossProfit`]: null,
+      [`pickups/${pickupId}/finalNetProfit`]: null,
+      [`pickups/${pickupId}/profit`]: null,
+      [`pickups/${pickupId}/commission`]: null
+    };
+
+    if (type === 'exchange' && exchangeId) {
+      updates[`pickups/${exchangeId}/sold`] = true;
+      updates[`pickups/${exchangeId}/salePrice`] = 0;
+      updates[`pickups/${exchangeId}/buyerName`] = 'Exchange for ' + (pickup.orderId || pickupId);
+      updates[`pickups/${exchangeId}/buyerContact`] = '';
+      updates[`pickups/${exchangeId}/saleDate`] = date;
+      updates[`pickups/${exchangeId}/saleTimestamp`] = new Date().toISOString();
+      updates[`pickups/${exchangeId}/soldVia`] = 'exchange';
+      updates[`pickups/${exchangeId}/exchangeForReturnId`] = returnId;
+      updates[`pickups/${exchangeId}/exchangeForOrderId`] = pickup.orderId || pickupId;
+      updates[`pickups/${exchangeId}/salesBy`] = 'admin';
+      updates[`pickups/${exchangeId}/salesByName`] = 'Admin';
+      updates[`pickups/${exchangeId}/commission`] = 0;
+      updates[`pickups/${exchangeId}/grossProfit`] = 0;
+      updates[`pickups/${exchangeId}/finalNetProfit`] = 0;
+      updates[`pickups/${exchangeId}/profit`] = 0;
+    }
+
+    await db.ref().update(updates);
+
+    // Update live inventory count on the return record
+    const allSnap = await db.ref('pickups').once('value');
+    let count = 0;
+    Object.values(allSnap.val() || {}).forEach(p => {
+      if (p && p.status === 'pickup' && !p.sold) count++;
+    });
+    await db.ref('returns/' + returnId).update({ inventoryCountFlipkart: count });
+
+    invalidate('pickups', 'returns');
+    showToast('✅ Return processed', 'success');
+    await loadReturns(true);
+    loadDashboard(true);
+    if (currentPageView === 'inventory') loadInventory(true);
+    if (currentPageView === 'sales') loadSales(true);
+  } catch (e) {
+    console.error('Process return error:', e);
+    showToast('Failed to process return', 'error');
+  }
+}
+
+window.loadReturns           = loadReturns;
+window.setReturnTypeFilter   = setReturnTypeFilter;
+window.applyReturnsFilters   = applyReturnsFilters;
+window.clearReturnFilters    = clearReturnFilters;
+window.prevReturnsPage       = prevReturnsPage;
+window.nextReturnsPage       = nextReturnsPage;
+window.exportReturnsCSV      = exportReturnsCSV;
+window.viewReturnDetail      = viewReturnDetail;
+window.deleteReturn          = deleteReturn;
+window.openAddReturnModal    = openAddReturnModal;
+window.toggleAdminReturnType = toggleAdminReturnType;
+window.refreshAdminReturnExchangeOptions = refreshAdminReturnExchangeOptions;

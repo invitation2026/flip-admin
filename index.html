@@ -746,6 +746,10 @@
                 <i data-lucide="trending-up"></i> Sales
                 <span id="salesBadge" class="ml-auto text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full">0</span>
             </div>
+            <div class="sidebar-link" data-page="returns" onclick="navigate('returns')">
+                <i data-lucide="rotate-ccw"></i> Returns
+                <span id="returnsBadge" class="ml-auto text-xs bg-red-100 text-red-700 px-2 py-0.5 rounded-full">0</span>
+            </div>
             <div class="sidebar-link" data-page="deposits" onclick="navigate('deposits')">
                 <i data-lucide="banknote"></i> Deposits
                 <span id="depositsBadge" class="ml-auto text-xs bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full">0</span>
@@ -1266,6 +1270,78 @@
         </div>
 
         <!-- ============================================================ -->
+        <!-- SECTION 10B: RETURNS PAGE                                    -->
+        <!-- ============================================================ -->
+        <div id="page-returns" class="page-content fade-in" style="display:none;">
+            <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+                <div>
+                    <h2 class="text-2xl font-bold text-gray-800">Returns</h2>
+                    <p class="text-sm text-gray-500">All returns recorded across sold phones</p>
+                </div>
+                <div class="flex items-center gap-2">
+                    <button onclick="openAddReturnModal()" class="btn-action approve"><i data-lucide="plus"></i> Add Return</button>
+                    <button onclick="exportReturnsCSV()" class="btn-action export"><i data-lucide="download"></i> Export CSV</button>
+                    <button onclick="loadReturns(true)" class="btn-action view"><i data-lucide="refresh-cw"></i></button>
+                </div>
+            </div>
+
+            <!-- ===== 10B.1: Returns Filters ===== -->
+            <div class="glass rounded-2xl p-4 shadow-sm border border-gray-100 mb-4">
+                <div class="flex flex-wrap items-center gap-2">
+                    <span class="text-xs font-bold text-gray-500 mr-1">Type:</span>
+                    <button class="filter-chip active" data-return-type-filter="all" onclick="setReturnTypeFilter('all')">All</button>
+                    <button class="filter-chip" data-return-type-filter="money" onclick="setReturnTypeFilter('money')">💵 Money</button>
+                    <button class="filter-chip" data-return-type-filter="exchange" onclick="setReturnTypeFilter('exchange')">📱 Exchange</button>
+                </div>
+                <div class="flex flex-wrap items-center gap-2 mt-3 border-t border-gray-200 pt-3">
+                    <span class="text-xs font-bold text-gray-500 mr-1">Return Date:</span>
+                    <input type="date" id="returnDateFrom" class="px-4 py-2 border border-gray-200 rounded-xl text-sm outline-none focus:border-indigo-400" />
+                    <span class="text-xs text-gray-400">to</span>
+                    <input type="date" id="returnDateTo" class="px-4 py-2 border border-gray-200 rounded-xl text-sm outline-none focus:border-indigo-400" />
+                    <button onclick="applyReturnsFilters()" class="px-4 py-2 bg-indigo-600 text-white rounded-xl text-sm font-semibold hover:bg-indigo-700 transition">Apply</button>
+                    <button onclick="clearReturnFilters()" class="px-4 py-2 bg-gray-100 text-gray-600 rounded-xl text-sm font-semibold hover:bg-gray-200 transition">Clear</button>
+                </div>
+                <div class="flex flex-wrap items-center gap-2 mt-3 border-t border-gray-200 pt-3">
+                    <input type="text" id="returnSearch" placeholder="Search order ID, model, IMEI, buyer…"
+                        class="flex-1 min-w-[220px] px-4 py-2 border border-gray-200 rounded-xl text-sm outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100"
+                        onkeyup="if(event.key==='Enter') applyReturnsFilters()" />
+                    <button onclick="applyReturnsFilters()" class="px-4 py-2 bg-indigo-600 text-white rounded-xl text-sm font-semibold hover:bg-indigo-700 transition">Search</button>
+                </div>
+            </div>
+
+            <!-- ===== 10B.2: Returns Table ===== -->
+            <div class="glass rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+                <div class="table-wrap">
+                    <table class="w-full text-sm">
+                        <thead>
+                            <tr class="bg-gray-50 border-b border-gray-100">
+                                <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">#</th>
+                                <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">Order ID</th>
+                                <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">Model</th>
+                                <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase hidden md:table-cell">IMEI</th>
+                                <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">Sale Price</th>
+                                <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">Type</th>
+                                <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase hidden sm:table-cell">Return Date</th>
+                                <th class="text-left py-3 px-4 text-xs font-bold text-gray-500 uppercase">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="returnsTableBody">
+                            <tr><td colspan="8"><div class="empty-state"><i data-lucide="inbox"></i><p class="text-sm font-medium">No returns yet</p></div></td></tr>
+                        </tbody>
+                    </table>
+                </div>
+                <div class="flex items-center justify-between px-4 py-3 border-t border-gray-100 text-xs text-gray-500">
+                    <span id="returnCountDisplay">0 returns</span>
+                    <div class="flex items-center gap-2">
+                        <button onclick="prevReturnsPage()" id="prevReturnPageBtn" class="px-3 py-1 rounded-lg bg-gray-100 hover:bg-gray-200 transition">← Prev</button>
+                        <span id="returnPageInfo">1 / 1</span>
+                        <button onclick="nextReturnsPage()" id="nextReturnPageBtn" class="px-3 py-1 rounded-lg bg-gray-100 hover:bg-gray-200 transition">Next →</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ============================================================ -->
         <!-- SECTION 11: DEPOSITS PAGE                                    -->
         <!-- ============================================================ -->
         <div id="page-deposits" class="page-content fade-in" style="display:none;">
@@ -1665,7 +1741,7 @@
             <button id="detailEditBtn" onclick="toggleEditMode()" class="px-5 py-2.5 rounded-xl bg-amber-100 text-amber-700 font-semibold hover:bg-amber-200 transition flex items-center gap-2"><i data-lucide="pencil" class="w-4 h-4"></i> Edit</button>
             <button id="detailHoldBtn" onclick="holdOrderFromDetail()" class="px-5 py-2.5 rounded-xl bg-blue-100 text-blue-700 font-semibold hover:bg-blue-200 transition flex items-center gap-2"><i data-lucide="pause-circle" class="w-4 h-4"></i> Hold</button>
             <button id="detailUnholdBtn" onclick="unholdOrderFromDetail()" class="px-5 py-2.5 rounded-xl bg-amber-100 text-amber-700 font-semibold hover:bg-amber-200 transition flex items-center gap-2" style="display:none;"><i data-lucide="play-circle" class="w-4 h-4"></i> Unhold</button>
-            <button id="detailRevertBtn" onclick="revertSoldOrder(detailOrderId)" class="px-5 py-2.5 rounded-xl bg-amber-100 text-amber-700 font-semibold hover:bg-amber-200 transition flex items-center gap-2" style="display:none;"><i data-lucide="undo-2" class="w-4 h-4"></i> Revert Sale</button>
+            <button id="detailRevertBtn" onclick="revertSale(detailOrderId)" class="px-5 py-2.5 rounded-xl bg-amber-100 text-amber-700 font-semibold hover:bg-amber-200 transition flex items-center gap-2" style="display:none;"><i data-lucide="undo-2" class="w-4 h-4"></i> Revert Sale</button>
             <button id="detailDeleteBtn" onclick="deleteOrderFromDetail()" class="px-5 py-2.5 rounded-xl bg-red-500 text-white font-semibold hover:bg-red-600 transition flex items-center gap-2"><i data-lucide="trash-2" class="w-4 h-4"></i> Delete</button>
         </div>
         <div id="detailSaveActions" style="display:none;" class="sticky bottom-0 bg-white border-t border-gray-100 p-4 flex gap-2 justify-end">
