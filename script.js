@@ -29,7 +29,7 @@ const storage = firebase.storage();
 // this is the UI half of that pair.
 // ================================================================
 const ADMIN_SESSION_KEY = 'fk_admin_session';
-const ADMIN_SESSION_TTL = 12 * 60 * 60 * 1000; // 12 hours
+const ADMIN_SESSION_TTL = 48 * 60 * 60 * 1000; // 48 hours
 
 let currentAdmin = null;
 
@@ -58,7 +58,9 @@ async function ensureAnonymousAuth() {
 
 function readAdminSession() {
   try {
-    const raw = sessionStorage.getItem(ADMIN_SESSION_KEY);
+    // localStorage so the 48-hour session survives tab close, browser restart,
+    // and new tabs. Previous version used sessionStorage (tab-scoped).
+    const raw = localStorage.getItem(ADMIN_SESSION_KEY);
     if (!raw) return null;
     const s = JSON.parse(raw);
     if (!s || !s.username || s.role !== 'admin') return null;
@@ -70,11 +72,11 @@ function readAdminSession() {
 }
 
 function writeAdminSession(session) {
-  try { sessionStorage.setItem(ADMIN_SESSION_KEY, JSON.stringify(session)); } catch (_) {}
+  try { localStorage.setItem(ADMIN_SESSION_KEY, JSON.stringify(session)); } catch (_) {}
 }
 
 function clearAdminSession() {
-  try { sessionStorage.removeItem(ADMIN_SESSION_KEY); } catch (_) {}
+  try { localStorage.removeItem(ADMIN_SESSION_KEY); } catch (_) {}
 }
 
 async function attemptAdminLogin(username, password) {
