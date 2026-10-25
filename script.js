@@ -1,2353 +1,8201 @@
-// === SECTION 1: FIREBASE CONFIG ===
+// File: script.js
+// Flipkart Admin Panel — Full Script
+// Salary System v3: Paid Cycle Snapshot + Undo + Revert + Delete + Adjustment History
+// + Per-activity incentive override (added)
+
+// ================================================================
+// FIREBASE CONFIG
+// ================================================================
 const firebaseConfig = {
-    apiKey: "AIzaSyDGJWdgj2GBL-44gXZ9W0mWnOfsczwPXdw",
-    authDomain: "mobile-shop-9ea44.firebaseapp.com",
-    databaseURL: "https://mobile-shop-9ea44-default-rtdb.firebaseio.com",
-    projectId: "mobile-shop-9ea44",
-    storageBucket: "mobile-shop-9ea44.firebasestorage.app",
-    messagingSenderId: "902893829958",
-    appId: "1:902893829958:web:f2f429ad9290c56f4d6f47",
-    measurementId: "G-V4JQT7Z8T9"
+  apiKey: "AIzaSyDGJWdgj2GBL-44gXZ9W0mWnOfsczwPXdw",
+  authDomain: "mobile-shop-9ea44.firebaseapp.com",
+  databaseURL: "https://mobile-shop-9ea44-default-rtdb.firebaseio.com",
+  projectId: "mobile-shop-9ea44",
+  storageBucket: "mobile-shop-9ea44.firebasestorage.app",
+  messagingSenderId: "902893829958",
+  appId: "1:902893829958:web:f2f429ad9290c56f4d6f47",
+  measurementId: "G-V4JQT7Z8T9"
 };
+
 firebase.initializeApp(firebaseConfig);
 const db = firebase.database();
 const storage = firebase.storage();
 
-// === SECTION 2: HELPER FUNCTIONS (getLocalDate) ===
-function getLocalDate() {
-    const now = new Date();
-    const year = now.getFullYear();
-    const month = String(now.getMonth() + 1).padStart(2, '0');
-    const day = String(now.getDate()).padStart(2, '0');
-    return `${year}-${month}-${day}`;
+// ================================================================
+// HELPERS
+// ================================================================
+const $ = (id) => document.getElementById(id);
+
+const setText = (id, value) => {
+  const el = $(id);
+  if (el) el.textContent = value;
+};
+
+const setHTML = (id, value) => {
+  const el = $(id);
+  if (el) el.innerHTML = value;
+};
+
+const setVal = (id, value) => {
+  const el = $(id);
+  if (el) el.value = value;
+};
+
+const getVal = (id) => {
+  const el = $(id);
+  return el ? el.value : '';
+};
+
+const formatINR = (num) => {
+  if (num === undefined || num === null || isNaN(num)) return '₹0';
+  return '₹' + new Intl.NumberFormat('en-IN').format(Math.round(num));
+};
+
+function getLocalYMD(d = new Date()) {
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
 }
 
-// === SECTION 3: GLOBAL STATE ===
-let currentUser = null;
-let currentStatus = '';
-let attendanceGateOpen = false;
-let selectedReason = '';
-let zxingCodeReader = null;
-let isScanning = false;
-let hiddenImei2 = '';
-let scanMode = 'barcode';
-let pendingFilter = 'all';
-let allPendingOrders = [];
-let pendingDoneOrderId = null;
-let tesseractWorker = null;
-let ocrInterval = null;
-let isOcrScanning = false;
-let ocrAttemptCount = 0;
-let lastDetectedImei = '';
+function addDays(dateStr, n) {
+  if (!dateStr) return getLocalYMD();
+  const d = new Date(dateStr + 'T00:00:00');
+  if (isNaN(d)) return getLocalYMD();
+  d.setDate(d.getDate() + n);
+  return getLocalYMD(d);
+}
 
-// === IMEI DUPLICATE CHECK HELPERS ===
+function esc(s) {
+  return String(s ?? '').replace(/[&<>"']/g, (c) => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;'
+  }[c]));
+}
+
+function refreshIcons() {
+  if (window.lucide) lucide.createIcons();
+}
+
+function debounce(fn, delay = 250) {
+  let t;
+  return function (...args) {
+    clearTimeout(t);
+    t = setTimeout(() => fn.apply(this, args), delay);
+  };
+}
+
+function isAfter12Local(ts) {
+  const d = new Date(ts);
+  if (isNaN(d)) return false;
+  return d.getHours() > 12 || (d.getHours() === 12 && (d.getMinutes() > 0 || d.getSeconds() > 0));
+}
+
+function formatAttTime(ts) {
+  const d = new Date(ts);
+  if (isNaN(d)) return '';
+  return d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
+}
+
+function getStatusClass(item) {
+  const status = item.status || 'unknown';
+  if (status === 'pickup') return item.sold ? 'sold' : 'pickup';
+  if (status === 'rejected') return 'rejected';
+  if (status === 'on_hold') return 'on_hold';
+  return 'reschedule';
+}
+
+function getStatusDisplay(item) {
+  const status = item.status || 'unknown';
+
+  if (status === 'pickup') return item.sold ? 'Sold' : 'Pickup';
+  if (status === 'rejected') return 'Rejected';
+
+  if (status === 'on_hold') {
+    if (item.previous_status) {
+      const prev = item.previous_status === 'pickup'
+        ? (item.sold ? 'Sold' : 'Pickup')
+        : item.previous_status;
+      return `Hold (was ${prev})`;
+    }
+    return 'Hold';
+  }
+
+  return 'Pending';
+}
+
 function normalizeImei(value) {
-    return String(value ?? '').replace(/\s+/g, '').trim();
+  return String(value ?? '').replace(/\s+/g, '').trim();
 }
 
 async function findDuplicateImei(imei, excludeOrderId = null) {
-    const normalized = normalizeImei(imei);
-    if (!normalized) return null;
+  const normalized = normalizeImei(imei);
+  if (!normalized) return null;
 
-    const [pickupsSnap, outsideSnap] = await Promise.all([
-        db.ref('pickups').once('value'),
-        db.ref('outside_pickups').once('value')
+  const [pickupsSnap, outsideSnap] = await Promise.all([
+    db.ref('pickups').once('value'),
+    db.ref('outside_pickups').once('value')
+  ]);
+
+  const pickups = pickupsSnap.val() || {};
+  for (const [orderId, item] of Object.entries(pickups)) {
+    if (excludeOrderId && String(orderId) === String(excludeOrderId)) continue;
+    if (!item || typeof item !== 'object') continue;
+    if ((item.status || '').toLowerCase() !== 'pickup') continue;
+    if (normalizeImei(item.imei) === normalized) {
+      return { source: 'pickups', orderId, item };
+    }
+  }
+
+  const outsidePickups = outsideSnap.val() || {};
+  for (const [orderId, item] of Object.entries(outsidePickups)) {
+    if (excludeOrderId && String(orderId) === String(excludeOrderId)) continue;
+    if (!item || typeof item !== 'object') continue;
+    const status = String(item.status || 'pending').toLowerCase();
+    if (status === 'rejected') continue;
+    if (normalizeImei(item.imei) === normalized) {
+      return { source: 'outside_pickups', orderId, item };
+    }
+  }
+
+  return null;
+}
+
+// ================================================================
+// CACHE
+// ================================================================
+let cacheVersion = 0;
+const CACHE_TTL = 60000;
+
+const cache = {
+  pickups: null,
+  pending: null,
+  users: null,
+  deposits: null,
+  attendance: null,
+  salary_payments: null
+};
+
+const cacheTime = {
+  pickups: 0,
+  pending: 0,
+  users: 0,
+  deposits: 0,
+  attendance: 0,
+  salary_payments: 0
+};
+
+function invalidate(...nodes) {
+  nodes.forEach((n) => {
+    cache[n] = null;
+    cacheTime[n] = 0;
+  });
+  cacheVersion++;
+}
+
+async function getData(node, force = false) {
+  const isFresh = cache[node] && (Date.now() - cacheTime[node] < CACHE_TTL);
+
+  if (!force && isFresh) return cache[node];
+
+  const snap = await db.ref(node).once('value');
+  cache[node] = snap.val() || {};
+  cacheTime[node] = Date.now();
+  return cache[node];
+}
+
+// ================================================================
+// COMMISSION
+// ================================================================
+const COMMISSION_BRACKETS = [
+  { min: 0, max: 10000, type: 'percentage', value: 10 },
+  { min: 10001, max: 31000, type: 'percentage', value: 8 },
+  { min: 31001, max: Infinity, type: 'fixed', value: 2500 }
+];
+
+function calculateCommission(purchasePrice) {
+  if (!purchasePrice || purchasePrice <= 0) return 0;
+
+  for (const bracket of COMMISSION_BRACKETS) {
+    if (purchasePrice >= bracket.min && purchasePrice <= bracket.max) {
+      if (bracket.type === 'percentage') {
+        return Math.round((purchasePrice * bracket.value) / 100);
+      }
+      return bracket.value;
+    }
+  }
+
+  return 0;
+}
+
+// ================================================================
+// INCENTIVE HELPERS — default + per-activity override
+// ----------------------------------------------------------------
+// Default incentive is stored on the agent: users/{username}/pickup_incentive
+// and users/{username}/reject_incentive.
+//
+// For individual activities (orders), an admin can override the incentive
+// ONLY for that order via:
+//     pickups/{orderId}/pickup_incentive_override
+//     pickups/{orderId}/reject_incentive_override
+//
+// If the override is set, it wins for that order. Otherwise the agent's
+// default is used. This never modifies the agent's default.
+// ================================================================
+function hasOverride(order, type) {
+  if (!order) return false;
+  const f = type === 'pickup' ? 'pickup_incentive_override' : 'reject_incentive_override';
+  const v = order[f];
+  return v !== undefined && v !== null && v !== '';
+}
+
+function getActivityIncentive(order, agentUser, type) {
+  const agentField = type === 'pickup' ? 'pickup_incentive' : 'reject_incentive';
+  const agentDefault = agentUser ? (Number(agentUser[agentField]) || 0) : 0;
+
+  if (hasOverride(order, type)) {
+    const n = Number(order[type === 'pickup' ? 'pickup_incentive_override' : 'reject_incentive_override']);
+    if (!isNaN(n)) return n;
+  }
+  return agentDefault;
+}
+
+// ================================================================
+// DOC / IMAGE HELPERS
+// ================================================================
+const ADMIN_MAX_DOC_IMAGES = 3;
+const ADMIN_RAM_OPTIONS = ['1GB','2GB','3GB','4GB','6GB','8GB','12GB','16GB','18GB','24GB'];
+const ADMIN_STORAGE_OPTIONS = ['8GB','16GB','32GB','64GB','128GB','256GB','512GB','1TB','2TB'];
+const ADMIN_NETWORK_OPTIONS = ['2G','3G','4G','5G'];
+
+function getRam(item) {
+  if (!item) return '';
+  if (item.ram) return item.ram;
+  const rs = item.ramStorage || '';
+  return rs.includes('/') ? rs.split('/')[0].trim() : '';
+}
+
+function getStorage(item) {
+  if (!item) return '';
+  if (item.storage) return item.storage;
+  const rs = item.ramStorage || '';
+  return rs.includes('/') ? rs.split('/')[1].trim() : '';
+}
+
+function getRamStorageText(item) {
+  const r = getRam(item);
+  const st = getStorage(item);
+  if (r && st) return r + ' / ' + st;
+  return r || st || (item && item.ramStorage) || '';
+}
+
+function buildOptionList(options, current) {
+  return ['<option value="">— Empty —</option>']
+    .concat(options.map(o => `<option value="${o}" ${current === o ? 'selected' : ''}>${o}</option>`))
+    .concat(current && !options.includes(current) ? [`<option value="${current}" selected>${current}</option>`] : [])
+    .join('');
+}
+
+function getDocImages(item, which) {
+  if (!item) return [];
+
+  const arrField = which === 'bill' ? 'billImages' : 'aadhaarImages';
+  const legacy = which === 'bill' ? 'billImage' : 'aadhaarImage';
+
+  const arr = Array.isArray(item[arrField]) ? item[arrField].slice() : [];
+  if (!arr.length && item[legacy]) arr.push(item[legacy]);
+
+  return arr.filter(Boolean);
+}
+
+function _compressImageFileAdmin(file, maxDimension = 800, quality = 0.55) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+
+    reader.onload = function (e) {
+      const img = new Image();
+
+      img.onload = function () {
+        let width = img.width;
+        let height = img.height;
+
+        if (width > height) {
+          if (width > maxDimension) {
+            height = Math.round((height * maxDimension) / width);
+            width = maxDimension;
+          }
+        } else {
+          if (height > maxDimension) {
+            width = Math.round((width * maxDimension) / height);
+            height = maxDimension;
+          }
+        }
+
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = '#fff';
+        ctx.fillRect(0, 0, width, height);
+        ctx.drawImage(img, 0, 0, width, height);
+
+        resolve(canvas.toDataURL('image/jpeg', quality));
+      };
+
+      img.onerror = reject;
+      img.src = e.target.result;
+    };
+
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+async function _uploadImageToStorageAdmin(file, orderId, docType, index) {
+  if (!file) throw new Error('No file');
+  if (!orderId) throw new Error('Order ID required');
+
+  const fileExt = file.name.split('.').pop() || 'jpg';
+  const fileName = `${orderId}_${docType}_${index}.${fileExt}`;
+  const storageRef = storage.ref(`pickup_docs/${orderId}/${docType}/${fileName}`);
+
+  const compressedDataUrl = await _compressImageFileAdmin(file, 800, 0.55);
+  const blob = await (await fetch(compressedDataUrl)).blob();
+  const snapshot = await storageRef.put(blob, { contentType: 'image/jpeg' });
+
+  return snapshot.ref.getDownloadURL();
+}
+
+async function _deleteImageFromStorageAdmin(url) {
+  if (!url) return;
+
+  try {
+    const ref = storage.refFromURL(url);
+    await ref.delete();
+  } catch (e) {
+    console.warn('Could not delete image:', e);
+  }
+}
+
+function _pickImageSource(useCamera) {
+  return new Promise((resolve) => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/*';
+    input.multiple = true;
+    if (useCamera) input.capture = 'environment';
+
+    input.onchange = () => resolve(input.files ? Array.from(input.files) : []);
+    input.click();
+  });
+}
+
+function openImageViewer(src, title) {
+  try {
+    const modal = $('imgViewerModal');
+    if (!modal) return;
+
+    let img = $('imgViewerImg');
+    let caption = $('imgViewerCaption');
+
+    if (!img) {
+      modal.innerHTML = `
+        <div style="position:relative; max-width:90vw; max-height:90vh; background:#000; border-radius:12px; padding:10px;">
+          <button onclick="closeImageViewer()" style="position:absolute; top:10px; right:10px; z-index:20; background:#dc2626; color:white; border:none; border-radius:8px; padding:8px 12px;">Close</button>
+          <img id="imgViewerImg" src="${src}" style="max-width:100%; max-height:85vh; display:block; margin:0 auto;" alt="Document">
+          <div id="imgViewerCaption" style="color:white; text-align:center; margin-top:8px;">${title || ''}</div>
+        </div>
+      `;
+    } else {
+      img.src = src;
+      if (caption) caption.textContent = title || '';
+    }
+
+    modal.style.display = 'flex';
+    document.body.style.overflow = 'hidden';
+  } catch (e) {
+    console.error(e);
+  }
+}
+
+function closeImageViewer() {
+  try {
+    const modal = $('imgViewerModal');
+    if (modal) modal.style.display = 'none';
+    document.body.style.overflow = '';
+  } catch (e) {}
+}
+
+async function adminUploadDocImage(which) {
+  if (!detailOrderId) {
+    showToast('No order selected', 'error');
+    return;
+  }
+
+  const current = getDocImages(editData || {}, which);
+
+  if (current.length >= ADMIN_MAX_DOC_IMAGES) {
+    showToast(`Max ${ADMIN_MAX_DOC_IMAGES} images allowed`, 'error');
+    return;
+  }
+
+  const label = which === 'bill' ? 'Bill' : 'Aadhaar';
+
+  const choice = await Swal.fire({
+    title: `Add ${label} Image`,
+    text: `${current.length}/${ADMIN_MAX_DOC_IMAGES} used`,
+    showDenyButton: true,
+    showCancelButton: true,
+    confirmButtonText: '📷 Camera',
+    denyButtonText: '🖼️ Gallery',
+    cancelButtonText: 'Cancel',
+    confirmButtonColor: '#4f46e5',
+    denyButtonColor: '#0ea5e9'
+  });
+
+  if (choice.isDismissed) return;
+
+  const files = await _pickImageSource(choice.isConfirmed);
+  if (!files.length) return;
+
+  Swal.fire({ title: 'Uploading…', allowOutsideClick: false, didOpen: () => Swal.showLoading() });
+
+  try {
+    const room = ADMIN_MAX_DOC_IMAGES - current.length;
+    const toDo = files.slice(0, room);
+    const uploadPromises = [];
+
+    for (let i = 0; i < toDo.length; i++) {
+      const idx = current.length + i;
+      uploadPromises.push(_uploadImageToStorageAdmin(toDo[i], detailOrderId, which, idx));
+    }
+
+    const urls = await Promise.all(uploadPromises);
+
+    if (!urls.length) {
+      Swal.close();
+      showToast('Upload failed', 'error');
+      return;
+    }
+
+    const newArr = current.concat(urls);
+    const arrField = which === 'bill' ? 'billImages' : 'aadhaarImages';
+    const legacyField = which === 'bill' ? 'billImage' : 'aadhaarImage';
+
+    await db.ref('pickups/' + detailOrderId).update({
+      [arrField]: newArr,
+      [legacyField]: newArr[0] || null
+    });
+
+    invalidate('pickups');
+    Swal.close();
+    showToast(`✅ ${urls.length} image${urls.length > 1 ? 's' : ''} uploaded`, 'success');
+
+    const snap = await db.ref('pickups/' + detailOrderId).once('value');
+    const it = snap.val();
+
+    if (it) {
+      editData = { ...it, id: detailOrderId };
+      renderDetailView(it);
+    }
+
+    loadOrders(true);
+  } catch (e) {
+    Swal.close();
+    showToast('Upload failed', 'error');
+    console.error(e);
+  }
+}
+
+async function adminDeleteDocImage(which, idx) {
+  if (!detailOrderId) return;
+
+  const arrField = which === 'bill' ? 'billImages' : 'aadhaarImages';
+  const legacyField = which === 'bill' ? 'billImage' : 'aadhaarImage';
+  const label = which === 'bill' ? 'Bill' : 'Aadhaar';
+  const current = getDocImages(editData || {}, which);
+
+  if (!current.length) return;
+
+  const isAll = idx === undefined || idx === null;
+
+  const confirm = await Swal.fire({
+    title: isAll ? `Delete ALL ${label} Images?` : `Delete this ${label} image?`,
+    text: 'This will permanently remove the image(s) from Storage and this order.',
+    icon: 'warning',
+    showCancelButton: true,
+    confirmButtonColor: '#dc2626',
+    cancelButtonColor: '#64748b',
+    confirmButtonText: 'Yes, Delete',
+    cancelButtonText: 'Cancel'
+  });
+
+  if (!confirm.isConfirmed) return;
+
+  try {
+    let newArr;
+    let urlsToDelete = [];
+
+    if (isAll) {
+      urlsToDelete = current.slice();
+      newArr = [];
+    } else {
+      urlsToDelete = [current[idx]];
+      newArr = current.slice();
+      newArr.splice(idx, 1);
+    }
+
+    for (const url of urlsToDelete) {
+      await _deleteImageFromStorageAdmin(url);
+    }
+
+    await db.ref('pickups/' + detailOrderId).update({
+      [arrField]: newArr.length ? newArr : null,
+      [legacyField]: newArr[0] || null
+    });
+
+    invalidate('pickups');
+    showToast(`🗑️ Deleted ${urlsToDelete.length} image(s)`, 'success');
+
+    const snap = await db.ref('pickups/' + detailOrderId).once('value');
+    const it = snap.val();
+
+    if (it) {
+      editData = { ...it, id: detailOrderId };
+      renderDetailView(it);
+    }
+
+    loadOrders(true);
+  } catch (e) {
+    showToast('Delete failed', 'error');
+    console.error(e);
+  }
+}
+
+async function adminSaveDocNumber(which) {
+  if (!detailOrderId) return;
+
+  const field = which === 'bill' ? 'billNumber' : 'aadhaarNumber';
+  const label = which === 'bill' ? 'Bill Number' : 'Aadhaar Number';
+  const cur = (editData && editData[field]) || '';
+
+  const { value: v, isConfirmed } = await Swal.fire({
+    title: 'Edit ' + label,
+    input: 'text',
+    inputValue: cur,
+    inputPlaceholder: label,
+    showCancelButton: true,
+    confirmButtonColor: '#4f46e5',
+    confirmButtonText: 'Save'
+  });
+
+  if (!isConfirmed) return;
+
+  try {
+    await db.ref('pickups/' + detailOrderId).update({ [field]: (v || '').trim() });
+
+    invalidate('pickups');
+    showToast('✅ Updated', 'success');
+
+    const snap = await db.ref('pickups/' + detailOrderId).once('value');
+    const it = snap.val();
+
+    if (it) {
+      editData = { ...it, id: detailOrderId };
+      renderDetailView(it);
+    }
+
+    loadOrders(true);
+  } catch (e) {
+    showToast('Update failed', 'error');
+    console.error(e);
+  }
+}
+
+// ================================================================
+// STATE
+// ================================================================
+let allOrders = [];
+let filteredOrders = [];
+let ordersById = new Map();
+
+let currentPage = 1;
+const pageSize = 15;
+let currentOrderFilter = 'all';
+let currentPageView = 'dashboard';
+
+let detailOrderId = null;
+let isRefreshing = false;
+let isEditMode = false;
+let editData = {};
+
+let inventoryList = [];
+let salesList = [];
+let filteredInventory = [];
+let filteredSales = [];
+let inventoryTypeFilter = 'all';
+let sellOrderData = null;
+
+let agentsList = [];
+let passwordVisible = {};
+
+let allDeposits = [];
+let filteredDeposits = [];
+let depositCurrentPage = 1;
+const depositPageSize = 15;
+
+let currentSalaryMode = 'today';
+let currentSalaryPeriod = null;
+
+let overheadPerPhone = 0;
+let overheadCache = { version: -1, value: 0 };
+
+// Date Activities modal state
+let currentActivitiesDate = null;
+
+// ================================================================
+// TOAST
+// ================================================================
+const toastEl = $('toast');
+
+function showToast(msg, type = 'info', duration = 3000) {
+  if (!toastEl) return;
+
+  toastEl.textContent = msg;
+  toastEl.className = 'toast-fixed ' + type;
+  void toastEl.offsetWidth;
+  toastEl.classList.add('show');
+
+  clearTimeout(toastEl._timer);
+  toastEl._timer = setTimeout(() => toastEl.classList.remove('show'), duration);
+}
+
+// ================================================================
+// SIDEBAR / NAV
+// ================================================================
+function toggleSidebar() {
+  $('sidebar')?.classList.toggle('open');
+  $('sidebarOverlay')?.classList.toggle('open');
+}
+
+function closeSidebar() {
+  $('sidebar')?.classList.remove('open');
+  $('sidebarOverlay')?.classList.remove('open');
+}
+
+function navigate(page) {
+  currentPageView = page;
+
+  document.querySelectorAll('.sidebar-link').forEach(el => {
+    el.classList.toggle('active', el.dataset.page === page);
+  });
+
+  document.querySelectorAll('.page-content').forEach(el => {
+    el.style.display = 'none';
+  });
+
+  const target = $('page-' + page);
+
+  if (target) {
+    target.style.display = 'block';
+    target.classList.remove('fade-in');
+    void target.offsetWidth;
+    target.classList.add('fade-in');
+  }
+
+  closeSidebar();
+  refreshCurrentPage(false);
+}
+
+function refreshCurrentPage(force = false) {
+  if (currentPageView === 'dashboard') loadDashboard(force);
+  else if (currentPageView === 'orders') { loadOrders(force); loadAgentsForFilter(force); }
+  else if (currentPageView === 'pending') loadPendingAdmin(force);
+  else if (currentPageView === 'rejected') loadRejectedAdmin(force);
+  else if (currentPageView === 'inventory') loadInventory(force);
+  else if (currentPageView === 'sales') loadSales(force);
+  else if (currentPageView === 'deposits') loadDeposits(force);
+  else if (currentPageView === 'attendance') loadAttendance(force);
+  else if (currentPageView === 'salary') loadSalaryData(force);
+  else if (currentPageView === 'agents') loadAgents(force);
+  else if (currentPageView === 'outside-pickups') loadOutsidePickups(force);
+}
+
+// ================================================================
+// DASHBOARD
+// ================================================================
+async function loadDashboard(force = false) {
+  try {
+    const [pickups, pending, users, deposits, attendance] = await Promise.all([
+      getData('pickups', force),
+      getData('pending', force),
+      getData('users', force),
+      getData('deposits', force),
+      getData('attendance', force)
     ]);
 
-    const pickups = pickupsSnap.val() || {};
-    for (const [orderId, item] of Object.entries(pickups)) {
-        if (excludeOrderId && String(orderId) === String(excludeOrderId)) continue;
-        if (!item || typeof item !== 'object') continue;
-        if ((item.status || '').toLowerCase() !== 'pickup') continue;
-        if (normalizeImei(item.imei) === normalized) {
-            return { source: 'pickups', orderId, item };
-        }
-    }
+    let total = 0;
+    let pickupCount = 0;
+    let rejectedCount = 0;
+    let rescheduleCount = 0;
+    let soldCount = 0;
+    let unsoldCount = 0;
+    let revenue = 0;
+    let profit = 0;
+    let totalCommission = 0;
+    let totalStockValue = 0;
 
-    const outsidePickups = outsideSnap.val() || {};
-    for (const [orderId, item] of Object.entries(outsidePickups)) {
-        if (excludeOrderId && String(orderId) === String(excludeOrderId)) continue;
-        if (!item || typeof item !== 'object') continue;
-        const status = String(item.status || 'pending').toLowerCase();
-        if (status === 'rejected') continue;
-        if (normalizeImei(item.imei) === normalized) {
-            return { source: 'outside_pickups', orderId, item };
-        }
-    }
+    Object.values(pickups).forEach(item => {
+      total++;
+      if (item.status === 'on_hold') return;
 
-    return null;
-}
+      const commission = item.commission !== undefined ? item.commission : calculateCommission(item.value || 0);
+      totalCommission += commission;
 
-// ========== SPEC (RAM / STORAGE / NETWORK) STATE ==========
-let selectedRam = '';
-let selectedStorage = '';
-let selectedNetwork = '';
-const RAM_OPTIONS = ['1GB','2GB','3GB','4GB','6GB','8GB','12GB','16GB','18GB','24GB'];
-const STORAGE_OPTIONS = ['8GB','16GB','32GB','64GB','128GB','256GB','512GB','1TB','2TB'];
-// 🔥 Updated per spec: include 1G
-const NETWORK_OPTIONS = ['1G','2G','3G','4G','5G'];
+      if (item.status === 'pickup') {
+        pickupCount++;
 
-function resetSpecSelection() {
-    selectedRam = '';
-    selectedStorage = '';
-    selectedNetwork = '';
-}
-
-function buildSpecChips(kind, options, extraClass) {
-    return options.map(o =>
-        `<button type="button" class="spec-chip ${extraClass || ''}" data-kind="${kind}" data-val="${o}" onclick="selectSpec('${kind}','${o}',this)">${o}</button>`
-    ).join('');
-}
-
-function selectSpec(kind, val, el) {
-    const group = el.parentElement;
-    const already = el.classList.contains('active');
-    group.querySelectorAll('.spec-chip').forEach(b => b.classList.remove('active'));
-    const finalVal = already ? '' : val;
-    if (!already) el.classList.add('active');
-    if (kind === 'ram') selectedRam = finalVal;
-    if (kind === 'storage') selectedStorage = finalVal;
-    if (kind === 'network') selectedNetwork = finalVal;
-    if (navigator.vibrate) { try { navigator.vibrate(12); } catch(_){} }
-    updateSpecUI();
-}
-
-function updateSpecUI() {
-    const ramPick = document.getElementById('ramPick');
-    const stoPick = document.getElementById('storagePick');
-    const netPick = document.getElementById('networkPick');
-    if (ramPick) { ramPick.textContent = selectedRam || 'Not selected'; ramPick.className = 'picked' + (selectedRam ? '' : ' empty'); }
-    if (stoPick) { stoPick.textContent = selectedStorage || 'Not selected'; stoPick.className = 'picked' + (selectedStorage ? '' : ' empty'); }
-    if (netPick) { netPick.textContent = selectedNetwork || 'Not selected'; netPick.className = 'picked' + (selectedNetwork ? '' : ' empty'); }
-    const ramStorageInput = document.getElementById('ramStorage');
-    const networkInput = document.getElementById('networkType');
-    const combo = (selectedRam && selectedStorage) ? (selectedRam + '/' + selectedStorage) : '';
-    if (ramStorageInput) ramStorageInput.value = combo;
-    if (networkInput) networkInput.value = selectedNetwork;
-    const box = document.getElementById('specSummary');
-    if (!box) return;
-    const done = selectedRam && selectedStorage && selectedNetwork;
-    box.className = 'spec-summary' + (done ? ' ok' : '');
-    const missing = [];
-    if (!selectedRam) missing.push('RAM');
-    if (!selectedStorage) missing.push('Storage');
-    if (!selectedNetwork) missing.push('Network');
-    box.innerHTML = `
-        <div class="head">SELECTED DEVICE SPECS</div>
-        <div class="body">${selectedRam || '—'} RAM &nbsp;·&nbsp; ${selectedStorage || '—'} Storage &nbsp;·&nbsp; ${selectedNetwork || '—'}</div>
-        ${done ? '' : `<div class="spec-missing">⚠️ Please select: ${missing.join(', ')}</div>`}
-    `;
-}
-
-// ========== BILL / AADHAAR IMAGE STATE (Pickup) ==========
-const PICKUP_MAX_IMAGES = 3;
-let pickupBillImages = [];
-let pickupAadhaarImages = [];
-
-// === SECTION 4: IMAGE HANDLING ===
-function compressImageFile(file, maxDim = 800, quality = 0.55) {
-    return new Promise((resolve, reject) => {
-        if (!file) return reject('No file');
-        if (!file.type.startsWith('image/')) return reject('Not an image');
-        const reader = new FileReader();
-        reader.onerror = () => reject('Read error');
-        reader.onload = () => {
-            const img = new Image();
-            img.onerror = () => reject('Image decode error');
-            img.onload = () => {
-                let { width, height } = img;
-                if (width > height) {
-                    if (width > maxDim) { height = Math.round(height * maxDim / width); width = maxDim; }
-                } else {
-                    if (height > maxDim) { width = Math.round(width * maxDim / height); height = maxDim; }
-                }
-                const canvas = document.createElement('canvas');
-                canvas.width = width; canvas.height = height;
-                const ctx = canvas.getContext('2d');
-                ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, width, height);
-                ctx.drawImage(img, 0, 0, width, height);
-                try { resolve(canvas.toDataURL('image/jpeg', quality)); } catch (e) { reject(e); }
-            };
-            img.src = reader.result;
-        };
-        reader.readAsDataURL(file);
-    });
-}
-
-function renderPickupImgList(which) {
-    const arr = which === 'bill' ? pickupBillImages : pickupAadhaarImages;
-    const previewEl = document.getElementById(which === 'bill' ? 'billImgPreview' : 'aadhaarImgPreview');
-    const infoEl = document.getElementById(which === 'bill' ? 'billImgInfo' : 'aadhaarImgInfo');
-    if (!previewEl) return;
-    if (!arr.length) {
-        previewEl.innerHTML = '';
-        if (infoEl) infoEl.textContent = `${PICKUP_MAX_IMAGES} images max · ${PICKUP_MAX_IMAGES} slots free`;
-        return;
-    }
-    let totalKB = 0;
-    previewEl.innerHTML = `<div class="grid grid-cols-3 gap-2">` + arr.map((d, i) => {
-        const kb = Math.round((d.length * 3 / 4) / 1024); totalKB += kb;
-        return `<div class="relative group">
-            <img src="${d}" class="w-full h-20 object-cover rounded-lg border border-gray-200" alt="p${i}">
-            <button type="button" onclick="removePickupImage('${which}',${i})" class="absolute -top-1.5 -right-1.5 w-6 h-6 rounded-full bg-red-600 text-white text-xs font-bold shadow-md">✕</button>
-            <div class="absolute bottom-0 left-0 right-0 bg-black/50 text-white text-[9px] text-center rounded-b-lg">${kb}KB</div>
-        </div>`;
-    }).join('') + `</div>`;
-    if (infoEl) infoEl.textContent = `✅ ${arr.length}/${PICKUP_MAX_IMAGES} · total ~${totalKB} KB`;
-}
-
-async function handlePickupImagePick(inputEl, which) {
-    const files = inputEl.files ? Array.from(inputEl.files) : [];
-    if (!files.length) return;
-    const arr = which === 'bill' ? pickupBillImages : pickupAadhaarImages;
-    const infoEl = document.getElementById(which === 'bill' ? 'billImgInfo' : 'aadhaarImgInfo');
-    if (arr.length >= PICKUP_MAX_IMAGES) {
-        showToast(`Max ${PICKUP_MAX_IMAGES} images allowed`, 'error');
-        inputEl.value = ''; return;
-    }
-    const room = PICKUP_MAX_IMAGES - arr.length;
-    const toProcess = files.slice(0, room);
-    if (infoEl) infoEl.textContent = '⏳ Compressing…';
-    for (const f of toProcess) {
-        try { arr.push(await compressImageFile(f)); }
-        catch (e) { console.error(e); showToast('Image process failed', 'error'); }
-    }
-    inputEl.value = '';
-    renderPickupImgList(which);
-}
-
-function removePickupImage(which, idx) {
-    const arr = which === 'bill' ? pickupBillImages : pickupAadhaarImages;
-    arr.splice(idx, 1);
-    renderPickupImgList(which);
-}
-
-function clearPickupImageState() {
-    pickupBillImages = [];
-    pickupAadhaarImages = [];
-}
-
-// === SECTION 5: REASONS ===
-function selectReason(el, text) {
-    selectedReason = text || '';
-    document.querySelectorAll('.reason-btn').forEach(btn => btn.classList.remove('active'));
-    if (el) el.classList.add('active');
-    const otherInput = document.getElementById('otherReason');
-    if (otherInput) {
-        if (selectedReason && selectedReason.toLowerCase().includes('other')) {
-            otherInput.classList.remove('hidden');
-            otherInput.focus();
+        if (item.sold) {
+          soldCount++;
+          const netRevenue = (item.salePrice || 0) - commission;
+          revenue += netRevenue;
+          const itemProfit = item.profit !== undefined ? item.profit : (netRevenue - (item.value || 0));
+          profit += itemProfit;
         } else {
-            otherInput.classList.add('hidden');
-            otherInput.value = '';
+          unsoldCount++;
+          totalStockValue += item.value || 0;
         }
-    }
-    if (navigator.vibrate) { try { navigator.vibrate(12); } catch (_) {} }
-}
-
-const rejectReasons = [
-    { text: 'Customer wanted price only', icon: 'indian-rupee' },
-    { text: 'Customer denied price drop', icon: 'trending-down' },
-    { text: 'Device details mismatch', icon: 'alert-triangle' },
-    { text: 'Fake device detected', icon: 'shield-alert' },
-    { text: 'Phone has loan / finance lock', icon: 'landmark' },
-    { text: 'Phone is dead / not working', icon: 'battery-warning' },
-    { text: 'Other reason', icon: 'more-horizontal' }
-];
-const rescheduleReasons = [
-    { text: 'On the way', icon: 'map-pin' },
-    { text: 'Customer not picking call', icon: 'phone-missed' },
-    { text: 'Wrong address / pin code', icon: 'map-pin-off' },
-    { text: 'Customer asked for tomorrow', icon: 'calendar' },
-    { text: 'Customer not at home', icon: 'home' },
-    { text: 'Other reason', icon: 'more-horizontal' }
-];
-
-// === SECTION 6: USER LISTENER ===
-let userListenerRef = null;
-
-function startUserExistenceCheck() {
-    if (!currentUser) return;
-    stopUserExistenceCheck();
-    const userRef = db.ref('users/' + currentUser.username);
-    userRef.on('value', (snapshot) => {
-        if (!snapshot.exists()) {
-            logoutUser();
-            showToast('❌ Your account has been deleted. Logged out.', 'error');
-            return;
-        }
-        const data = snapshot.val();
-        if (data.is_active === false) {
-            logoutUser();
-            showToast('🔒 Your account has been deactivated (employee left).', 'error');
-            return;
-        }
-        if (data.forceLogout === true) {
-            userRef.update({ forceLogout: null }).catch(() => {});
-            logoutUser();
-            showToast('🔒 You have been logged out by admin.', 'info');
-            return;
-        }
-        if (data.is_blocked === true && data.role !== 'admin') {
-            const today = getLocalDate();
-            const blockedDate = data.blocked_date || '';
-            if (blockedDate !== today) {
-                userRef.update({ is_blocked: false, blocked_date: null }).catch(() => {});
-                document.getElementById('blockedOverlay').style.display = 'none';
-                showToast('🔓 Auto-unblocked (new day)', 'info');
-            } else {
-                document.getElementById('blockedOverlay').style.display = 'flex';
-            }
-        } else {
-            document.getElementById('blockedOverlay').style.display = 'none';
-        }
+      } else if (item.status === 'rejected') {
+        rejectedCount++;
+      } else if (item.status === 'reschedule') {
+        rescheduleCount++;
+      }
     });
-    userListenerRef = userRef;
-}
 
-function stopUserExistenceCheck() {
-    if (userListenerRef) { userListenerRef.off(); userListenerRef = null; }
-}
+    const pendingCount = Object.keys(pending).length;
+    const today = getLocalYMD();
 
-// === SECTION 7: AUTHENTICATION ===
-async function loginUser() {
-    const username = document.getElementById('loginUsername').value.trim().toLowerCase();
-    const password = document.getElementById('loginPassword').value.trim();
-    const errorEl = document.getElementById('loginError');
-    if (!username || !password) {
-        errorEl.textContent = 'Please enter both username and password.';
-        errorEl.style.display = 'block'; return;
+    let totalAgents = 0;
+    let presentToday = 0;
+
+    for (const [uname, uData] of Object.entries(users)) {
+      const role = uData.role || 'agent';
+      if (role === 'agent' && uData.is_active !== false) {
+        totalAgents++;
+
+        const att = attendance[uname] && attendance[uname][today];
+        if (att && att.status === 'present') presentToday++;
+      }
     }
-    errorEl.style.display = 'none';
+
+    let depositTotalAmount = 0;
+    Object.values(deposits).forEach(d => {
+      depositTotalAmount += d.amount || 0;
+    });
+
+    const totalOverhead = depositTotalAmount;
+    const dashOverheadPerPhone = soldCount > 0 ? totalOverhead / soldCount : 0;
+    const finalNetProfit = profit - (dashOverheadPerPhone * soldCount);
+
+    setText('statTotal', total);
+    setText('statPickup', pickupCount);
+    setText('statRejected', rejectedCount);
+    setText('statPending', pendingCount);
+    setText('statInventory', unsoldCount);
+    setText('statSold', soldCount);
+    setText('statRevenue', formatINR(revenue));
+    setText('statProfit', formatINR(profit));
+    setText('statFinalProfit', formatINR(finalNetProfit));
+    setText('statStockValue', formatINR(totalStockValue));
+    setText('statAgents', totalAgents);
+    setText('statPresentToday', presentToday);
+    setText('statCommission', formatINR(totalCommission));
+
+    setText('orderCountBadge', total);
+    setText('pendingBadge', pendingCount);
+    setText('rejectedBadge', rejectedCount);
+    setText('inventoryBadge', unsoldCount);
+    setText('salesBadge', soldCount);
+    setText('agentsBadge', totalAgents);
+    setText('attendanceBadge', presentToday + '/' + totalAgents);
+    setText('depositsBadge', Object.keys(deposits).length);
+
     try {
-        const snap = await db.ref('users/' + username).once('value');
-        if (!snap.exists()) {
-            errorEl.textContent = 'User not found. Check username.';
-            errorEl.style.display = 'block'; return;
-        }
-        const userData = snap.val();
-        if (userData.password !== password) {
-            errorEl.textContent = 'Incorrect password.';
-            errorEl.style.display = 'block'; return;
-        }
-        if (userData.is_active === false) {
-            errorEl.textContent = '❌ Account disabled (employee left). Contact admin.';
-            errorEl.style.display = 'block'; return;
-        }
-        currentUser = { username, name: userData.name, ...userData };
-        localStorage.setItem('flipkart_agent_user', JSON.stringify(currentUser));
-        showMainApp();
-        showToast('✅ Welcome, ' + currentUser.name + '!', 'success');
-        if (currentUser.role !== 'admin') {
-            await checkAttendanceAndBlock();
-            loadAttendanceHistory();
-        } else {
-            document.getElementById('attendanceTabBtn').style.display = 'none';
-            document.getElementById('blockedOverlay').style.display = 'none';
-        }
-        loadTodayStats();
-        loadPendingOrders();
-        startUserExistenceCheck();
+      const outsidePickupsSnap = await db.ref('outside_pickups').once('value');
+      const outsidePickups = outsidePickupsSnap.val() || {};
+      const outsidePendingCount = Object.values(outsidePickups).filter(
+        item => item && (item.status || 'pending') === 'pending'
+      ).length;
+      setText('outsidePickupsBadge', outsidePendingCount);
     } catch (e) {
-        console.error(e);
-        errorEl.textContent = 'Something went wrong. Try again.';
-        errorEl.style.display = 'block';
+      console.warn('Outside pickup badge load error:', e);
     }
-}
 
-function logoutUser() {
-    if (attendanceGateOpen) Swal.close();
-    stopUserExistenceCheck();
-    localStorage.removeItem('flipkart_agent_user');
-    currentUser = null;
-    document.getElementById('mainApp').style.display = 'none';
-    document.getElementById('authOverlay').style.display = 'flex';
-    document.getElementById('blockedOverlay').style.display = 'none';
-    showToast('Logged out', 'info');
-}
+    const recent = Object.entries(pickups)
+      .sort((a, b) => (b[1].timestamp || 0) - (a[1].timestamp || 0))
+      .slice(0, 10);
 
-function checkAuth() {
-    const stored = localStorage.getItem('flipkart_agent_user');
-    if (stored) {
-        try {
-            currentUser = JSON.parse(stored);
-            verifyUserExists(currentUser.username).then(async exists => {
-                if (exists) {
-                    const userSnap = await db.ref('users/' + currentUser.username).once('value');
-                    const userData = userSnap.val();
-                    if (userData && userData.is_active === false) {
-                        logoutUser();
-                        showToast('🔒 Your account has been deactivated (left).', 'error');
-                        return;
-                    }
-                    showMainApp();
-                    if (currentUser.role !== 'admin') {
-                        await checkAttendanceAndBlock();
-                        loadAttendanceHistory();
-                    } else {
-                        document.getElementById('attendanceTabBtn').style.display = 'none';
-                        document.getElementById('blockedOverlay').style.display = 'none';
-                    }
-                    loadTodayStats();
-                    loadPendingOrders();
-                    startUserExistenceCheck();
-                } else {
-                    logoutUser();
-                    showToast('❌ Account deleted. Please contact admin.', 'error');
-                }
-            });
-            return true;
-        } catch (e) {
-            localStorage.removeItem('flipkart_agent_user');
-        }
-    }
-    return false;
-}
-
-function verifyUserExists(username) {
-    return db.ref('users/' + username).once('value').then(snap => snap.exists());
-}
-
-function showMainApp() {
-    document.getElementById('authOverlay').style.display = 'none';
-    document.getElementById('mainApp').style.display = 'block';
-    document.getElementById('userNameDisplay').textContent = currentUser.name || currentUser.username;
-    setupOfflineDetection();
-    lucide.createIcons();
-    startUserExistenceCheck();
-}
-
-// === SECTION 8: CHANGE PASSWORD ===
-function showChangePassword() {
-    if (!currentUser) return;
-    Swal.fire({
-        title: 'Change Password',
-        html: `
-            <p class="text-sm text-gray-600 mb-2">Change your login password</p>
-            <input type="password" id="newPw" class="swal2-input" placeholder="New password" minlength="4">
-            <input type="password" id="confirmPw" class="swal2-input" placeholder="Confirm" minlength="4">
-        `,
-        showCancelButton: true,
-        confirmButtonText: 'Update Password',
-        cancelButtonText: 'Cancel',
-        confirmButtonColor: '#4f46e5',
-        cancelButtonColor: '#64748b',
-        preConfirm: () => {
-            const n = document.getElementById('newPw').value;
-            const c = document.getElementById('confirmPw').value;
-            if (!n || n.length < 4) { Swal.showValidationMessage('Min 4 chars'); return false; }
-            if (n !== c) { Swal.showValidationMessage('No match'); return false; }
-            return n;
-        }
-    }).then(async (r) => {
-        if (r.isConfirmed) {
-            try {
-                await db.ref('users/' + currentUser.username + '/password').set(r.value);
-                currentUser.password = r.value;
-                localStorage.setItem('flipkart_agent_user', JSON.stringify(currentUser));
-                showToast('✅ Password updated', 'success');
-            } catch (e) { showToast('Error', 'error'); }
-        }
-    });
-}
-
-// === SECTION 9: ATTENDANCE & SALARY SYSTEM ===
-async function checkAttendanceAndBlock() {
-    if (!currentUser) return;
-    if (currentUser.role === 'admin') return;
-    const today = getLocalDate();
-    const dateEl = document.getElementById('attendanceDateDisplay');
-    if (dateEl) dateEl.textContent = today;
-    try {
-        const userSnap = await db.ref('users/' + currentUser.username).once('value');
-        const userData = userSnap.val() || {};
-        if (userData.is_blocked === true && userData.blocked_date !== today) {
-            await db.ref('users/' + currentUser.username).update({ is_blocked: false, blocked_date: null });
-            const overlay = document.getElementById('blockedOverlay');
-            if (overlay) overlay.style.display = 'none';
-        }
-        const freshSnap = await db.ref('users/' + currentUser.username + '/is_blocked').once('value');
-        if (freshSnap.val() === true) {
-            const overlay = document.getElementById('blockedOverlay');
-            if (overlay) overlay.style.display = 'flex';
-            updateAttendanceUI('blocked');
-            return;
-        }
-        const attSnap = await db.ref('attendance/' + currentUser.username + '/' + today).once('value');
-        const att = attSnap.val();
-        if (att && att.status === 'present') {
-            updateAttendanceUI('present');
-            loadAttendanceHistory();
-            loadAgentSalarySummary();
-            return;
-        }
-        if (att && att.status === 'absent' && att.blocked) {
-            const overlay = document.getElementById('blockedOverlay');
-            if (overlay) overlay.style.display = 'flex';
-            updateAttendanceUI('blocked');
-            loadAttendanceHistory();
-            return;
-        }
-        updateAttendanceUI('unmarked');
-        loadAttendanceHistory();
-        loadAgentSalarySummary();
-        showAttendanceOtpGate();
-    } catch (e) { console.error('Error checking attendance:', e); }
-}
-
-function updateAttendanceUI(status) {
-    const badge = document.getElementById('currentStatusBadge');
-    const actionGrid = document.getElementById('attendanceActionGrid');
-    const lockNotice = document.getElementById('attendanceLockNotice');
-    const overlay = document.getElementById('blockedOverlay');
-    if (!badge) return;
-    if (status === 'present') {
-        badge.className = 'px-3 py-1 text-xs font-semibold rounded-full bg-emerald-100 text-emerald-800';
-        badge.textContent = '✅ Present';
-        if (actionGrid) actionGrid.style.display = 'none';
-        if (lockNotice) { lockNotice.classList.remove('hidden'); lockNotice.textContent = '✅ Attendance recorded as Present for today.'; }
-        if (overlay) overlay.style.display = 'none';
-    } else if (status === 'blocked' || status === 'absent') {
-        badge.className = 'px-3 py-1 text-xs font-semibold rounded-full bg-rose-100 text-rose-800';
-        badge.textContent = '❌ Blocked / Absent';
-        if (actionGrid) actionGrid.style.display = 'none';
-        if (lockNotice) { lockNotice.classList.remove('hidden'); lockNotice.textContent = '🔒 You are marked Absent/Blocked for today. Contact admin to unblock.'; }
+    if (!recent.length) {
+      setHTML('recentList', `<div class="empty-state"><i data-lucide="inbox"></i><p class="text-sm font-medium">No activity yet</p></div>`);
     } else {
-        badge.className = 'px-3 py-1 text-xs font-semibold rounded-full bg-amber-100 text-amber-800';
-        badge.textContent = '⚠️ Not Marked';
-        if (actionGrid) actionGrid.style.display = 'grid';
-        if (lockNotice) lockNotice.classList.add('hidden');
-        if (overlay) overlay.style.display = 'none';
-    }
-}
+      let html = '';
 
-async function openAttendanceOtpModal() {
-    const today = getLocalDate();
-    const attSnap = await db.ref('attendance/' + currentUser.username + '/' + today).once('value');
-    if (attSnap.exists() && attSnap.val().status) {
-        Swal.fire({ icon: 'info', title: 'Already Marked', text: 'Attendance is already recorded for today.' });
-        return;
-    }
-    const { value: otp, isConfirmed } = await Swal.fire({
-        title: '🔐 Verify OTP',
-        text: 'Enter the 6-digit OTP shared by Admin for today:',
-        input: 'text', inputPlaceholder: '6-digit OTP',
-        inputAttributes: { maxlength: 6, inputmode: 'numeric' },
-        showCancelButton: true, confirmButtonText: 'Verify & Mark Present',
-        cancelButtonText: 'Cancel', confirmButtonColor: '#059669', cancelButtonColor: '#64748b'
-    });
-    if (!isConfirmed || !otp) return;
-    try {
-        await markAttendanceWithOtp(otp);
-        showToast('✅ Attendance marked Present!', 'success');
-        updateAttendanceUI('present');
-        loadAttendanceHistory();
-        loadAgentSalarySummary();
-    } catch (e) {
-        if (e.message === 'INVALID_OTP') {
-            Swal.fire({ icon: 'error', title: 'Invalid OTP', text: 'Please enter a valid 6-digit OTP.' });
-        } else if (e.message === 'INCORRECT_OTP') {
-            Swal.fire({ icon: 'error', title: 'Incorrect OTP', text: "The OTP entered is incorrect. Ask Admin for today's OTP." });
-        } else if (e.message === 'OTP_USED') {
-            Swal.fire({ icon: 'error', title: 'OTP Already Used', text: 'This OTP has already been used.' });
-        } else if (e.message === 'OTP_EXPIRED_DATE') {
-            Swal.fire({ icon: 'error', title: 'OTP Expired', text: 'This OTP is not valid for today. Ask Admin for today\'s OTP.' });
-        } else if (e.message === 'OTP_EXPIRED') {
-            Swal.fire({ icon: 'error', title: 'OTP Expired', text: 'This OTP has expired. Ask Admin for a new OTP.' });
-        } else {
-            console.error('Error verifying attendance OTP:', e);
-            showToast('Verification failed. Check network.', 'error');
-        }
-    }
-}
-
-async function markAttendanceWithOtp(otp) {
-    const trimmedOtp = String(otp || '').trim();
-    if (!/^\d{6}$/.test(trimmedOtp)) throw new Error('INVALID_OTP');
-
-    const today = getLocalDate();
-    let otpData = null;
-    const dailySnap = await db.ref('daily_otp/' + today + '/' + currentUser.username).once('value');
-    if (dailySnap.exists()) otpData = dailySnap.val();
-    else {
-        const agentOtpSnap = await db.ref('otp/' + currentUser.username).once('value');
-        if (agentOtpSnap.exists()) otpData = agentOtpSnap.val();
-    }
-    if (!otpData || String(otpData.otp).trim() !== trimmedOtp) throw new Error('INCORRECT_OTP');
-    if (otpData.used === true) throw new Error('OTP_USED');
-
-    const otpDate = String(otpData.valid_date || otpData.date || '').trim();
-    if (otpDate && otpDate !== today) throw new Error('OTP_EXPIRED_DATE');
-
-    const expiryRaw = otpData.expires_at ?? otpData.expiresAt;
-    if (expiryRaw !== undefined && expiryRaw !== null) {
-        const expiryMs = typeof expiryRaw === 'number' ? expiryRaw : new Date(expiryRaw).getTime();
-        if (Number.isFinite(expiryMs) && Date.now() > expiryMs) {
-            throw new Error('OTP_EXPIRED');
-        }
-    }
-
-    await db.ref('attendance/' + currentUser.username + '/' + today).set({
-        status: 'present', timestamp: Date.now(), otp_used: trimmedOtp,
-        blocked: false, salary_counted: true, marked_by: 'agent_otp'
-    });
-    if (dailySnap.exists()) await db.ref('daily_otp/' + today + '/' + currentUser.username + '/used').set(true);
-    else await db.ref('otp/' + currentUser.username + '/used').set(true);
-}
-
-function showAttendanceOtpGate() {
-    if (!currentUser || currentUser.role === 'admin' || attendanceGateOpen) return;
-
-    const today = getLocalDate();
-    const attendanceRef = db.ref('attendance/' + currentUser.username + '/' + today);
-    let attendanceMarkedPresent = false;
-    const onAttendanceChange = snapshot => {
-        const attendance = snapshot.val();
-        if (!attendance || attendance.status !== 'present') return;
-        attendanceMarkedPresent = true;
-        updateAttendanceUI('present');
-        Swal.close();
-    };
-    const onAttendanceError = error => {
-        console.error('Attendance gate listener failed:', error);
-        showToast('Could not check attendance. Check your connection.', 'error');
-    };
-
-    attendanceGateOpen = true;
-    attendanceRef.on('value', onAttendanceChange, onAttendanceError);
-
-    Swal.fire({
-        title: '🔐 Verify Attendance OTP',
-        text: 'Enter today’s 6-digit OTP, or wait for Admin to mark you Present.',
-        input: 'text',
-        inputPlaceholder: '6-digit OTP',
-        inputAttributes: { maxlength: 6, inputmode: 'numeric', autocomplete: 'one-time-code' },
-        confirmButtonText: '✅ Verify Present (OTP)',
-        denyButtonText: '❌ Mark Absent',
-        showDenyButton: true,
-        showCancelButton: false,
-        confirmButtonColor: '#059669',
-        denyButtonColor: '#dc2626',
-        allowOutsideClick: false,
-        allowEscapeKey: false,
-        allowEnterKey: true,
-        preConfirm: async otp => {
-            try {
-                await markAttendanceWithOtp(otp);
-                return true;
-            } catch (e) {
-                const messages = {
-                    INVALID_OTP: 'Please enter a valid 6-digit OTP.',
-                    INCORRECT_OTP: "Incorrect OTP. Ask Admin for today's OTP.",
-                    OTP_USED: 'This OTP has already been used.',
-                    OTP_EXPIRED_DATE: 'This OTP is not valid for today. Ask Admin for today\'s OTP.',
-                    OTP_EXPIRED: 'This OTP has expired. Ask Admin for a new OTP.'
-                };
-                if (!messages[e.message]) {
-                    console.error('Attendance OTP verification failed:', e);
-                    Swal.showValidationMessage('Verification failed. Check your connection and try again.');
-                    return false;
-                }
-                Swal.showValidationMessage(messages[e.message]);
-                return false;
-            }
-        }
-    }).then(result => {
-        attendanceRef.off('value', onAttendanceChange);
-        attendanceGateOpen = false;
-        if (attendanceMarkedPresent || result.isConfirmed) {
-            updateAttendanceUI('present');
-            loadAttendanceHistory();
-            loadAgentSalarySummary();
-            return;
-        }
-        if (result.isDenied) {
-            handleMarkAbsent();
-            return;
-        }
-        if (currentUser) showAttendanceOtpGate();
-    });
-}
-
-async function handleMarkAbsent() {
-    const { value: reason, isConfirmed } = await Swal.fire({
-        title: 'Mark as Absent?',
-        text: 'You will be locked for the day. Salary for today will not be counted unless admin unblocks.',
-        input: 'text', inputPlaceholder: 'Reason for absence...',
-        showCancelButton: true, confirmButtonText: 'Yes, Mark Absent',
-        cancelButtonText: 'Cancel', confirmButtonColor: '#dc2626', cancelButtonColor: '#64748b'
-    });
-    if (!isConfirmed) return;
-    const today = getLocalDate();
-    try {
-        await db.ref('attendance/' + currentUser.username + '/' + today).set({
-            status: 'absent', reason: reason || 'Not specified', timestamp: Date.now(),
-            blocked: true, salary_counted: false, marked_by: 'agent_self'
-        });
-        await db.ref('users/' + currentUser.username).update({ is_blocked: true, blocked_date: today });
-        showToast('🔒 Marked as Absent. Account locked for today.', 'info');
-        updateAttendanceUI('blocked');
-        const overlay = document.getElementById('blockedOverlay');
-        if (overlay) overlay.style.display = 'flex';
-        loadAttendanceHistory();
-    } catch (e) {
-        console.error(e);
-        showToast('Failed to mark absent.', 'error');
-    }
-}
-
-async function loadAttendanceHistory() {
-    const container = document.getElementById('attendanceHistoryList');
-    if (!container || !currentUser) return;
-    try {
-        const snap = await db.ref('attendance/' + currentUser.username).limitToLast(7).once('value');
-        const data = snap.val() || {};
-        const dates = Object.keys(data).sort().reverse();
-        if (dates.length === 0) {
-            container.innerHTML = '<div class="text-gray-400 text-center py-2">No recent records found.</div>';
-            return;
-        }
-        let html = '';
-        dates.forEach(d => {
-            const item = data[d];
-            const isPres = item.status === 'present';
-            const isHalf = item.half_day === true;
-            const badgeClass = isHalf ? 'bg-amber-100 text-amber-800' : (isPres ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800');
-            const label = isHalf ? 'Half Day' : (isPres ? 'Present' : 'Absent');
-            html += `<div class="flex items-center justify-between p-2 rounded-lg bg-gray-50 border border-gray-100">
-                <span class="font-medium text-gray-700">${d}</span>
-                <span class="px-2 py-0.5 rounded text-[11px] font-semibold ${badgeClass}">${label}</span>
-            </div>`;
-        });
-        container.innerHTML = html;
-    } catch (e) {
-        container.innerHTML = '<div class="text-gray-400 text-center py-2">Failed to load history.</div>';
-    }
-}
-
-async function loadAgentSalarySummary() {
-    const approvedContent = document.getElementById('salaryApprovedContent');
-    const pendingNotice = document.getElementById('salaryPendingNotice');
-    const badge = document.getElementById('salaryStatusBadge');
-    if (!currentUser || !approvedContent) return;
-    const today = new Date();
-    const curMonth = today.getFullYear() + '-' + String(today.getMonth() + 1).padStart(2, '0');
-    try {
-        const snap = await db.ref('salaries/' + curMonth + '/' + currentUser.username).once('value');
-        const sal = snap.val();
-        if (sal && (sal.approved === true || sal.status === 'approved' || sal.visible_to_agent === true)) {
-            if (badge) {
-                badge.className = 'text-[11px] px-2.5 py-0.5 rounded-full font-semibold bg-emerald-100 text-emerald-800';
-                badge.textContent = 'Approved by Admin';
-            }
-            approvedContent.style.display = 'block';
-            if (pendingNotice) pendingNotice.style.display = 'none';
-            const base = sal.base_salary || sal.total_salary || 0;
-            const ded = sal.deductions || sal.cut || 0;
-            const net = sal.net_salary || sal.final_payable || (base - ded);
-            const elTotal = document.getElementById('agentTotalSalary');
-            const elDed = document.getElementById('agentDeductions');
-            const elNet = document.getElementById('agentFinalSalary');
-            if (elTotal) elTotal.textContent = '₹' + Number(base).toLocaleString('en-IN');
-            if (elDed) elDed.textContent = '-₹' + Number(ded).toLocaleString('en-IN');
-            if (elNet) elNet.textContent = '₹' + Number(net).toLocaleString('en-IN');
-        } else {
-            if (badge) {
-                badge.className = 'text-[11px] px-2.5 py-0.5 rounded-full font-semibold bg-gray-100 text-gray-600';
-                badge.textContent = 'Pending Admin Approval';
-            }
-            approvedContent.style.display = 'none';
-            if (pendingNotice) pendingNotice.style.display = 'block';
-        }
-    } catch (e) { console.error('Error fetching agent salary:', e); }
-}
-
-// === SECTION 10: TAB SWITCHING ===
-function switchTab(tab) {
-    document.querySelectorAll('#mainTabBar button').forEach(btn => {
-        btn.classList.toggle('active', btn.dataset.tab === tab);
-    });
-    document.querySelectorAll('.tab-content').forEach(el => el.style.display = 'none');
-    document.getElementById('tab-' + tab).style.display = 'block';
-    if (tab === 'pending') loadPendingOrders();
-    if (tab === 'attendance') { loadAttendanceHistory(); updateAttendanceUI(); }
-}
-
-// === SECTION 11: OFFLINE DETECTION ===
-function setupOfflineDetection() {
-    const updateStatus = () => {
-        const isOnline = navigator.onLine;
-        document.getElementById('offlineBanner').classList.toggle('hidden', isOnline);
-        const statusEl = document.getElementById('connectionStatus');
-        if (isOnline) {
-            statusEl.className = 'flex items-center gap-1 px-2 py-1 bg-green-50 rounded-full';
-            statusEl.innerHTML = '<div class="w-1.5 h-1.5 bg-green-500 rounded-full pulse-ring"></div><span class="text-[10px] font-medium text-green-700 hidden sm:inline">Online</span>';
-        } else {
-            statusEl.className = 'flex items-center gap-1 px-2 py-1 bg-red-50 rounded-full';
-            statusEl.innerHTML = '<div class="w-1.5 h-1.5 bg-red-500 rounded-full"></div><span class="text-[10px] font-medium text-red-700 hidden sm:inline">Offline</span>';
-        }
-    };
-    window.addEventListener('online', updateStatus);
-    window.addEventListener('offline', updateStatus);
-    updateStatus();
-}
-
-// === SECTION 12: TODAY'S STATS ===
-async function loadTodayStats() {
-    if (!currentUser) return;
-    try {
-        const today = new Date().toDateString();
-        const snapshot = await db.ref('pickups').orderByChild('agent').equalTo(currentUser.username).once('value');
-        const data = snapshot.val() || {};
-        let pickup = 0, reject = 0, reschedule = 0;
-        Object.values(data).forEach(item => {
-            if (new Date(item.timestamp).toDateString() === today) {
-                if (item.status === 'pickup') pickup++;
-                else if (item.status === 'rejected') reject++;
-                else if (item.status === 'reschedule') reschedule++;
-            }
-        });
-        document.getElementById('statPickup').textContent = pickup;
-        document.getElementById('statReject').textContent = reject;
-        document.getElementById('statReschedule').textContent = reschedule;
-    } catch (e) { console.log(e); }
-}
-
-// === SECTION 13: PENDING ORDERS ===
-async function loadPendingOrders() {
-    if (!currentUser) return;
-    try {
-        const snapshot = await db.ref('pending').orderByChild('agent').equalTo(currentUser.username).once('value');
-        const data = snapshot.val() || {};
-        allPendingOrders = [];
-        for (const [orderId, item] of Object.entries(data || {})) {
-            allPendingOrders.push({ orderId, ...item });
-        }
-        allPendingOrders.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
-        renderPendingList();
-        updatePendingCounts();
-    } catch (e) {
-        console.log(e);
-        document.getElementById('pendingList').innerHTML = '<div class="pending-empty"><i data-lucide="alert-circle"></i><p class="text-sm font-medium text-red-500">Error loading</p></div>';
-        lucide.createIcons();
-    }
-}
-
-function updatePendingCounts() {
-    const count = allPendingOrders.length;
-    document.getElementById('pendingCountBadge').textContent = count;
-    document.getElementById('pendingCountBadgeMain').textContent = count;
-    document.getElementById('pendingCountBadge').style.display = count > 0 ? 'inline-block' : 'none';
-    document.getElementById('pendingCountBadgeMain').style.display = count > 0 ? 'inline-block' : 'none';
-}
-
-function setPendingFilter(filter) {
-    pendingFilter = filter;
-    document.querySelectorAll('#pendingTabBar button').forEach(btn => {
-        btn.classList.toggle('active', btn.dataset.filter === filter);
-    });
-    renderPendingList();
-}
-
-function renderPendingList() {
-    const container = document.getElementById('pendingList');
-    let filtered = [...allPendingOrders];
-    if (pendingFilter === 'onway') {
-        filtered = filtered.filter(item => item.reason && item.reason.toLowerCase().includes('on the way'));
-    }
-    if (filtered.length === 0) {
-        const msg = pendingFilter === 'onway' ? 'No "On the way" orders' : 'No pending orders';
-        container.innerHTML = `
-            <div class="pending-empty">
-                <i data-lucide="inbox"></i>
-                <p class="text-sm font-medium">${msg}</p>
-                <p class="text-xs text-gray-400 mt-1">Orders you reschedule will appear here</p>
-            </div>`;
-        lucide.createIcons();
-        return;
-    }
-    let html = '';
-    filtered.forEach(item => {
-        const isOnWay = item.reason && item.reason.toLowerCase().includes('on the way');
-        const badge = isOnWay ? '<span class="badge-onway">🚗 On the way</span>' : '<span class="badge-pending">⏳ Pending</span>';
-        const time = item.timestampIST || item.timestamp || '';
-        const reason = item.reason || '—';
-        const model = item.phoneModel || '—';
+      recent.forEach(([id, item]) => {
         html += `
-            <div class="pending-item glass rounded-xl p-4 mb-3 shadow">
-                <div class="flex items-start justify-between">
-                    <div class="flex-1 min-w-0">
-                        <div class="flex items-center gap-2 flex-wrap">
-                            <span class="font-mono font-bold text-gray-800 text-sm">${item.orderId}</span>
-                            ${badge}
-                            <span class="text-xs text-gray-400">(${model})</span>
-                        </div>
-                        <p class="text-xs text-gray-500 mt-1"><i data-lucide="message-circle" class="w-3 h-3 inline"></i> ${reason}</p>
-                        <p class="text-xs text-gray-400 mt-0.5"><i data-lucide="clock" class="w-3 h-3 inline"></i> ${time}</p>
-                    </div>
-                    <button onclick="markPendingDone('${item.orderId}')" class="done-btn flex-shrink-0 ml-3">
-                        <i data-lucide="check-circle"></i> Done
-                    </button>
-                </div>
-            </div>`;
-    });
-    container.innerHTML = html;
-    lucide.createIcons();
-}
-
-function markPendingDone(orderId) {
-    pendingDoneOrderId = orderId;
-    document.getElementById('orderId').value = orderId;
-    switchTab('pickup');
-    showForm('pickup');
-    showToast(`📦 Pending order ${orderId} — fill pickup details`, 'info');
-}
-
-// === SECTION 14: PASTE ORDER ID ===
-async function pasteOrderId() {
-    try {
-        const text = await navigator.clipboard.readText();
-        document.getElementById('orderId').value = text.trim().toUpperCase();
-        showToast('Pasted!', 'success');
-    } catch (e) {
-        showToast('Cannot access clipboard', 'error');
-    }
-}
-
-// === SECTION 15: SHOW FORM ===
-let backNavigationReady = false;
-
-function setupBackNavigation() {
-    if (backNavigationReady) return;
-    backNavigationReady = true;
-    history.replaceState({ view: 'order' }, '', window.location.href);
-    window.addEventListener('popstate', () => {
-        const scannerModal = document.getElementById('scannerModal');
-        if (scannerModal && !scannerModal.classList.contains('hidden')) {
-            stopScanner(); return;
-        }
-        const stepForm = document.getElementById('step-form');
-        if (stepForm && !stepForm.classList.contains('hidden')) goBack();
-    });
-}
-
-function goBack() {
-    const stepOrder = document.getElementById('step-order');
-    const stepForm = document.getElementById('step-form');
-    if (stepForm && !stepForm.classList.contains('hidden')) {
-        stepForm.classList.add('hidden');
-        stepOrder.classList.remove('hidden');
-        currentStatus = ''; selectedReason = ''; hiddenImei2 = '';
-        const orderInput = document.getElementById('orderId');
-        if (orderInput) orderInput.focus();
-        if (typeof lucide !== 'undefined') lucide.createIcons();
-        history.replaceState({ view: 'order' }, '', window.location.href);
-        return true;
-    }
-    return false;
-}
-
-function showForm(status) {
-    clearPickupImageState();
-    resetSpecSelection();
-    let orderId = document.getElementById('orderId').value.trim().toUpperCase();
-    if (!orderId && pendingDoneOrderId) {
-        orderId = pendingDoneOrderId;
-        document.getElementById('orderId').value = orderId;
-    }
-    if (!orderId) {
-        Swal.fire({ icon: 'warning', title: 'Order ID Missing', text: 'Please enter the Order ID first', confirmButtonColor: '#3b82f6' });
-        document.getElementById('orderId').focus();
-        return;
-    }
-    pendingDoneOrderId = null;
-    currentStatus = status; selectedReason = ''; hiddenImei2 = '';
-    document.getElementById('step-order').classList.add('hidden');
-    document.getElementById('step-form').classList.remove('hidden');
-    document.getElementById('displayOrderId').textContent = orderId;
-    history.pushState({ view: 'form', status }, '', window.location.href);
-
-    const formFields = document.getElementById('formFields');
-    const formTitle = document.getElementById('formTitle');
-    const formSubtitle = document.getElementById('formSubtitle');
-    const formIcon = document.getElementById('formIcon');
-    const submitBtn = document.getElementById('submitBtn');
-    formFields.innerHTML = '';
-
-    if (status === 'pickup') {
-        formTitle.innerText = "Pickup Details";
-        formSubtitle.innerText = "Fill device information";
-        formIcon.className = "w-12 h-12 rounded-xl flex items-center justify-center bg-gradient-to-br from-green-500 to-emerald-600";
-        formIcon.innerHTML = '<i data-lucide="check-circle-2" class="w-7 h-7 text-white"></i>';
-        submitBtn.className = 'btn-bounce w-full bg-gradient-to-r from-green-500 to-emerald-600 text-white p-4 rounded-2xl font-bold text-lg shadow-xl flex items-center justify-center gap-2';
-        formFields.innerHTML = `
-            <div>
-                <label class="text-xs font-bold text-gray-500 mb-1.5 block">PHONE MODEL *</label>
-                <input type="text" id="phoneModel" placeholder="e.g., iPhone 12, Samsung S21" class="input-field w-full p-3.5 rounded-xl outline-none">
+          <div class="flex items-center justify-between py-2.5 px-3 rounded-xl hover:bg-gray-50 transition cursor-pointer" onclick="viewOrder('${id}')">
+            <div class="flex items-center gap-3 min-w-0">
+              <span class="badge-status ${getStatusClass(item)}">${getStatusDisplay(item)}</span>
+              <span class="font-mono font-bold text-gray-700 text-sm truncate">${id}</span>
+              <span class="text-xs text-gray-400 hidden sm:inline">${item.phoneModel || '—'}</span>
+              <span class="text-xs text-gray-400 hidden md:inline">(${item.agent || '—'})</span>
             </div>
-            <div>
-                <label class="text-xs font-bold text-gray-500 mb-1.5 block">IMEI NUMBER *</label>
-                <div class="relative">
-                    <input type="text" id="imei" placeholder="15-digit IMEI" class="input-field w-full p-3.5 rounded-xl outline-none pr-28 font-mono" inputmode="numeric" maxlength="15">
-                    <button onclick="startScanner()" class="btn-scan-imei absolute right-1.5 top-1/2 -translate-y-1/2">
-                        <i data-lucide="scan-line"></i> Scan
-                    </button>
-                </div>
-                <p class="text-xs text-gray-400 mt-1.5 flex items-center gap-1">
-                    <span>📱</span>
-                    <span>Barcode scan karo ya <strong>*#06#</strong> screen — Capture dabao, fatafat ho jaega!</span>
-                </p>
-            </div>
-            <div>
-                <label class="text-xs font-bold text-gray-500 mb-1.5 block">AGREED VALUE (₹) *</label>
-                <div class="relative">
-                    <span class="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-500 font-bold">₹</span>
-                    <input type="number" id="value" placeholder="0" class="input-field w-full p-3.5 pl-8 rounded-xl outline-none font-bold text-lg" inputmode="numeric">
-                </div>
-            </div>
-            <div>
-                <label class="text-xs font-bold text-gray-500 mb-1.5 block">CUSTOMER NAME <span class="text-gray-400">(Optional)</span></label>
-                <input type="text" id="custName" placeholder="Enter name" class="input-field w-full p-3.5 rounded-xl outline-none">
-            </div>
-
-            <div class="pt-2 border-t border-gray-100">
-                <p class="text-xs font-bold text-gray-500 mb-3 tracking-wide">⚙️ DEVICE SPECS <span class="text-red-500 font-bold">(Required)</span></p>
-
-                <div class="spec-group">
-                    <div class="spec-label"><span class="t">RAM *</span><span class="picked empty" id="ramPick">Not selected</span></div>
-                    <div class="chip-grid">${buildSpecChips('ram', RAM_OPTIONS)}</div>
-                </div>
-
-                <div class="spec-group mt-4">
-                    <div class="spec-label"><span class="t">STORAGE (ROM) *</span><span class="picked empty" id="storagePick">Not selected</span></div>
-                    <div class="chip-grid">${buildSpecChips('storage', STORAGE_OPTIONS)}</div>
-                </div>
-
-                <div class="spec-group mt-4">
-                    <div class="spec-label"><span class="t">NETWORK *</span><span class="picked empty" id="networkPick">Not selected</span></div>
-                    <div class="chip-grid cols-5">${buildSpecChips('network', NETWORK_OPTIONS, 'net')}</div>
-                </div>
-
-                <div class="spec-summary" id="specSummary"></div>
-                <input type="hidden" id="ramStorage" value="">
-                <input type="hidden" id="networkType" value="">
-            </div>
-
-            <div class="pt-2 border-t border-gray-100">
-                <p class="text-xs font-bold text-gray-500 mb-2 tracking-wide">📄 DOCUMENTS <span class="text-gray-400 font-medium">(All Optional)</span></p>
-
-                <div class="mb-3">
-                    <label class="text-xs font-semibold text-gray-500 mb-1 block">Bill Number</label>
-                    <input type="text" id="billNumber" placeholder="Bill / Invoice no." class="input-field w-full p-3 rounded-xl outline-none">
-                </div>
-                <div class="mb-4">
-                    <label class="text-xs font-semibold text-gray-500 mb-1 block">Bill Images <span class="text-gray-400 font-normal">(up to 3)</span></label>
-                    <div class="grid grid-cols-2 gap-2">
-                        <label for="billImageCam" class="btn-bounce cursor-pointer flex items-center justify-center gap-2 p-3 rounded-xl border-2 border-dashed border-blue-300 bg-blue-50 text-blue-700 font-semibold text-sm">
-                            <i data-lucide="camera" class="w-4 h-4"></i> Camera
-                        </label>
-                        <label for="billImageGal" class="btn-bounce cursor-pointer flex items-center justify-center gap-2 p-3 rounded-xl border-2 border-dashed border-blue-300 bg-blue-50 text-blue-700 font-semibold text-sm">
-                            <i data-lucide="image" class="w-4 h-4"></i> Gallery
-                        </label>
-                    </div>
-                    <input id="billImageCam" type="file" accept="image/*" capture="environment" class="hidden" onchange="handlePickupImagePick(this,'bill')">
-                    <input id="billImageGal" type="file" accept="image/*" multiple class="hidden" onchange="handlePickupImagePick(this,'bill')">
-                    <div id="billImgPreview" class="mt-2"></div>
-                    <div id="billImgInfo" class="text-[11px] text-gray-500 mt-1">3 images max · 3 slots free</div>
-                </div>
-
-                <div class="mb-3">
-                    <label class="text-xs font-semibold text-gray-500 mb-1 block">Aadhaar Number</label>
-                    <input type="text" id="aadhaarNumber" placeholder="12-digit Aadhaar" inputmode="numeric" maxlength="14" class="input-field w-full p-3 rounded-xl outline-none font-mono">
-                </div>
-                <div>
-                    <label class="text-xs font-semibold text-gray-500 mb-1 block">Aadhaar Images <span class="text-gray-400 font-normal">(up to 3)</span></label>
-                    <div class="grid grid-cols-2 gap-2">
-                        <label for="aadhaarImageCam" class="btn-bounce cursor-pointer flex items-center justify-center gap-2 p-3 rounded-xl border-2 border-dashed border-indigo-300 bg-indigo-50 text-indigo-700 font-semibold text-sm">
-                            <i data-lucide="camera" class="w-4 h-4"></i> Camera
-                        </label>
-                        <label for="aadhaarImageGal" class="btn-bounce cursor-pointer flex items-center justify-center gap-2 p-3 rounded-xl border-2 border-dashed border-indigo-300 bg-indigo-50 text-indigo-700 font-semibold text-sm">
-                            <i data-lucide="image" class="w-4 h-4"></i> Gallery
-                        </label>
-                    </div>
-                    <input id="aadhaarImageCam" type="file" accept="image/*" capture="environment" class="hidden" onchange="handlePickupImagePick(this,'aadhaar')">
-                    <input id="aadhaarImageGal" type="file" accept="image/*" multiple class="hidden" onchange="handlePickupImagePick(this,'aadhaar')">
-                    <div id="aadhaarImgPreview" class="mt-2"></div>
-                    <div id="aadhaarImgInfo" class="text-[11px] text-gray-500 mt-1">3 images max · 3 slots free</div>
-                </div>
-            </div>
+            <span class="text-[10px] text-gray-400 flex-shrink-0">${item.timestampIST || item.timestamp || ''}</span>
+          </div>
         `;
+      });
+
+      setHTML('recentList', html);
+    }
+
+    refreshIcons();
+  } catch (e) {
+    console.error('Dashboard error:', e);
+    showToast('Error loading dashboard', 'error');
+  }
+}
+
+// ================================================================
+// ORDERS
+// ================================================================
+async function loadOrders(force = false) {
+  try {
+    const data = await getData('pickups', force);
+
+    allOrders = Object.entries(data).map(([id, item]) => ({
+      id,
+      ...item,
+      billImages: undefined,
+      billImage: undefined,
+      aadhaarImages: undefined,
+      aadhaarImage: undefined
+    }));
+
+    allOrders.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+    ordersById = new Map(allOrders.map(o => [o.id, o]));
+
+    applyOrderFilter(currentOrderFilter);
+    setupLiveSearch('orderSearch', 'orderSearchDropdown', allOrders, ['orderId', 'phoneModel', 'imei', 'customerName', 'agent', 'color']);
+  } catch (e) {
+    console.error('Orders error:', e);
+    showToast('Error loading orders', 'error');
+  }
+}
+
+function applyOrderFilter(filter) {
+  currentOrderFilter = filter;
+
+  document.querySelectorAll('.filter-chip').forEach(el => {
+    el.classList.toggle('active', el.dataset.filter === filter);
+  });
+
+  let filtered = [...allOrders];
+
+  if (filter !== 'all') {
+    filtered = filtered.filter(item => item.status === filter);
+  }
+
+  const query = getVal('orderSearch').trim();
+
+  if (query && window.Fuse) {
+    const fuse = new Fuse(filtered, {
+      keys: ['orderId', 'phoneModel', 'imei', 'customerName', 'agent', 'color'],
+      threshold: 0.3,
+      includeScore: true,
+      ignoreLocation: true
+    });
+    filtered = fuse.search(query).map(r => r.item);
+  }
+
+  const dateFrom = getVal('orderDateFrom');
+  const dateTo = getVal('orderDateTo');
+
+  if (dateFrom) {
+    filtered = filtered.filter(item => {
+      if (!item.timestamp) return false;
+      return getLocalYMD(new Date(item.timestamp)) >= dateFrom;
+    });
+  }
+
+  if (dateTo) {
+    filtered = filtered.filter(item => {
+      if (!item.timestamp) return false;
+      return getLocalYMD(new Date(item.timestamp)) <= dateTo;
+    });
+  }
+
+  const agentFilter = getVal('orderAgentFilter');
+  if (agentFilter !== 'all') {
+    filtered = filtered.filter(item => (item.agent || '') === agentFilter);
+  }
+
+  filteredOrders = filtered;
+  currentPage = 1;
+  renderOrdersTable();
+}
+
+function applyOrderAgentFilter() {
+  applyOrderFilter(currentOrderFilter);
+}
+
+function clearOrderAgentFilter() {
+  setVal('orderAgentFilter', 'all');
+  applyOrderFilter(currentOrderFilter);
+}
+
+async function loadAgentsForFilter(force = false) {
+  try {
+    const data = await getData('users', force);
+    const select = $('orderAgentFilter');
+    if (!select) return;
+
+    const currentVal = select.value;
+    select.innerHTML = '<option value="all">All Agents</option>';
+
+    Object.keys(data).forEach(username => {
+      const option = document.createElement('option');
+      option.value = username;
+      option.textContent = username;
+      select.appendChild(option);
+    });
+
+    if (currentVal && select.querySelector(`option[value="${currentVal}"]`)) {
+      select.value = currentVal;
+    }
+  } catch (e) {
+    console.error(e);
+  }
+}
+
+function applyOrderDateFilter() {
+  applyOrderFilter(currentOrderFilter);
+}
+
+function clearOrderDateFilter() {
+  setVal('orderDateFrom', '');
+  setVal('orderDateTo', '');
+  applyOrderFilter(currentOrderFilter);
+  showToast('Date filters cleared', 'info');
+}
+
+function setOrderFilter(filter) {
+  applyOrderFilter(filter);
+}
+
+function applyOrderSearch() {
+  applyOrderFilter(currentOrderFilter);
+}
+
+function clearOrderSearch() {
+  setVal('orderSearch', '');
+  applyOrderFilter(currentOrderFilter);
+}
+
+function renderOrdersTable() {
+  const tbody = $('ordersTableBody');
+  if (!tbody) return;
+
+  const total = filteredOrders.length;
+  const totalPages = Math.ceil(total / pageSize) || 1;
+  if (currentPage > totalPages) currentPage = totalPages;
+
+  const start = (currentPage - 1) * pageSize;
+  const end = Math.min(start + pageSize, total);
+  const pageItems = filteredOrders.slice(start, end);
+
+  setText('orderCountDisplay', total + ' orders');
+  setText('orderPageInfo', `${currentPage} / ${totalPages}`);
+
+  const prevBtn = $('prevOrderPageBtn');
+  const nextBtn = $('nextOrderPageBtn');
+
+  if (prevBtn) prevBtn.disabled = currentPage <= 1;
+  if (nextBtn) nextBtn.disabled = currentPage >= totalPages;
+
+  if (!pageItems.length) {
+    tbody.innerHTML = `<tr><td colspan="9"><div class="empty-state"><i data-lucide="inbox"></i><p class="text-sm font-medium">No orders match</p></div></td></tr>`;
+    refreshIcons();
+    return;
+  }
+
+  let html = '';
+
+  pageItems.forEach((item, idx) => {
+    const num = start + idx + 1;
+
+    html += `
+      <tr class="order-row border-b border-gray-50">
+        <td class="py-3 px-4 text-gray-400 font-mono text-xs">${num}</td>
+        <td class="py-3 px-4 font-mono font-bold text-gray-800 text-sm">${item.orderId || item.id}</td>
+        <td class="py-3 px-4"><span class="badge-status ${getStatusClass(item)}">${getStatusDisplay(item)}</span></td>
+        <td class="py-3 px-4 hidden sm:table-cell text-gray-600 text-sm">${item.phoneModel || '—'}</td>
+        <td class="py-3 px-4 hidden md:table-cell font-mono text-xs text-gray-500">${item.imei || '—'}</td>
+        <td class="py-3 px-4 hidden lg:table-cell font-bold text-gray-700">${item.value !== undefined && item.value !== null ? formatINR(item.value) : '—'}</td>
+        <td class="py-3 px-4 hidden xl:table-cell text-gray-600 text-sm">${item.customerName || '—'}</td>
+        <td class="py-3 px-4 hidden sm:table-cell text-gray-500 text-sm">${item.agent || '—'}</td>
+        <td class="py-3 px-4">
+          <div class="flex items-center gap-1.5">
+            <button onclick="viewOrder('${item.id}')" class="btn-action view"><i data-lucide="eye"></i></button>
+            ${!item.sold && item.status === 'pickup' ? `<button onclick="openSellModalFromOrders('${item.id}')" class="btn-action sell"><i data-lucide="badge-dollar-sign"></i></button>` : ''}
+            <button onclick="deleteOrder('${item.id}')" class="btn-action delete"><i data-lucide="trash-2"></i></button>
+          </div>
+        </td>
+      </tr>
+    `;
+  });
+
+  tbody.innerHTML = html;
+  refreshIcons();
+}
+
+async function openSellModalFromOrders(orderId) {
+  let order = ordersById.get(orderId);
+
+  if (!order) {
+    try {
+      const snap = await db.ref('pickups/' + orderId).once('value');
+      const val = snap.val();
+      if (val) order = { id: orderId, ...val };
+    } catch (e) {
+      console.error(e);
+    }
+  }
+
+  if (!order) {
+    showToast('Order not found', 'error');
+    return;
+  }
+
+  if (order.sold) {
+    showToast('Already sold', 'error');
+    return;
+  }
+
+  if (order.status !== 'pickup') {
+    showToast('Only pickup orders can be sold', 'error');
+    return;
+  }
+
+  openSellModalWithOrder({ ...order, id: orderId });
+}
+
+function prevOrderPage() {
+  if (currentPage > 1) {
+    currentPage--;
+    renderOrdersTable();
+  }
+}
+
+function nextOrderPage() {
+  const totalPages = Math.ceil(filteredOrders.length / pageSize);
+  if (currentPage < totalPages) {
+    currentPage++;
+    renderOrdersTable();
+  }
+}
+
+function refreshOrders() {
+  loadOrders(true);
+  loadAgentsForFilter(true);
+  showToast('🔄 Orders refreshed', 'info');
+}
+
+// ================================================================
+// PENDING ADMIN
+// ================================================================
+async function loadPendingAdmin(force = false) {
+  try {
+    const data = await getData('pending', force);
+
+    const items = Object.entries(data).map(([id, item]) => ({ id, ...item }));
+    items.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+
+    const container = $('pendingListAdmin');
+
+    if (!items.length) {
+      setHTML('pendingListAdmin', `<div class="empty-state"><i data-lucide="inbox"></i><p class="text-sm font-medium">No pending orders</p></div>`);
     } else {
-        const reasons = (status === 'rejected') ? rejectReasons : rescheduleReasons;
-        const isReject = status === 'rejected';
-        formTitle.innerText = isReject ? "Rejection Reason" : "Reschedule / Pending";
-        formSubtitle.innerText = isReject ? "Select the most appropriate reason" : "Select reason — 'On the way' means you're heading there";
-        formIcon.className = `w-12 h-12 rounded-xl flex items-center justify-center bg-gradient-to-br ${isReject ? 'from-red-500 to-rose-600' : 'from-amber-500 to-orange-600'}`;
-        formIcon.innerHTML = `<i data-lucide="${isReject ? 'x-circle' : 'clock'}" class="w-7 h-7 text-white"></i>`;
-        submitBtn.className = `btn-bounce w-full bg-gradient-to-r ${isReject ? 'from-red-500 to-rose-600' : 'from-amber-500 to-orange-600'} text-white p-4 rounded-2xl font-bold text-lg shadow-xl flex items-center justify-center gap-2`;
-        let reasonsHtml = `
-            <div>
-                <label class="text-xs font-bold text-gray-500 mb-1.5 block">PHONE MODEL *</label>
-                <input type="text" id="phoneModelRejectReschedule" placeholder="e.g., iPhone 12, Samsung S21" class="input-field w-full p-3.5 rounded-xl outline-none">
+      let html = '';
+
+      items.forEach(item => {
+        const isOnWay = item.reason && item.reason.toLowerCase().includes('on the way');
+
+        html += `
+          <div class="pending-item glass rounded-xl p-4 shadow-sm border border-gray-100">
+            <div class="flex items-start justify-between">
+              <div class="flex-1 min-w-0">
+                <div class="flex items-center gap-2 flex-wrap">
+                  <span class="font-mono font-bold text-gray-800 text-sm">${item.orderId || item.id}</span>
+                  ${isOnWay ? '<span class="badge-onway">🚗 On the way</span>' : '<span class="badge-pending">⏳ Pending</span>'}
+                  <span class="text-xs text-gray-400">(Agent: ${item.agent || '—'})</span>
+                </div>
+                <p class="text-xs text-gray-500 mt-1"><i data-lucide="message-circle" class="w-3 h-3 inline"></i> ${item.reason || '—'}</p>
+                <p class="text-xs text-gray-400 mt-0.5"><i data-lucide="clock" class="w-3 h-3 inline"></i> ${item.timestampIST || item.timestamp || ''}</p>
+              </div>
+              <div class="flex items-center gap-1.5 flex-shrink-0 ml-3">
+                <button onclick="deletePending('${item.id}')" class="btn-action delete"><i data-lucide="trash-2"></i></button>
+              </div>
             </div>
-            <div class="space-y-2">
+          </div>
         `;
-        reasons.forEach(r => {
-            reasonsHtml += `
-                <button type="button" onclick="selectReason(this, '${r.text}')" data-reason="${r.text}" class="reason-btn w-full text-left p-3.5 rounded-xl flex items-center gap-3 hover:bg-gray-50">
-                    <div class="icon-wrap w-8 h-8 bg-gray-100 rounded-lg flex items-center justify-center flex-shrink-0">
-                        <i data-lucide="${r.icon}" class="w-4 h-4 text-gray-600"></i>
-                    </div>
-                    <span class="font-medium text-sm">${r.text}</span>
-                </button>
-            `;
-        });
-        reasonsHtml += '</div>';
-        reasonsHtml += '<input type="text" id="otherReason" placeholder="Type your reason here..." class="input-field w-full p-3.5 rounded-xl outline-none hidden mt-3">';
-        formFields.innerHTML = reasonsHtml;
-        setTimeout(() => {
-            const firstBtn = document.querySelector('.reason-btn');
-            if (firstBtn) selectReason(firstBtn, firstBtn.dataset.reason);
-        }, 100);
+      });
+
+      setHTML('pendingListAdmin', html);
     }
-    lucide.createIcons();
-    if (status === 'pickup') updateSpecUI();
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+
+    refreshIcons();
+    setText('pendingBadge', items.length);
+  } catch (e) {
+    console.error(e);
+    showToast('Error loading pending', 'error');
+  }
 }
 
-// === SECTION 16: SUBMIT DATA (REGULAR PICKUP — UNCHANGED) ===
-async function submitData() {
-    if (!currentUser) { showToast('Please login first', 'error'); return false; }
-    if (currentUser.role !== 'admin') {
-        const userSnap = await db.ref('users/' + currentUser.username + '/is_blocked').once('value');
-        if (userSnap.val() === true) { showToast('🔒 You are blocked for today!', 'error'); return false; }
+function refreshPending() {
+  loadPendingAdmin(true);
+  showToast('🔄 Pending refreshed', 'info');
+}
+
+async function deletePending(orderId) {
+  const result = await Swal.fire({
+    title: 'Remove from Pending?',
+    text: 'Remove from pending list?',
+    icon: 'question',
+    showCancelButton: true,
+    confirmButtonColor: '#dc2626',
+    cancelButtonColor: '#64748b',
+    confirmButtonText: 'Remove',
+    cancelButtonText: 'Cancel'
+  });
+
+  if (!result.isConfirmed) return;
+
+  try {
+    await db.ref('pending/' + orderId).remove();
+
+    invalidate('pending');
+    showToast('🗑️ Removed from pending', 'success');
+
+    loadPendingAdmin(true);
+    loadDashboard(true);
+  } catch (e) {
+    showToast('Error removing pending', 'error');
+    console.error(e);
+  }
+}
+
+// ================================================================
+// REJECTED ADMIN
+// ================================================================
+async function loadRejectedAdmin(force = false) {
+  try {
+    const data = await getData('pickups', force);
+
+    const items = Object.entries(data)
+      .filter(([_, item]) => item.status === 'rejected')
+      .map(([id, item]) => ({ id, ...item }));
+
+    items.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+
+    const tbody = $('rejectedTableBody');
+
+    if (!items.length) {
+      setHTML('rejectedTableBody', `<tr><td colspan="7"><div class="empty-state"><i data-lucide="inbox"></i><p class="text-sm font-medium">No rejected orders</p></div></td></tr>`);
+    } else {
+      let html = '';
+
+      items.forEach((item, idx) => {
+        const approved = Boolean(item.incentive_approved);
+        const statusLabel = approved ? 'Approved' : 'Pending';
+        const statusClass = approved ? 'approved' : 'reschedule';
+
+        html += `
+          <tr class="order-row border-b border-gray-50">
+            <td class="py-3 px-4 text-gray-400 font-mono text-xs">${idx + 1}</td>
+            <td class="py-3 px-4 font-mono font-bold text-gray-800 text-sm">${item.orderId || item.id}</td>
+            <td class="py-3 px-4 text-gray-600 text-sm">${item.reason || '—'}</td>
+            <td class="py-3 px-4 hidden sm:table-cell text-gray-500 text-sm">${item.agent || '—'}</td>
+            <td class="py-3 px-4 hidden sm:table-cell text-xs text-gray-400">${item.timestampIST || item.timestamp || ''}</td>
+            <td class="py-3 px-4"><span class="badge-status ${statusClass}">${statusLabel}</span></td>
+            <td class="py-3 px-4">
+              <div class="flex items-center gap-1.5">
+                ${!approved
+                  ? `<button onclick="toggleRejectApproval('${item.id}', true)" class="btn-action approve"><i data-lucide="check-circle"></i> Approve</button>`
+                  : `<button onclick="toggleRejectApproval('${item.id}', false)" class="btn-action delete"><i data-lucide="x-circle"></i> Reject</button>`
+                }
+                <button onclick="viewOrder('${item.id}')" class="btn-action view"><i data-lucide="eye"></i></button>
+              </div>
+            </td>
+          </tr>
+        `;
+      });
+
+      setHTML('rejectedTableBody', html);
     }
-    const orderId = document.getElementById('orderId').value.trim().toUpperCase();
-    let existingData = null, exists = false;
-    try {
-        const existingSnap = await db.ref('pickups/' + orderId).once('value');
-        exists = existingSnap.exists();
-        if (exists) existingData = existingSnap.val();
-    } catch (e) {
-        console.error(e);
-        showToast('Error checking order', 'error');
-        return false;
+
+    refreshIcons();
+    setText('rejectedBadge', items.length);
+  } catch (e) {
+    console.error(e);
+    showToast('Error loading rejected', 'error');
+  }
+}
+
+function refreshRejected() {
+  loadRejectedAdmin(true);
+  showToast('🔄 Rejected refreshed', 'info');
+}
+
+async function toggleRejectApproval(orderId, approve) {
+  const action = approve ? 'Approve' : 'Reject';
+
+  const confirm = await Swal.fire({
+    title: `${action} Rejection?`,
+    text: approve
+      ? 'This will count the reject incentive for the agent.'
+      : 'This will remove the reject incentive from the agent earnings.',
+    icon: 'question',
+    showCancelButton: true,
+    confirmButtonColor: approve ? '#059669' : '#dc2626',
+    cancelButtonColor: '#64748b',
+    confirmButtonText: `Yes, ${action}`,
+    cancelButtonText: 'Cancel'
+  });
+
+  if (!confirm.isConfirmed) return;
+
+  try {
+    const snap = await db.ref('pickups/' + orderId).once('value');
+    const item = snap.val();
+
+    if (!item) {
+      showToast('Order not found', 'error');
+      return;
     }
-    if (exists && existingData.status === 'rejected' && currentStatus === 'pickup') {
-        const { value: password, isConfirmed } = await Swal.fire({
-            title: '🔐 Admin Password Required',
-            html: `
-                <p class="text-sm text-gray-600 mb-2">This order was previously <span class="text-red-600 font-bold">REJECTED</span>.</p>
-                <p class="text-sm text-gray-600 mb-2">Enter admin password to mark as <span class="text-green-600 font-bold">PICKUP COMPLETED</span>.</p>
-                <p class="text-xs text-gray-400 mt-2">Only admin knows this password.</p>
-            `,
-            input: 'password', inputPlaceholder: 'Enter admin password',
-            inputAttributes: { autocapitalize: 'off', autocorrect: 'off' },
-            showCancelButton: true, confirmButtonColor: '#3b82f6', cancelButtonColor: '#dc2626',
-            confirmButtonText: '✅ Verify & Proceed', cancelButtonText: 'Cancel',
-            allowOutsideClick: false,
-            preConfirm: (input) => { if (!input) { Swal.showValidationMessage('Enter password'); return false; } return input; }
-        });
-        if (!isConfirmed) { showToast('Cancelled', 'error'); return false; }
-        if (password !== 'admin123') {
-            Swal.fire({ icon: 'error', title: 'Wrong Password', text: 'Invalid admin password.', confirmButtonColor: '#dc2626' });
-            return false;
-        }
-        showToast('✅ Password verified!', 'success');
-    }
-    if (exists && existingData.status === 'pickup' && currentStatus === 'pickup') {
-        Swal.fire({ icon: 'error', title: 'Already Pickup Completed', text: `Order ${orderId} already marked.`, confirmButtonColor: '#3b82f6' });
-        return false;
-    }
-    const now = new Date();
-    const istDateTime = getISTDateTime();
-    let dbData = {
-        orderId, status: currentStatus,
-        timestamp: now.toISOString(), timestampIST: istDateTime,
-        date: now.toLocaleDateString('en-IN'), time: now.toLocaleTimeString('en-IN'),
-        agent: currentUser.username
+
+    const updates = {
+      incentive_approved: approve,
+      incentive_paid: false
     };
-    let whatsappMsg = '';
-    if (currentStatus === 'pickup') {
-        const phoneModel = document.getElementById('phoneModel').value.trim();
-        const imei = document.getElementById('imei').value.trim();
-        const value = document.getElementById('value').value.trim();
-        const custName = document.getElementById('custName').value.trim();
-        if (!phoneModel || !imei || !value) {
-            Swal.fire({ icon: 'error', title: 'Missing Details', text: 'Fill Model, IMEI, Value', confirmButtonColor: '#3b82f6' });
-            return false;
-        }
-        dbData.phoneModel = phoneModel;
-        dbData.imei = imei;
-        if (hiddenImei2) dbData.imei2 = hiddenImei2;
-        dbData.value = parseInt(value);
-        dbData.customerName = custName || 'N/A';
 
-        const dup = await findDuplicateImei(imei, orderId);
-        if (dup) {
-            Swal.fire({
-                icon: 'error',
-                title: 'Duplicate IMEI',
-                html: `This IMEI is already in use in <b>${dup.source === 'pickups' ? 'inventory' : 'outside pickups'}</b>.<br>Order ID: ${dup.orderId}`,
-                confirmButtonColor: '#dc2626'
-            });
-            return false;
-        }
-        if (!selectedRam || !selectedStorage || !selectedNetwork) {
-            const miss = [];
-            if (!selectedRam) miss.push('RAM');
-            if (!selectedStorage) miss.push('Storage');
-            if (!selectedNetwork) miss.push('Network');
-            Swal.fire({
-                icon: 'warning', title: 'Device Specs Required',
-                html: `<p class="text-sm text-gray-600">Please select <b>${miss.join(', ')}</b> before submitting.</p>`,
-                confirmButtonColor: '#3b82f6'
-            });
-            const box = document.getElementById('specSummary');
-            if (box) box.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            return false;
-        }
-        dbData.ram = selectedRam;
-        dbData.storage = selectedStorage;
-        dbData.ramStorage = selectedRam + '/' + selectedStorage;
-        dbData.networkType = selectedNetwork;
-        const _billNo = (document.getElementById('billNumber')?.value || '').trim();
-        const _aadNo = (document.getElementById('aadhaarNumber')?.value || '').trim();
-        if (_billNo) dbData.billNumber = _billNo;
-        if (_aadNo) dbData.aadhaarNumber = _aadNo;
-        if (pickupBillImages.length) {
-            Swal.fire({ title: 'Uploading Bill Images...', allowOutsideClick: false, didOpen: () => Swal.showLoading() });
-            const billUrls = [];
-            for (let i = 0; i < pickupBillImages.length; i++) {
-                try {
-                    const blob = await (await fetch(pickupBillImages[i])).blob();
-                    const fileName = `${orderId}_bill_${i}_${Date.now()}.jpg`;
-                    const storageRef = storage.ref(`pickup_docs/${orderId}/bill/${fileName}`);
-                    const snapshot = await storageRef.put(blob, { contentType: 'image/jpeg' });
-                    billUrls.push(await snapshot.ref.getDownloadURL());
-                } catch (e) {
-                    console.error('Bill image upload failed:', e);
-                    Swal.close();
-                    showToast('❌ Bill image upload failed', 'error');
-                    return false;
-                }
-            }
-            dbData.billImages = billUrls;
-            dbData.billImage = billUrls[0];
-            Swal.close();
-        }
-        if (pickupAadhaarImages.length) {
-            Swal.fire({ title: 'Uploading Aadhaar Images...', allowOutsideClick: false, didOpen: () => Swal.showLoading() });
-            const aadhaarUrls = [];
-            for (let i = 0; i < pickupAadhaarImages.length; i++) {
-                try {
-                    const blob = await (await fetch(pickupAadhaarImages[i])).blob();
-                    const fileName = `${orderId}_aadhaar_${i}_${Date.now()}.jpg`;
-                    const storageRef = storage.ref(`pickup_docs/${orderId}/aadhaar/${fileName}`);
-                    const snapshot = await storageRef.put(blob, { contentType: 'image/jpeg' });
-                    aadhaarUrls.push(await snapshot.ref.getDownloadURL());
-                } catch (e) {
-                    console.error('Aadhaar image upload failed:', e);
-                    Swal.close();
-                    showToast('❌ Aadhaar image upload failed', 'error');
-                    return false;
-                }
-            }
-            dbData.aadhaarImages = aadhaarUrls;
-            dbData.aadhaarImage = aadhaarUrls[0];
-            Swal.close();
-        }
-        whatsappMsg = `Order ID: ${orderId}\nStatus: Pickup Completed`;
-    } else {
-        const phoneModel = document.getElementById('phoneModelRejectReschedule').value.trim();
-        if (!phoneModel) {
-            Swal.fire({ icon: 'error', title: 'Missing Model', text: 'Enter phone model', confirmButtonColor: '#3b82f6' });
-            return false;
-        }
-        dbData.phoneModel = phoneModel;
-        let reason = selectedReason;
-        if (reason.toLowerCase().includes('other')) {
-            reason = document.getElementById('otherReason').value.trim();
-            if (!reason) {
-                Swal.fire({ icon: 'warning', title: 'Reason Required', text: 'Type the reason', confirmButtonColor: '#3b82f6' });
-                return false;
-            }
-        }
-        if (!reason) {
-            Swal.fire({ icon: 'warning', title: 'Select Reason', text: 'Choose a reason', confirmButtonColor: '#3b82f6' });
-            return false;
-        }
-        dbData.reason = reason;
-        if (currentStatus === 'rejected') {
-            whatsappMsg = `Order ID: ${orderId}\nModel: ${dbData.phoneModel}\nReason: ${dbData.reason}\nStatus: Rejected`;
-            dbData.incentive_approved = false;
-            dbData.incentive_paid = false;
-        } else {
-            whatsappMsg = `Order ID: ${orderId}\nModel: ${dbData.phoneModel}\nReason: ${dbData.reason}\nStatus: Rescheduled`;
-        }
+    if (approve) {
+      updates.incentive_approved_at = Date.now();
     }
-    if (currentStatus === 'reschedule') {
-        try {
-            const pendingSnap = await db.ref('pending/' + orderId).once('value');
-            if (pendingSnap.exists()) {
-                const existingReason = pendingSnap.val().reason || '';
-                if (existingReason !== dbData.reason) {
-                    const r = await Swal.fire({
-                        title: 'Change Reason?',
-                        text: `Existing: "${existingReason}". Update to "${dbData.reason}"?`,
-                        icon: 'question', showCancelButton: true,
-                        confirmButtonColor: '#f59e0b', confirmButtonText: 'Update', cancelButtonText: 'Cancel'
-                    });
-                    if (!r.isConfirmed) { showToast('Cancelled', 'error'); return false; }
-                }
-            }
-        } catch (e) { console.error(e); }
+
+    await db.ref('pickups/' + orderId).update(updates);
+
+    if (!approve) {
+      await db.ref('pickups/' + orderId + '/incentive_approved_at').remove();
     }
-    Swal.fire({ title: 'Saving...', allowOutsideClick: false, didOpen: () => Swal.showLoading() });
-    try {
-        if (exists) await db.ref('pickups/' + orderId).update(dbData);
-        else await db.ref('pickups/' + orderId).set(dbData);
-        if (currentStatus === 'pickup' || currentStatus === 'rejected') {
-            const pendingSnap = await db.ref('pending/' + orderId).once('value');
-            if (pendingSnap.exists()) {
-                await db.ref('pending/' + orderId).remove();
-                await loadPendingOrders();
-            }
-        }
-        if (currentStatus === 'reschedule') {
-            const pendingData = {
-                orderId, phoneModel: dbData.phoneModel,
-                reason: dbData.reason || selectedReason, status: 'reschedule',
-                timestamp: now.toISOString(), timestampIST: istDateTime,
-                agent: currentUser.username
-            };
-            await db.ref('pending/' + orderId).set(pendingData);
-            await loadPendingOrders();
-        }
-        const result = await Swal.fire({
-            icon: 'success', title: '✅ Saved!',
-            html: `
-                <p class="text-sm text-gray-600 mb-2">📊 Firebase me time save ho gaya:</p>
-                <div class="text-left bg-blue-50 p-2 rounded-lg text-xs font-mono mb-3">${istDateTime}</div>
-                <p class="text-sm text-gray-600 mb-2">📱 WhatsApp message (no time):</p>
-                <div class="text-left bg-gray-50 p-3 rounded-lg text-xs font-mono whitespace-pre-wrap">${whatsappMsg}</div>
-            `,
-            showCancelButton: true, showDenyButton: true,
-            confirmButtonText: '📤 Open WhatsApp', denyButtonText: '📋 Copy Message', cancelButtonText: 'Close',
-            confirmButtonColor: '#25D366', denyButtonColor: '#3b82f6'
-        });
-        if (result.isConfirmed) window.open(`https://wa.me/?text=${encodeURIComponent(whatsappMsg)}`, '_blank');
-        else if (result.isDenied) {
-            try { await navigator.clipboard.writeText(whatsappMsg); showToast('✅ Copied!', 'success'); }
-            catch (e) {
-                const ta = document.createElement('textarea');
-                ta.value = whatsappMsg;
-                document.body.appendChild(ta);
-                ta.select();
-                document.execCommand('copy');
-                document.body.removeChild(ta);
-                showToast('✅ Copied!', 'success');
-            }
-        }
-        document.getElementById('orderId').value = '';
-        hiddenImei2 = '';
-        goBack();
-        loadTodayStats();
-        loadPendingOrders();
-        return true;
-    } catch (error) {
-        Swal.fire({ icon: 'error', title: 'Error', text: error.message });
-        return false;
-    }
+
+    invalidate('pickups');
+    showToast(`✅ Reject ${action}d!`, 'success');
+
+    loadRejectedAdmin(true);
+    loadDashboard(true);
+
+    if (currentPageView === 'salary') loadSalaryData(true);
+  } catch (e) {
+    showToast(`Error ${action}ing reject`, 'error');
+    console.error(e);
+  }
 }
 
-// === SECTION 17: SCANNER FUNCTIONS (Barcode + OCR) ===
-// 🔥 Modified: routes IMEI to correct input based on scannerTarget
+// ================================================================
+// INVENTORY
+// ================================================================
+async function loadInventory(force = false) {
+  try {
+    const data = await getData('pickups', force);
 
-function setScanMode(mode) {
-    scanMode = mode;
-    document.querySelectorAll('#scanModeToggle button').forEach(b => {
-        b.classList.toggle('active', b.dataset.mode === mode);
+    inventoryList = Object.entries(data)
+      .filter(([_, item]) => item.status === 'pickup' && !item.sold)
+      .map(([id, item]) => ({
+        id,
+        ...item,
+        billImages: undefined,
+        billImage: undefined,
+        aadhaarImages: undefined,
+        aadhaarImage: undefined
+      }));
+
+    inventoryList.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+
+    applyInventorySearch();
+    setupLiveSearch('inventorySearch', 'inventorySearchDropdown', inventoryList, ['orderId', 'phoneModel', 'imei', 'customerName', 'color']);
+  } catch (e) {
+    console.error('Inventory error:', e);
+    showToast('Error loading inventory', 'error');
+  }
+}
+
+function applyInventorySearch() {
+  const query = getVal('inventorySearch').trim();
+  let filtered = inventoryList.filter(item => {
+    const isOutsidePickup = item.outsidePickup === true;
+    if (inventoryTypeFilter === 'regular') return !isOutsidePickup;
+    if (inventoryTypeFilter === 'outside') return isOutsidePickup;
+    return true;
+  });
+
+  if (query && window.Fuse) {
+    const fuse = new Fuse(filtered, {
+      keys: ['orderId', 'phoneModel', 'imei', 'customerName', 'color'],
+      threshold: 0.3,
+      includeScore: true,
+      ignoreLocation: true
     });
-    const hint = document.getElementById('scanHint');
-    const tip = document.getElementById('scanTip');
-    const captureBtn = document.getElementById('captureBtn');
-    if (mode === 'barcode') {
-        hint.textContent = '📱 Barcode ko box me align karo';
-        tip.innerHTML = '<strong>💡 Tip:</strong> Phone box ya back panel pe IMEI barcode hota hai.';
-        captureBtn.style.display = 'none';
-        document.getElementById('imeiResult').classList.remove('show');
-    } else {
-        hint.textContent = '📱 *#06# screen dikhao — phir Capture dabao';
-        tip.innerHTML = '<strong>💡 Tip:</strong> Phone me *#06# dial karo, IMEI screen dikhao.';
-        captureBtn.style.display = 'flex';
-        document.getElementById('imeiResult').classList.remove('show');
-        captureBtn.disabled = false;
-        captureBtn.innerHTML = '<i data-lucide="camera"></i> Capture & Read IMEI';
-        lucide.createIcons();
-    }
-    lucide.createIcons();
+    filtered = fuse.search(query).map(r => r.item);
+  }
+
+  filteredInventory = filtered;
+  renderInventoryTable();
+  setText('inventoryCount', filteredInventory.length + ' units');
 }
 
-async function initTesseract() {
-    if (typeof Tesseract === 'undefined') { console.warn('Tesseract not loaded'); return null; }
-    try {
-        const worker = await Tesseract.createWorker('eng', 1, {
-            logger: m => {
-                if (m.status === 'recognizing text') {
-                    const pct = Math.round(m.progress * 100);
-                    document.getElementById('ocrProgressBar').style.width = pct + '%';
-                }
-            }
-        });
-        await worker.setParameters({
-            tessedit_char_whitelist: '0123456789IMEI: ',
-            tessedit_pageseg_mode: '6',
-            tessedit_ocr_engine_mode: '3'
-        });
-        return worker;
-    } catch (e) { console.error(e); return null; }
+function setInventoryTypeFilter(filter) {
+  if (!['all', 'regular', 'outside'].includes(filter)) return;
+  inventoryTypeFilter = filter;
+  document.querySelectorAll('[data-inventory-type-filter]').forEach(button => {
+    button.classList.toggle('active', button.dataset.inventoryTypeFilter === inventoryTypeFilter);
+  });
+  applyInventorySearch();
 }
 
-async function startScanner() {
-    const modal = document.getElementById('scannerModal');
-    const video = document.getElementById('scanVideo');
-    const statusText = document.getElementById('scanStatusText');
-    const spinner = document.getElementById('scanSpinner');
-    modal.classList.remove('hidden');
-    statusText.textContent = '🔄 Starting camera...';
-    spinner.style.display = 'inline-block';
-    lucide.createIcons();
-    document.getElementById('imeiResult').classList.remove('show');
-    document.getElementById('ocrProgress').style.display = 'none';
-    document.getElementById('ocrProgressBar').style.width = '0%';
-    if (scanMode === 'ocr') { tesseractWorker = await initTesseract(); }
-    try {
-        if (typeof ZXing === 'undefined' || !ZXing.BrowserMultiFormatReader) throw new Error('ZXing not loaded');
-        const hints = new Map();
-        const formats = [
-            ZXing.BarcodeFormat.CODE_128, ZXing.BarcodeFormat.CODE_39,
-            ZXing.BarcodeFormat.EAN_13, ZXing.BarcodeFormat.EAN_8,
-            ZXing.BarcodeFormat.UPC_A, ZXing.BarcodeFormat.UPC_E,
-            ZXing.BarcodeFormat.ITF, ZXing.BarcodeFormat.QR_CODE,
-            ZXing.BarcodeFormat.DATA_MATRIX, ZXing.BarcodeFormat.CODE_93
-        ];
-        hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, formats);
-        hints.set(ZXing.DecodeHintType.TRY_HARDER, true);
-        hints.set(ZXing.DecodeHintType.CHARACTER_SET, 'UTF-8');
-        zxingCodeReader = new ZXing.BrowserMultiFormatReader(hints);
-        const devices = await zxingCodeReader.listVideoInputDevices();
-        let deviceId = null;
-        for (const d of devices) {
-            if (d.label && /back|rear|environment/i.test(d.label)) { deviceId = d.deviceId; break; }
-        }
-        if (!deviceId && devices.length > 0) deviceId = devices[devices.length - 1].deviceId;
-        statusText.textContent = '📷 Camera ready';
-        await zxingCodeReader.decodeFromVideoDevice(
-            deviceId,
-            'scanVideo',
-            (result, err) => {
-                if (result && scanMode === 'barcode') {
-                    const raw = result.getText();
-                    const imeis = extractIMEIs(raw);
-                    if (imeis.imei1 && imeis.imei1.length >= 14) onScanSuccess(imeis.imei1, imeis.imei2);
-                } else if (err && !(err instanceof ZXing.NotFoundException)) {
-                    console.error(err);
-                }
-            }
-        );
-        isScanning = true;
-        statusText.textContent = scanMode === 'barcode' ? '🎯 Scanning...' : '📱 Ready';
-        spinner.style.display = 'none';
-        if (scanMode === 'ocr') {
-            document.getElementById('captureBtn').style.display = 'flex';
-            document.getElementById('captureBtn').disabled = false;
-            document.getElementById('captureBtn').innerHTML = '<i data-lucide="camera"></i> Capture & Read IMEI';
-            lucide.createIcons();
-        } else {
-            document.getElementById('captureBtn').style.display = 'none';
-        }
-    } catch (err) {
-        console.error(err);
-        stopScanner();
-        let msg = 'Camera access failed';
-        if (err.name === 'NotAllowedError') msg = 'Allow camera permission';
-        else if (err.name === 'NotFoundError') msg = 'No camera found';
-        else if (err.name === 'NotSecureError' || window.location.protocol === 'file:') msg = 'Camera needs HTTPS.';
-        Swal.fire({ icon: 'error', title: 'Camera Error', text: msg });
-    }
+function clearInventorySearch() {
+  setVal('inventorySearch', '');
+  applyInventorySearch();
 }
 
-async function startOCRScanning() {
-    if (scanMode !== 'ocr' || isOcrScanning) return;
-    if (!tesseractWorker) {
-        showToast('⏳ Initializing OCR...', 'info');
-        tesseractWorker = await initTesseract();
-        if (!tesseractWorker) { showToast('❌ OCR failed', 'error'); return; }
-    }
-    const video = document.getElementById('scanVideo');
-    if (!video.videoWidth) { showToast('⏳ Camera not ready', 'error'); return; }
-    isOcrScanning = true;
-    lastDetectedImei = '';
-    ocrAttemptCount = 0;
-    const captureBtn = document.getElementById('captureBtn');
-    captureBtn.disabled = true;
-    captureBtn.innerHTML = '<span class="spinner" style="width:20px;height:20px;border-width:2px;"></span> Scanning...';
-    const statusText = document.getElementById('scanStatusText');
-    const progress = document.getElementById('ocrProgress');
-    const progressBar = document.getElementById('ocrProgressBar');
-    progress.style.display = 'block';
-    progressBar.style.width = '0%';
-    statusText.textContent = '📸 Capturing...';
+function renderInventoryTable() {
+  const tbody = $('inventoryTableBody');
+  if (!tbody) return;
 
-    const canvas = document.createElement('canvas');
-    const ctx = canvas.getContext('2d');
-    const maxW = 800;
-    const scale = Math.min(1, maxW / video.videoWidth);
-    canvas.width = Math.round(video.videoWidth * scale);
-    canvas.height = Math.round(video.videoHeight * scale);
-    ctx.imageSmoothingEnabled = true;
-    ctx.imageSmoothingQuality = 'high';
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-    const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-    const d = imgData.data;
-    for (let i = 0; i < d.length; i += 4) {
-        const gray = d[i] * 0.299 + d[i + 1] * 0.587 + d[i + 2] * 0.114;
-        const adjusted = ((gray / 255 - 0.5) * 2.2 + 0.5) * 255;
-        const val = Math.max(0, Math.min(255, adjusted));
-        d[i] = d[i + 1] = d[i + 2] = val;
-    }
-    ctx.putImageData(imgData, 0, 0);
+  if (!filteredInventory.length) {
+    tbody.innerHTML = `<tr><td colspan="8"><div class="empty-state"><i data-lucide="inbox"></i><p class="text-sm font-medium">No inventory available</p></div></td></tr>`;
+    refreshIcons();
+    return;
+  }
 
-    try {
-        const { data: { text } } = await tesseractWorker.recognize(canvas);
-        const imeis = extractIMEIs(text);
-        if (imeis.imei1 && imeis.imei1.length >= 14) { handleImeiFound(imeis.imei1, imeis.imei2); return; }
-    } catch (e) { console.error(e); }
+  let html = '';
 
-    statusText.textContent = '🔍 Scanning in background...';
-    progressBar.style.width = '0%';
-    ocrAttemptCount = 0;
-    if (ocrInterval) clearInterval(ocrInterval);
-    ocrInterval = setInterval(async () => {
-        if (!isScanning || !isOcrScanning) { stopOCRScanning(); return; }
-        if (!video.videoWidth) return;
-        ocrAttemptCount++;
-        const c2 = document.createElement('canvas');
-        const ctx2 = c2.getContext('2d');
-        const maxW2 = 640;
-        const scale2 = Math.min(1, maxW2 / video.videoWidth);
-        c2.width = Math.round(video.videoWidth * scale2);
-        c2.height = Math.round(video.videoHeight * scale2);
-        ctx2.imageSmoothingEnabled = true;
-        ctx2.imageSmoothingQuality = 'high';
-        ctx2.drawImage(video, 0, 0, c2.width, c2.height);
-        const imgData2 = ctx2.getImageData(0, 0, c2.width, c2.height);
-        const d2 = imgData2.data;
-        for (let i = 0; i < d2.length; i += 4) {
-            const gray = d2[i] * 0.299 + d2[i + 1] * 0.587 + d2[i + 2] * 0.114;
-            const adjusted = ((gray / 255 - 0.5) * 2.2 + 0.5) * 255;
-            const val = Math.max(0, Math.min(255, adjusted));
-            d2[i] = d2[i + 1] = d2[i + 2] = val;
-        }
-        ctx2.putImageData(imgData2, 0, 0);
-        progressBar.style.width = Math.min(100, (ocrAttemptCount / 15) * 100) + '%';
-        try {
-            const { data: { text } } = await tesseractWorker.recognize(c2);
-            const imeis = extractIMEIs(text);
-            if (imeis.imei1 && imeis.imei1.length >= 14) { handleImeiFound(imeis.imei1, imeis.imei2); return; }
-        } catch (e) { console.error(e); }
-    }, 1500);
+  filteredInventory.forEach((item, idx) => {
+    const commission = calculateCommission(item.value || 0);
+
+    html += `
+      <tr class="order-row border-b border-gray-50">
+        <td class="py-3 px-4 text-gray-400 font-mono text-xs">${idx + 1}</td>
+        <td class="py-3 px-4 font-mono font-bold text-gray-800 text-sm">${item.orderId || item.id}</td>
+        <td class="py-3 px-4 text-gray-600 text-sm">${item.phoneModel || '—'}</td>
+        <td class="py-3 px-4 hidden md:table-cell font-mono text-xs text-gray-500">${item.imei || '—'}</td>
+        <td class="py-3 px-4 font-bold text-gray-700">${formatINR(item.value || 0)}</td>
+        <td class="py-3 px-4"><span class="commission-col">${formatINR(commission)}</span></td>
+        <td class="py-3 px-4 hidden lg:table-cell text-gray-600 text-sm">${item.customerName || '—'}</td>
+        <td class="py-3 px-4">
+          <button onclick="openSellModal('${item.id}')" class="btn-action sell"><i data-lucide="badge-dollar-sign"></i> Sell</button>
+          <button onclick="viewOrder('${item.id}')" class="btn-action view"><i data-lucide="eye"></i></button>
+        </td>
+      </tr>
+    `;
+  });
+
+  tbody.innerHTML = html;
+  refreshIcons();
 }
 
-// 🔥 Modified: target input based on scannerTarget
-function handleImeiFound(imei1, imei2) {
-    if (!isOcrScanning && !isScanning) return;
-    if (imei1 === lastDetectedImei) return;
-    lastDetectedImei = imei1;
-    document.getElementById('imeiResultText').textContent = '✅ IMEI: ' + imei1 + (imei2 ? ' | IMEI2 captured' : '');
-    document.getElementById('imeiResult').classList.add('show');
-    const targetInput = scannerTarget === 'outside'
-        ? document.getElementById('opImei')
-        : document.getElementById('imei');
-    if (targetInput) {
-        targetInput.value = imei1;
-        targetInput.classList.add('flash-green');
-        setTimeout(() => targetInput.classList.remove('flash-green'), 500);
-    }
-    if (imei2) hiddenImei2 = imei2;
-    if (navigator.vibrate) navigator.vibrate([80, 50, 80]);
-    document.getElementById('scanStatusText').textContent = '✅ IMEI captured!';
-    showToast('✅ IMEI: ' + imei1, 'success');
-    stopOCRScanning();
-    setTimeout(() => stopScanner(), 800);
-}
-
-function stopOCRScanning() {
-    isOcrScanning = false;
-    if (ocrInterval) { clearInterval(ocrInterval); ocrInterval = null; }
-    const captureBtn = document.getElementById('captureBtn');
-    if (captureBtn) {
-        captureBtn.disabled = false;
-        captureBtn.innerHTML = '<i data-lucide="camera"></i> Capture & Read IMEI';
-    }
-    lucide.createIcons();
-    document.getElementById('ocrProgress').style.display = 'none';
-    document.getElementById('ocrProgressBar').style.width = '0%';
-}
-
-function isValidIMEI(imei) {
-    if (!imei || imei.length !== 15) return false;
-    if (!/^\d{15}$/.test(imei)) return false;
-    if (!/^[3-9]/.test(imei)) return false;
-    let sum = 0;
-    for (let i = 0; i < 15; i++) {
-        let digit = parseInt(imei[i]);
-        if (i % 2 === 1) { digit *= 2; if (digit > 9) digit -= 9; }
-        sum += digit;
-    }
-    return sum % 10 === 0;
-}
-
-function extractIMEIs(text) {
-    let imei1 = null, imei2 = null, candidates = [];
-    let clean = text.replace(/[Oo]/g,'0').replace(/[Ss]/g,'5').replace(/[Bb]/g,'8').replace(/[Zz]/g,'2').replace(/[Gg]/g,'6').replace(/[Tt]/g,'7').replace(/[Ll]/g,'1').replace(/\s+/g,' ').trim();
-    const all15Digits = clean.match(/\d{15}/g) || [];
-    const all14Digits = clean.match(/\d{14}/g) || [];
-    for (let num of all15Digits) {
-        if (/^[3-9]/.test(num) && isValidIMEI(num)) candidates.push(num);
-    }
-    const imeiPatterns = [
-        /IMEI\s*1\s*[:\-]?\s*(\d{15})/i,
-        /IMEI\s*[:\-]?\s*(\d{15})/i,
-        /IMEI1\s*[:\-]?\s*(\d{15})/i,
-        /IMEI2\s*[:\-]?\s*(\d{15})/i
-    ];
-    for (let pattern of imeiPatterns) {
-        const match = clean.match(pattern);
-        if (match && match[1]) {
-            const num = match[1];
-            if (/^[3-9]/.test(num) && isValidIMEI(num)) {
-                if (!imei1) imei1 = num;
-                else if (num !== imei1 && !imei2) imei2 = num;
-            }
-        }
-    }
-    if (!imei1 && candidates.length > 0) imei1 = candidates[0];
-    if (!imei2 && candidates.length > 1) {
-        for (let c of candidates) {
-            if (c !== imei1) { imei2 = c; break; }
-        }
-    }
-    if (!imei1 && all14Digits.length > 0) {
-        for (let num of all14Digits) {
-            if (!/^[3-9]/.test(num)) continue;
-            for (let check = 0; check <= 9; check++) {
-                const candidate = num + check;
-                if (isValidIMEI(candidate)) {
-                    if (!imei1) imei1 = candidate;
-                    else if (candidate !== imei1 && !imei2) imei2 = candidate;
-                    break;
-                }
-            }
-            if (imei1 && imei2) break;
-        }
-    }
-    if (imei1 && !isValidIMEI(imei1)) imei1 = null;
-    if (imei2 && !isValidIMEI(imei2)) imei2 = null;
-    return { imei1, imei2 };
-}
-
-// 🔥 Modified: target input based on scannerTarget
-function onScanSuccess(imei1, imei2) {
-    if (!isScanning) return;
-    isScanning = false;
-    const targetInput = scannerTarget === 'outside'
-        ? document.getElementById('opImei')
-        : document.getElementById('imei');
-    if (targetInput) {
-        targetInput.value = imei1;
-        targetInput.classList.add('flash-green');
-        setTimeout(() => targetInput.classList.remove('flash-green'), 500);
-    }
-    if (imei2) hiddenImei2 = imei2;
-    if (navigator.vibrate) navigator.vibrate([80, 50, 80]);
-    stopScanner();
-    showToast('✅ IMEI: ' + imei1, 'success');
-}
-
-function stopScanner() {
-    isScanning = false;
-    scannerTarget = 'regular'; // 🔥 reset target after scan completes/cancels
-    stopOCRScanning();
-    if (zxingCodeReader) { try { zxingCodeReader.reset(); } catch (e) {} zxingCodeReader = null; }
-    const video = document.getElementById('scanVideo');
-    if (video && video.srcObject) {
-        video.srcObject.getTracks().forEach(t => t.stop());
-        video.srcObject = null;
-    }
-    if (tesseractWorker) { try { tesseractWorker.terminate(); } catch (e) {} tesseractWorker = null; }
-    document.getElementById('scannerModal').classList.add('hidden');
-    document.getElementById('scanSpinner').style.display = 'none';
-    document.getElementById('scanStatusText').textContent = 'Stopped';
-    document.getElementById('ocrProgress').style.display = 'none';
-    document.getElementById('captureBtn').style.display = 'none';
-    document.getElementById('imeiResult').classList.remove('show');
-    const captureBtn = document.getElementById('captureBtn');
-    if (captureBtn) {
-        captureBtn.disabled = false;
-        captureBtn.innerHTML = '<i data-lucide="camera"></i> Capture & Read IMEI';
-    }
-    lucide.createIcons();
-}
-
-// === SECTION 18: TOAST ===
-function showToast(message, type = 'info') {
-    const colors = { success: 'bg-green-500', error: 'bg-red-500', info: 'bg-blue-500' };
-    const toast = document.createElement('div');
-    toast.className = `fixed top-20 left-1/2 -translate-x-1/2 ${colors[type]} text-white px-5 py-3 rounded-xl shadow-2xl z-[60] font-semibold text-sm fade-in max-w-[90%]`;
-    toast.textContent = message;
-    document.body.appendChild(toast);
-    setTimeout(() => {
-        toast.style.transition = 'opacity 0.3s';
-        toast.style.opacity = '0';
-        setTimeout(() => toast.remove(), 300);
-    }, 2800);
-}
-
-// === SECTION 19: IST DATE/TIME FORMATTER ===
-function getISTDateTime() {
-    const now = new Date();
-    const istOffset = 5.5 * 60 * 60 * 1000;
-    const istTime = new Date(now.getTime() + istOffset);
-    const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-    const dd = String(istTime.getUTCDate()).padStart(2,'0');
-    const mmm = months[istTime.getUTCMonth()];
-    const yyyy = istTime.getUTCFullYear();
-    let hours = istTime.getUTCHours();
-    const minutes = String(istTime.getUTCMinutes()).padStart(2,'0');
-    const seconds = String(istTime.getUTCSeconds()).padStart(2,'0');
-    const ampm = hours >= 12 ? 'PM' : 'AM';
-    hours = hours % 12 || 12;
-    const hh = String(hours).padStart(2,'0');
-    return `${dd}-${mmm}-${yyyy}, ${hh}:${minutes}:${seconds} ${ampm} IST`;
+function refreshInventory() {
+  loadInventory(true);
+  showToast('🔄 Inventory refreshed', 'info');
 }
 
 // ================================================================
-// === SECTION 20: OUTSIDE PICKUP — NEW FEATURE ===================
+// SALES
 // ================================================================
-// ID format: OP-YYMMDD-NNNN
-//   - OP      = Outside Pickup prefix
-//   - YYMMDD  = date (readable, sortable)
-//   - NNNN    = daily counter via Firebase transaction (0001-9999,
-//               extends to 10000+ naturally if needed)
-//   Backend uniqueness enforced by `outside_pickup_counters/{YYMMDD}`
-//   transaction — safe across concurrent riders, no collisions.
-//   IMPORTANT: the number is only RESERVED on a successful submit. Opening
-//   the form (or refreshing) merely PEEKS at the next number, so the shown
-//   ID never changes until a new pickup is actually created.
-// Record path: outside_pickups/{pickupId}
-// Inventory impact: NONE until admin approval (which writes to
-// `pickups/{pickupId}` and thus appears in existing inventory filters).
-// ================================================================
-
-let scannerTarget = 'regular'; // 'regular' | 'outside'
-let opSelectedRam = '';
-let opSelectedStorage = '';
-let opSelectedNetwork = '';
-const OP_NETWORK_OPTIONS = ['1G','2G','3G','4G','5G'];
-let outsidePickupId = '';
-let outsidePickupImages = [];
-const OUTSIDE_MAX_IMAGES = 5;
-// Short-lived per-IMEI lock used to stop two concurrent submissions of the
-// same phone from creating two records. Expires by itself (no cleanup needed),
-// so a rejected/deleted pickup can be submitted again later.
-const OP_CLAIM_TTL_MS = 90 * 1000;
-let opSubmitInFlight = false;
-
-// ---- Chip helpers for Outside Pickup ----
-function buildOutsideChips(kind, options, extraClass) {
-    return options.map(o =>
-        `<button type="button" class="spec-chip ${extraClass || ''}" data-kind="${kind}" data-val="${o}" onclick="selectOutsideSpec('${kind}','${o}',this)">${o}</button>`
-    ).join('');
-}
-
-function selectOutsideSpec(kind, val, el) {
-    const group = el.parentElement;
-    const already = el.classList.contains('active');
-    group.querySelectorAll('.spec-chip').forEach(b => b.classList.remove('active'));
-    const finalVal = already ? '' : val;
-    if (!already) el.classList.add('active');
-    if (kind === 'ram') opSelectedRam = finalVal;
-    if (kind === 'storage') opSelectedStorage = finalVal;
-    if (kind === 'network') opSelectedNetwork = finalVal;
-    if (navigator.vibrate) { try { navigator.vibrate(12); } catch(_){} }
-    updateOutsideSpecUI();
-}
-
-function updateOutsideSpecUI() {
-    const r = document.getElementById('opRamPick');
-    const s = document.getElementById('opStoragePick');
-    const n = document.getElementById('opNetworkPick');
-    if (r) { r.textContent = opSelectedRam || 'Not selected'; r.className = 'picked' + (opSelectedRam ? '' : ' empty'); }
-    if (s) { s.textContent = opSelectedStorage || 'Not selected'; s.className = 'picked' + (opSelectedStorage ? '' : ' empty'); }
-    if (n) { n.textContent = opSelectedNetwork || 'Not selected'; n.className = 'picked' + (opSelectedNetwork ? '' : ' empty'); }
-}
-
-// ---- ID helpers: stable preview + transactional reservation ----
-function getOutsidePickupDateKey(d = new Date()) {
-    const yy = String(d.getFullYear()).slice(-2);
-    const mm = String(d.getMonth() + 1).padStart(2, '0');
-    const dd = String(d.getDate()).padStart(2, '0');
-    return `${yy}${mm}${dd}`;
-}
-
-// READ-ONLY preview of the next ID. Does not increment the counter, so
-// opening / refreshing / re-opening the form always shows the same number.
-async function peekOutsidePickupId() {
-    const dateKey = getOutsidePickupDateKey();
-    const snap = await db.ref('outside_pickup_counters/' + dateKey).once('value');
-    const current = Number(snap.val()) || 0;
-    return `OP-${dateKey}-${String(current + 1).padStart(4, '0')}`;
-}
-
-// Give a number back when a submit fails before the record is saved, so a
-// failed attempt never burns a pickup number.
-async function releaseOutsidePickupCounter(pickupId) {
-    const m = /^OP-(\d{6})-(\d+)$/.exec(String(pickupId || ''));
-    if (!m) return;
-    const dateKey = m[1];
-    const seq = parseInt(m[2], 10);
-    try {
-        await db.ref('outside_pickup_counters/' + dateKey).transaction(current => {
-            if (current === null || current === undefined) return; // abort — nothing to release
-            const value = Number(current) || 0;
-            if (value !== seq) return; // someone already took a newer number — leave gap
-            return value > 1 ? value - 1 : null;
-        });
-    } catch (e) {
-        console.warn('Counter rollback failed:', e);
-    }
-}
-
-// ---- Duplicate protection helpers ----
-// Atomic, short-lived claim per IMEI: blocks two concurrent submissions of the
-// same phone. Auto-expires so a rejected pickup can be submitted again later.
-// If the database rules do not allow this helper node, we degrade gracefully
-// (returns supported:false) instead of breaking the submit flow.
-async function acquireOutsidePickupClaim(imei) {
-    try {
-        const nowTs = Date.now();
-        const result = await db.ref('outside_pickup_claims/' + imei).transaction(current => {
-            if (current && typeof current === 'object') {
-                const ts = Number(current.ts) || 0;
-                if (nowTs - ts < OP_CLAIM_TTL_MS) return; // abort — submission already running
-            }
-            return { ts: nowTs, by: currentUser.username };
-        });
-        return { supported: true, held: result.committed };
-    } catch (e) {
-        console.warn('Concurrency lock unavailable — continuing with duplicate checks only:', e);
-        return { supported: false, held: false };
-    }
-}
-
-function releaseOutsidePickupClaim(imei) {
-    return db.ref('outside_pickup_claims/' + imei).remove().catch(() => {});
-}
-
-// Returns the existing (non-rejected) outside pickup or inventory pickup that
-// already uses this IMEI, or null. IMEI is the ONLY duplicate key — the model
-// is returned just so the warning can identify the existing entry (many phones
-// share a model).
-async function findDuplicateOutsidePickup(imei) {
-    const target = String(imei || '').trim();
-    if (!target) return null;
-
-    const [outsideSnap, pickupsSnap] = await Promise.all([
-        db.ref('outside_pickups').once('value'),
-        db.ref('pickups').once('value')
+async function loadSales(force = false) {
+  try {
+    const [data, users, allAttendance] = await Promise.all([
+      getData('pickups', force),
+      getData('users', force),
+      getData('attendance', force)
     ]);
 
-    const outsideAll = outsideSnap.val() || {};
-    const outsideId = Object.keys(outsideAll).find(k => {
-        const rec = outsideAll[k];
-        if (!rec) return false;
-        if ((rec.status || 'pending') === 'rejected') return false;
-        return String(rec.imei || '').trim() === target;
-    });
-    if (outsideId) {
-        const rec = outsideAll[outsideId] || {};
-        return {
-            pickupId: outsideId,
-            phoneModel: rec.phoneModel || '',
-            status: rec.status || 'pending',
-            rider: rec.rider || rec.agentName || rec.agent || '',
-            date: rec.date || rec.timestampIST || '',
-            source: 'outside_pickups'
-        };
-    }
+    if (!force && overheadCache.version === cacheVersion && overheadCache.value > 0) {
+      overheadPerPhone = overheadCache.value;
+    } else {
+      let totalOverhead = 0;
+      const today = new Date();
 
-    const pickupsAll = pickupsSnap.val() || {};
-    const pickupId = Object.keys(pickupsAll).find(k => {
-        const rec = pickupsAll[k];
-        if (!rec) return false;
-        if ((rec.status || '').toLowerCase() !== 'pickup') return false;
-        return String(rec.imei || '').trim() === target;
-    });
-    if (pickupId) {
-        const rec = pickupsAll[pickupId] || {};
-        return {
-            pickupId: pickupId,
-            phoneModel: rec.phoneModel || '',
-            status: rec.status || 'pickup',
-            rider: rec.agent || '',
-            date: rec.date || rec.timestampIST || '',
-            source: 'pickups'
-        };
-    }
+      for (const [uname, uData] of Object.entries(users)) {
+        const role = uData.role || 'agent';
+        if (role !== 'agent') continue;
 
-    return null;
-}
+        const monthlySalary = uData.salary || 0;
+        const perDaySalary = monthlySalary / 30;
 
-// ---- ID Reservation (transactional — guarantees uniqueness) ----
-async function reserveOutsidePickupId() {
-    const dateKey = getOutsidePickupDateKey();
-    const counterRef = db.ref('outside_pickup_counters/' + dateKey);
+        let joinDate = null;
+        if (uData.joinDate) joinDate = new Date(uData.joinDate + 'T00:00:00');
+        else if (uData.createdAt) joinDate = new Date(uData.createdAt);
+        if (!joinDate) joinDate = new Date(today);
 
-    for (let attempt = 0; attempt < 3; attempt++) {
-        try {
-            const result = await counterRef.transaction(current => {
-                return (current || 0) + 1;
-            });
-            if (result.committed) {
-                const num = result.snapshot.val();
-                return `OP-${dateKey}-${String(num).padStart(4, '0')}`;
+        let agentBaseSalary = 0;
+        let currentDate = new Date(joinDate);
+
+        while (currentDate <= today) {
+          const dateStr = getLocalYMD(currentDate);
+          const att = (allAttendance[uname] && allAttendance[uname][dateStr]) || {};
+
+          const isPresent = att.status === 'present';
+          const salaryCounted = att.salary_counted !== false;
+
+          if (isPresent && salaryCounted) {
+            let dayAmount = perDaySalary;
+
+            if (att.half_day === true) {
+              dayAmount = perDaySalary * 0.5;
             }
-        } catch (e) {
-            console.warn('ID reservation attempt ' + attempt + ' failed:', e);
+
+            agentBaseSalary += dayAmount;
+          }
+
+          currentDate.setDate(currentDate.getDate() + 1);
         }
-        await new Promise(r => setTimeout(r, 500));
-    }
-    throw new Error('Could not reserve ID. Please retry.');
-}
 
-// ---- Open / Close Outside Pickup Page ----
-async function openOutsidePickup() {
-    if (!currentUser) { showToast('Please login first', 'error'); return; }
+        totalOverhead += agentBaseSalary;
+      }
 
-    // Reset state
-    outsidePickupId = '';
-    outsidePickupImages = [];
-    opSelectedRam = ''; opSelectedStorage = ''; opSelectedNetwork = '';
-    hiddenImei2 = '';
+      let totalPickupIncentives = 0;
+      let totalRejectIncentives = 0;
 
-    // Switch views: hide tabs, show outside page
-    document.getElementById('mainTabBar').style.display = 'none';
-    document.querySelectorAll('.tab-content').forEach(el => el.style.display = 'none');
-    document.getElementById('outsidePickupPage').style.display = 'block';
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+      Object.values(data).forEach(item => {
+        if (item.status === 'on_hold') return;
 
-    // Placeholder while the preview loads
-    const idEl = document.getElementById('outsidePickupIdDisplay');
-    if (idEl) idEl.textContent = '⏳ Generating…';
+        const agent = item.agent;
+        if (!agent) return;
 
-    // Build chips
-    const ramChipsEl = document.getElementById('opRamChips');
-    const stoChipsEl = document.getElementById('opStorageChips');
-    const netChipsEl = document.getElementById('opNetworkChips');
-    if (ramChipsEl) ramChipsEl.innerHTML = buildOutsideChips('ram', RAM_OPTIONS);
-    if (stoChipsEl) stoChipsEl.innerHTML = buildOutsideChips('storage', STORAGE_OPTIONS);
-    if (netChipsEl) netChipsEl.innerHTML = buildOutsideChips('network', OP_NETWORK_OPTIONS, 'net');
+        const uData = users[agent];
+        if (!uData || (uData.role || 'agent') !== 'agent') return;
 
-    // Reset inputs
-    document.getElementById('opPhoneModel').value = '';
-    document.getElementById('opImei').value = '';
-    document.getElementById('opValue').value = '';
-    document.getElementById('opCustomerName').value = '';
-    document.getElementById('opAadhaarNumber').value = '';
-    document.getElementById('opBillNumber').value = '';
-    document.getElementById('opPhotoPreview').innerHTML = '';
-    document.getElementById('opPhotoInfo').textContent = '0 photos added · optional';
-    updateOutsideSpecUI();
-    lucide.createIcons();
+        if (item.status === 'pickup') {
+          totalPickupIncentives += getActivityIncentive(item, uData, 'pickup');
+        } else if (item.status === 'rejected' && Boolean(item.incentive_approved)) {
+          totalRejectIncentives += getActivityIncentive(item, uData, 'reject');
+        }
+      });
 
-    // Preview the next ID (read-only). The number is only consumed when a
-    // pickup is successfully created, so refresh / reopen keeps it stable.
-    try {
-        outsidePickupId = await peekOutsidePickupId();
-        if (idEl) idEl.textContent = outsidePickupId;
-    } catch (e) {
-        console.warn('ID preview failed:', e);
-        outsidePickupId = '';
-        if (idEl) idEl.textContent = 'Auto-generated on submit';
-    }
-}
+      totalOverhead += totalPickupIncentives + totalRejectIncentives;
 
-async function closeOutsidePickup() {
-    // Confirm discard if form has any data
-    const hasData =
-        (document.getElementById('opPhoneModel')?.value || '').trim() ||
-        (document.getElementById('opImei')?.value || '').trim() ||
-        (document.getElementById('opValue')?.value || '').trim() ||
-        outsidePickupImages.length > 0 ||
-        opSelectedRam || opSelectedStorage || opSelectedNetwork;
+      let totalSold = 0;
+      Object.values(data).forEach(item => {
+        if (item.status === 'pickup' && item.sold) totalSold++;
+      });
 
-    if (hasData) {
-        const c = await Swal.fire({
-            title: 'Discard this pickup?',
-            text: 'Your entered details will be lost.',
-            icon: 'warning', showCancelButton: true,
-            confirmButtonColor: '#dc2626', cancelButtonColor: '#64748b',
-            confirmButtonText: 'Yes, discard', cancelButtonText: 'Stay'
-        });
-        if (!c.isConfirmed) return;
+      overheadPerPhone = totalSold > 0 ? totalOverhead / totalSold : 0;
+      overheadCache = { version: cacheVersion, value: overheadPerPhone };
     }
 
-    // Reset
-    outsidePickupImages = [];
-    outsidePickupId = '';
-    opSelectedRam = ''; opSelectedStorage = ''; opSelectedNetwork = '';
-    hiddenImei2 = '';
+    salesList = Object.entries(data)
+      .filter(([_, item]) => item.sold === true && item.status !== 'on_hold')
+      .map(([id, item]) => {
+        const purchase = item.value || 0;
+        const commission = item.commission !== undefined ? item.commission : calculateCommission(purchase);
+        const grossProfit = (item.salePrice || 0) - purchase - commission;
+        const finalNetProfit = grossProfit - overheadPerPhone;
 
-    // Switch views back
-    document.getElementById('outsidePickupPage').style.display = 'none';
-    document.getElementById('mainTabBar').style.display = 'flex';
-    switchTab('pickup');
+        return {
+          id,
+          ...item,
+          commission,
+          grossProfit,
+          finalNetProfit
+        };
+      });
+
+    salesList.sort((a, b) => (b.saleTimestamp || b.timestamp || 0) - (a.saleTimestamp || a.timestamp || 0));
+
+    applySalesFilters();
+    setText('salesBadge', salesList.length);
+
+    setupLiveSearch('salesSearch', 'salesSearchDropdown', salesList, ['orderId', 'phoneModel', 'buyerName', 'agent', 'color']);
+  } catch (e) {
+    console.error('Sales error:', e);
+    showToast('Error loading sales', 'error');
+  }
 }
 
-// ---- Photo Handling for Outside Pickup ----
-async function handleOutsidePhotoPick(inputEl) {
-    const files = inputEl.files ? Array.from(inputEl.files) : [];
-    if (!files.length) return;
-    if (outsidePickupImages.length >= OUTSIDE_MAX_IMAGES) {
-        showToast(`Max ${OUTSIDE_MAX_IMAGES} photos`, 'error');
-        inputEl.value = '';
-        return;
+function applySalesFilters() {
+  const query = getVal('salesSearch').trim();
+  const dateFrom = getVal('salesDateFrom');
+  const dateTo = getVal('salesDateTo');
+
+  let filtered = salesList;
+
+  if (query && window.Fuse) {
+    const fuse = new Fuse(filtered, {
+      keys: ['orderId', 'phoneModel', 'buyerName', 'agent', 'color'],
+      threshold: 0.3,
+      includeScore: true,
+      ignoreLocation: true
+    });
+    filtered = fuse.search(query).map(r => r.item);
+  }
+
+  if (dateFrom) filtered = filtered.filter(item => (item.saleDate || '') >= dateFrom);
+  if (dateTo) filtered = filtered.filter(item => (item.saleDate || '') <= dateTo);
+
+  filteredSales = filtered;
+  renderSalesTable();
+  updateSalesSummary();
+}
+
+function clearSalesFilters() {
+  setVal('salesSearch', '');
+  setVal('salesDateFrom', '');
+  setVal('salesDateTo', '');
+  applySalesFilters();
+}
+
+function updateSalesSummary() {
+  const total = filteredSales.length;
+  let revenue = 0;
+  let grossProfitTotal = 0;
+  let finalProfitTotal = 0;
+
+  filteredSales.forEach(item => {
+    const purchase = item.value || 0;
+    const c = item.commission !== undefined ? item.commission : calculateCommission(purchase);
+
+    revenue += (item.salePrice || 0) - c;
+
+    const gp = item.grossProfit !== undefined ? item.grossProfit : (item.salePrice - c - purchase);
+    grossProfitTotal += gp || 0;
+
+    const fp = item.finalNetProfit !== undefined ? item.finalNetProfit : (gp - overheadPerPhone);
+    finalProfitTotal += fp || 0;
+  });
+
+  setText('salesTotalCount', total);
+  setText('salesTotalRevenue', formatINR(revenue));
+  setText('salesTotalGrossProfit', formatINR(grossProfitTotal));
+  setText('salesTotalFinalProfit', formatINR(finalProfitTotal));
+  setText('salesAvgProfit', total > 0 ? formatINR(grossProfitTotal / total) : '₹0');
+  setText('salesOverheadPerPhone', formatINR(overheadPerPhone));
+}
+
+function renderSalesTable() {
+  const tbody = $('salesTableBody');
+  if (!tbody) return;
+
+  if (!filteredSales.length) {
+    tbody.innerHTML = `<tr><td colspan="13"><div class="empty-state"><i data-lucide="inbox"></i><p class="text-sm font-medium">No sales found</p></div></td></tr>`;
+    refreshIcons();
+    return;
+  }
+
+  let html = '';
+
+  filteredSales.forEach((item, idx) => {
+    const purchase = item.value || 0;
+    const commission = item.commission !== undefined ? item.commission : calculateCommission(purchase);
+    const grossProfit = item.grossProfit !== undefined ? item.grossProfit : (item.salePrice - commission - purchase);
+    const finalProfit = item.finalNetProfit !== undefined ? item.finalNetProfit : (grossProfit - overheadPerPhone);
+    const profitClass = finalProfit >= 0 ? 'profit-green' : 'profit-red';
+
+    html += `
+      <tr class="order-row border-b border-gray-50">
+        <td class="py-3 px-4 text-gray-400 font-mono text-xs">${idx + 1}</td>
+        <td class="py-3 px-4 font-mono font-bold text-gray-800 text-sm">${item.orderId || item.id}</td>
+        <td class="py-3 px-4 text-gray-600 text-sm">${item.phoneModel || '—'}</td>
+        <td class="py-3 px-4 hidden md:table-cell font-mono text-xs text-gray-500">${item.imei || '—'}</td>
+        <td class="py-3 px-4 text-gray-600">${formatINR(purchase)}</td>
+        <td class="py-3 px-4 font-bold text-gray-800">${formatINR(item.salePrice || 0)}</td>
+        <td class="py-3 px-4"><span class="commission-badge">${formatINR(commission)}</span></td>
+        <td class="py-3 px-4 font-bold text-indigo-600">${formatINR(grossProfit)}</td>
+        <td class="py-3 px-4 text-amber-600 font-semibold">${formatINR(overheadPerPhone)}</td>
+        <td class="py-3 px-4 font-bold ${profitClass}">${formatINR(finalProfit)}</td>
+        <td class="py-3 px-4 hidden lg:table-cell text-gray-600 text-sm">${item.buyerName || '—'}</td>
+        <td class="py-3 px-4 text-xs text-gray-500">${item.saleDate || item.timestampIST || '—'} (${item.agent || '—'})</td>
+        <td class="py-3 px-4"><button onclick="viewOrder('${item.id}')" class="btn-action view"><i data-lucide="eye"></i></button></td>
+      </tr>
+    `;
+  });
+
+  tbody.innerHTML = html;
+  refreshIcons();
+}
+
+function refreshSales() {
+  loadSales(true);
+  showToast('🔄 Sales refreshed', 'info');
+}
+
+function exportSalesCSV() {
+  if (!filteredSales.length) {
+    showToast('No data', 'error');
+    return;
+  }
+
+  const headers = ['Order ID', 'Model', 'IMEI', 'Purchase Price', 'Sale Price', 'Commission', 'Gross Profit', 'Overhead/Phone', 'Final Net Profit', 'Buyer', 'Buyer Contact', 'Sale Date', 'Agent'];
+
+  const rows = filteredSales.map(item => {
+    const purchase = item.value || 0;
+    const c = item.commission !== undefined ? item.commission : calculateCommission(purchase);
+    const gp = item.grossProfit !== undefined ? item.grossProfit : (item.salePrice - c - purchase);
+    const fp = item.finalNetProfit !== undefined ? item.finalNetProfit : (gp - overheadPerPhone);
+
+    return [
+      item.orderId || item.id || '',
+      item.phoneModel || '',
+      item.imei || '',
+      purchase,
+      item.salePrice || 0,
+      c,
+      gp,
+      overheadPerPhone,
+      fp,
+      item.buyerName || '',
+      item.buyerContact || '',
+      item.saleDate || '',
+      item.agent || ''
+    ];
+  });
+
+  let csv = '\uFEFF' + headers.join(',') + '\n';
+
+  rows.forEach(row => {
+    csv += row.map(val => `"${String(val).replace(/"/g, '""')}"`).join(',') + '\n';
+  });
+
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(blob);
+  link.download = `sales_report_${getLocalYMD()}.csv`;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(link.href);
+
+  showToast('📥 Sales CSV exported', 'success');
+}
+
+// ================================================================
+// SELL MODAL
+// ================================================================
+function openSellModal(orderId) {
+  const order = inventoryList.find(item => item.id === orderId) || ordersById.get(orderId);
+
+  if (!order) {
+    showToast('Order not found', 'error');
+    return;
+  }
+
+  openSellModalWithOrder(order);
+}
+
+function openSellModalWithOrder(order) {
+  sellOrderData = order;
+
+  setVal('sellOrderId', order.orderId || order.id);
+  setVal('sellModel', order.phoneModel || '—');
+  setVal('sellPurchasePrice', formatINR(order.value || 0));
+  setVal('sellSalePrice', '');
+  setVal('sellBuyerName', '');
+  setVal('sellBuyerContact', '');
+  setVal('sellSaleDate', getLocalYMD());
+
+  const preview = $('sellProfitPreview');
+  if (preview) {
+    preview.className = 'profit-preview neutral';
+    preview.textContent = 'Enter sale price to see profit (commission based on purchase price)';
+  }
+
+  const modal = $('sellModal');
+  if (modal) modal.style.display = 'flex';
+
+  refreshIcons();
+
+  const salePriceInput = $('sellSalePrice');
+  if (salePriceInput) salePriceInput.oninput = updateSellProfitPreview;
+
+  updateSellProfitPreview();
+
+  setTimeout(() => {
+    if (salePriceInput) salePriceInput.focus();
+  }, 300);
+}
+
+function updateSellProfitPreview() {
+  const purchase = sellOrderData ? (sellOrderData.value || 0) : 0;
+  const sale = parseFloat(getVal('sellSalePrice')) || 0;
+  const commission = calculateCommission(purchase);
+  const grossProfit = sale - purchase - commission;
+  const finalProfit = grossProfit - overheadPerPhone;
+
+  const preview = $('sellProfitPreview');
+  const breakdown = $('sellProfitBreakdown');
+
+  if (sale > 0) {
+    setText('sellGrossProfit', formatINR(grossProfit));
+    setText('sellOverhead', formatINR(overheadPerPhone));
+    setText('sellFinalProfit', formatINR(finalProfit));
+
+    if (preview) {
+      preview.textContent = `Commission: ${formatINR(commission)} | Gross: ${formatINR(grossProfit)} | Final: ${formatINR(finalProfit)}`;
+      preview.className = finalProfit >= 0 ? 'profit-preview positive' : 'profit-preview negative';
     }
-    const room = OUTSIDE_MAX_IMAGES - outsidePickupImages.length;
-    const infoEl = document.getElementById('opPhotoInfo');
-    if (infoEl) infoEl.textContent = '⏳ Compressing...';
-    for (const f of files.slice(0, room)) {
-        try { outsidePickupImages.push(await compressImageFile(f)); }
-        catch (e) { console.error(e); }
+
+    if (breakdown) breakdown.style.display = 'block';
+  } else {
+    if (preview) {
+      preview.textContent = 'Enter sale price to see profit breakdown';
+      preview.className = 'profit-preview neutral';
     }
-    inputEl.value = '';
-    renderOutsidePhotos();
+
+    if (breakdown) breakdown.style.display = 'none';
+  }
 }
 
-function renderOutsidePhotos() {
-    const preview = document.getElementById('opPhotoPreview');
-    const info = document.getElementById('opPhotoInfo');
-    if (!preview) return;
-    if (!outsidePickupImages.length) {
-        preview.innerHTML = '';
-        if (info) info.textContent = '0 photos added · optional';
-        return;
+function closeSellModal() {
+  const modal = $('sellModal');
+  if (modal) modal.style.display = 'none';
+  sellOrderData = null;
+}
+
+async function confirmSell() {
+  if (!sellOrderData) return;
+
+  const salePrice = parseFloat(getVal('sellSalePrice'));
+  const buyerName = getVal('sellBuyerName').trim();
+  const buyerContact = getVal('sellBuyerContact').trim();
+  const saleDate = getVal('sellSaleDate');
+
+  if (!salePrice || salePrice <= 0) {
+    showToast('Valid sale price required', 'error');
+    return;
+  }
+
+  if (!buyerName) {
+    showToast('Buyer name required', 'error');
+    return;
+  }
+
+  const purchasePrice = sellOrderData.value || 0;
+  const commission = calculateCommission(purchasePrice);
+  const grossProfit = salePrice - purchasePrice - commission;
+  const finalProfit = grossProfit - overheadPerPhone;
+
+  const confirm = await Swal.fire({
+    title: 'Confirm Sale',
+    html: `
+      <div class="text-left">
+        <p><strong>Order:</strong> ${sellOrderData.orderId || sellOrderData.id}</p>
+        <p><strong>Model:</strong> ${sellOrderData.phoneModel || '—'}</p>
+        <p><strong>Purchase:</strong> ${formatINR(purchasePrice)}</p>
+        <p><strong>Sale Price:</strong> ${formatINR(salePrice)}</p>
+        <p><strong>Commission:</strong> ${formatINR(commission)}</p>
+        <p><strong>Gross Profit:</strong> ${formatINR(grossProfit)}</p>
+        <p><strong>Overhead/Phone:</strong> ${formatINR(overheadPerPhone)}</p>
+        <p><strong>Final Net Profit:</strong> <span class="${finalProfit >= 0 ? 'text-green-600' : 'text-red-600'} font-bold">${formatINR(finalProfit)}</span></p>
+        <p><strong>Buyer:</strong> ${buyerName}</p>
+        <p><strong>Sale Date:</strong> ${saleDate}</p>
+      </div>
+    `,
+    icon: 'question',
+    showCancelButton: true,
+    confirmButtonColor: '#059669',
+    cancelButtonColor: '#64748b',
+    confirmButtonText: '✅ Confirm Sale',
+    cancelButtonText: 'Cancel'
+  });
+
+  if (!confirm.isConfirmed) return;
+
+  try {
+    await db.ref('pickups/' + sellOrderData.id).update({
+      sold: true,
+      salePrice,
+      commission,
+      grossProfit,
+      finalNetProfit: finalProfit,
+      buyerName,
+      buyerContact: buyerContact || '',
+      saleDate,
+      saleTimestamp: new Date().toISOString()
+    });
+
+    invalidate('pickups');
+    showToast(`✅ Sold! Final Net Profit: ${formatINR(finalProfit)}`, 'success');
+
+    closeSellModal();
+
+    await Promise.allSettled([
+      loadInventory(true),
+      loadSales(true),
+      loadDashboard(true)
+    ]);
+
+    if (currentPageView === 'sales') applySalesFilters();
+  } catch (e) {
+    console.error('Sale error:', e);
+    showToast('Error saving sale', 'error');
+  }
+}
+
+// ================================================================
+// VIEW ORDER
+// ================================================================
+async function viewOrder(orderId) {
+  detailOrderId = orderId;
+  isEditMode = false;
+
+  setText('detailModalTitle', 'Order Details');
+
+  const modal = $('detailModal');
+  const content = $('detailContent');
+
+  if (!modal || !content) return;
+
+  modal.style.display = 'flex';
+  content.innerHTML = `<div class="text-center py-8"><span class="spinner-sm"></span><p class="text-sm text-gray-400 mt-2">Loading...</p></div>`;
+
+  const detailActions = $('detailActions');
+  const detailSaveActions = $('detailSaveActions');
+  const detailEditBtn = $('detailEditBtn');
+  const detailHoldBtn = $('detailHoldBtn');
+  const detailUnholdBtn = $('detailUnholdBtn');
+
+  if (detailActions) detailActions.style.display = 'flex';
+  if (detailSaveActions) detailSaveActions.style.display = 'none';
+
+  if (detailEditBtn) {
+    detailEditBtn.textContent = '✏️ Edit';
+    detailEditBtn.onclick = toggleEditMode;
+  }
+
+  if (detailHoldBtn) {
+    detailHoldBtn.style.display = 'inline-flex';
+    detailHoldBtn.onclick = holdOrderFromDetail;
+  }
+
+  if (detailUnholdBtn) detailUnholdBtn.style.display = 'none';
+
+  try {
+    const snap = await db.ref('pickups/' + orderId).once('value');
+    const item = snap.val();
+
+    if (!item) {
+      content.innerHTML = `<div class="empty-state"><i data-lucide="alert-circle"></i><p class="text-sm font-medium">Order not found</p></div>`;
+      showToast('Order not found', 'error');
+      return;
     }
-    let totalKB = 0;
-    preview.innerHTML = `<div class="grid grid-cols-3 gap-2">` + outsidePickupImages.map((d, i) => {
-        const kb = Math.round((d.length * 3 / 4) / 1024); totalKB += kb;
-        return `<div class="relative">
-            <img src="${d}" class="w-full h-20 object-cover rounded-lg border border-gray-200" alt="p${i}">
-            <button type="button" onclick="removeOutsidePhoto(${i})" class="absolute -top-1.5 -right-1.5 w-6 h-6 rounded-full bg-red-600 text-white text-xs font-bold shadow-md">✕</button>
-            <div class="absolute bottom-0 left-0 right-0 bg-black/50 text-white text-[9px] text-center rounded-b-lg">${kb}KB</div>
-        </div>`;
-    }).join('') + `</div>`;
-    if (info) info.textContent = `✅ ${outsidePickupImages.length}/${OUTSIDE_MAX_IMAGES} · ~${totalKB} KB`;
-}
 
-function removeOutsidePhoto(idx) {
-    outsidePickupImages.splice(idx, 1);
-    renderOutsidePhotos();
-}
+    const purchase = item.value || 0;
+    const commission = item.commission !== undefined ? item.commission : calculateCommission(purchase);
 
-// ---- Open Scanner for Outside Pickup ----
-function openOutsideScanner() {
-    scannerTarget = 'outside';
-    startScanner();
-}
-
-// ---- Review & Submit ----
-function escapeHtmlOP(s) {
-    return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({
-        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
-    }[c]));
-}
-
-async function reviewOutsidePickup() {
-    if (!currentUser) { showToast('Please login first', 'error'); return; }
-
-    const phoneModel = (document.getElementById('opPhoneModel').value || '').trim();
-    const imei = (document.getElementById('opImei').value || '').trim();
-    const valueRaw = (document.getElementById('opValue').value || '').trim();
-    const customerName = (document.getElementById('opCustomerName').value || '').trim();
-    const aadhaarNumber = (document.getElementById('opAadhaarNumber').value || '').trim();
-    const billNumber = (document.getElementById('opBillNumber').value || '').trim();
-
-    // Validations
-    if (!phoneModel) { showToast('Enter phone model', 'error'); document.getElementById('opPhoneModel').focus(); return; }
-    if (!imei || imei.length !== 15 || !/^\d{15}$/.test(imei)) {
-        showToast('Enter valid 15-digit IMEI', 'error'); document.getElementById('opImei').focus(); return;
+    if (item.sold && item.profit === undefined) {
+      const netRevenue = (item.salePrice || 0) - commission;
+      item.profit = netRevenue - purchase;
     }
-    const value = parseInt(valueRaw);
-    if (!value || value <= 0 || isNaN(value)) {
-        showToast('Enter valid agreed value', 'error'); document.getElementById('opValue').focus(); return;
+
+    item.commission = commission;
+    editData = { ...item, id: orderId };
+
+    renderDetailView(item);
+
+    if (item.status === 'on_hold') {
+      if (detailHoldBtn) detailHoldBtn.style.display = 'none';
+      if (detailUnholdBtn) {
+        detailUnholdBtn.style.display = 'inline-flex';
+        detailUnholdBtn.onclick = unholdOrderFromDetail;
+      }
+    } else {
+      if (detailHoldBtn) detailHoldBtn.style.display = 'inline-flex';
+      if (detailUnholdBtn) detailUnholdBtn.style.display = 'none';
     }
-    if (!opSelectedRam) { showToast('Select RAM', 'error'); return; }
-    if (!opSelectedStorage) { showToast('Select Storage', 'error'); return; }
-    if (!opSelectedNetwork) { showToast('Select Network', 'error'); return; }
-    const summaryHtml = `
-        <div style="text-align:left;font-size:13px;line-height:1.6;">
-            <div style="background:linear-gradient(135deg,#faf5ff,#f3e8ff);border:1px solid #d8b4fe;border-radius:12px;padding:10px 12px;margin-bottom:10px;text-align:center;">
-                <div style="font-size:9px;font-weight:800;color:#7c3aed;letter-spacing:1.5px;">PICKUP ID</div>
-                <div style="font-family:monospace;font-size:14px;font-weight:800;color:#4c1d95;margin-top:2px;">${escapeHtmlOP(outsidePickupId || 'Auto-generated on submit')}</div>
+  } catch (err) {
+    console.error(err);
+    content.innerHTML = `<div class="empty-state"><i data-lucide="alert-circle"></i><p class="text-sm font-medium text-red-500">Error loading order</p></div>`;
+    showToast('Error loading order', 'error');
+  }
+}
+
+function renderDetailView(item) {
+  try {
+    const content = $('detailContent');
+    if (!content) return;
+
+    let commissionDisplay = '—';
+    let grossProfitDisplay = '—';
+    let finalProfitDisplay = '—';
+    let profitClass = '';
+    let finalProfitClass = '';
+
+    if (item.sold) {
+      const commission = item.commission !== undefined ? item.commission : calculateCommission(item.value || 0);
+      const grossProfit = item.profit !== undefined ? item.profit : ((item.salePrice || 0) - commission - (item.value || 0));
+      const finalProfit = grossProfit - overheadPerPhone;
+
+      commissionDisplay = formatINR(commission);
+      grossProfitDisplay = formatINR(grossProfit);
+      finalProfitDisplay = formatINR(finalProfit);
+
+      profitClass = grossProfit >= 0 ? 'green' : 'red';
+      finalProfitClass = finalProfit >= 0 ? 'green' : 'red';
+    }
+
+    let saleHtml = '';
+
+    if (item.sold) {
+      saleHtml = `
+        <div class="detail-item"><div class="label">Sale Price</div><div class="value green">${formatINR(item.salePrice || 0)}</div></div>
+        <div class="detail-item"><div class="label">Commission</div><div class="value amber">${commissionDisplay}</div></div>
+        <div class="detail-item"><div class="label">Gross Profit</div><div class="value ${profitClass}">${grossProfitDisplay}</div></div>
+        <div class="detail-item"><div class="label">Overhead / Phone</div><div class="value">${formatINR(overheadPerPhone)}</div></div>
+        <div class="detail-item"><div class="label">Final Net Profit</div><div class="value ${finalProfitClass}">${finalProfitDisplay}</div></div>
+        <div class="detail-item"><div class="label">Buyer</div><div class="value">${item.buyerName || '—'}</div></div>
+        <div class="detail-item"><div class="label">Buyer Contact</div><div class="value">${item.buyerContact || '—'}</div></div>
+        <div class="detail-item"><div class="label">Sale Date</div><div class="value">${item.saleDate || '—'}</div></div>
+      `;
+    }
+
+    let holdHtml = '';
+
+    if (item.status === 'on_hold') {
+      holdHtml = `
+        <div class="detail-item"><div class="label">Hold Reason</div><div class="value text-red-600">${item.hold_reason || '—'}</div></div>
+        <div class="detail-item"><div class="label">Previous Status</div><div class="value">${item.previous_status || '—'}</div></div>
+      `;
+    }
+
+    let html = `
+      <div class="flex items-center gap-3 mb-4">
+        <span class="badge-status ${getStatusClass(item)} text-sm px-4 py-1.5">${getStatusDisplay(item)}</span>
+        <span class="font-mono font-bold text-gray-800 text-sm">${item.orderId || item.id}</span>
+        ${item.agent ? `<span class="text-xs text-gray-400">(Agent: ${item.agent})</span>` : ''}
+      </div>
+
+      <div class="detail-grid">
+        <div class="detail-item"><div class="label">Phone Model</div><div class="value">${item.phoneModel || '—'}</div></div>
+        <div class="detail-item"><div class="label">IMEI</div><div class="value font-mono text-xs">${item.imei || '—'}</div></div>
+        ${item.imei2 ? `<div class="detail-item"><div class="label">IMEI 2</div><div class="value font-mono text-xs">${item.imei2}</div></div>` : ''}
+        <div class="detail-item"><div class="label">Purchase Price</div><div class="value font-bold">${item.value !== undefined && item.value !== null ? formatINR(item.value) : '—'}</div></div>
+        <div class="detail-item"><div class="label">Customer Name</div><div class="value">${item.customerName || '—'}</div></div>
+        <div class="detail-item"><div class="label">RAM / Storage</div><div class="value">${getRamStorageText(item) || '—'}</div></div>
+        <div class="detail-item"><div class="label">Network</div><div class="value">${item.networkType || '—'}</div></div>
+        <div class="detail-item"><div class="label">Reason</div><div class="value">${item.reason || '—'}</div></div>
+        <div class="detail-item"><div class="label">Status</div><div class="value">${getStatusDisplay(item)}</div></div>
+        <div class="detail-item"><div class="label">Time (IST)</div><div class="value text-xs">${item.timestampIST || item.timestamp || '—'}</div></div>
+        ${holdHtml}
+        ${saleHtml}
+      </div>
+    `;
+
+    const billImgs = getDocImages(item, 'bill');
+    const aadImgs = getDocImages(item, 'aadhaar');
+
+    const docCard = (which, label, num, imgs, colorClass) => {
+      let gallery;
+
+      if (!imgs.length) {
+        gallery = `<div class="w-full h-32 rounded-lg border-2 border-dashed border-gray-200 flex items-center justify-center text-gray-400 text-xs">No image</div>`;
+      } else {
+        gallery = `<div class="grid grid-cols-3 gap-2">` + imgs.map((img, i) => {
+          const kb = Math.round((img.length * 3 / 4) / 1024);
+
+          return `
+            <div class="relative group">
+              <img loading="lazy" src="${img}" onclick="openImageViewer('${esc(img)}','${label} ${i + 1}')" class="w-full h-24 object-cover rounded-lg border border-gray-200 cursor-zoom-in hover:opacity-90 transition" alt="${label} ${i + 1}">
+              <button onclick="adminDeleteDocImage('${which}',${i})" class="absolute -top-1.5 -right-1.5 w-6 h-6 rounded-full bg-red-600 text-white text-xs font-bold shadow-md hover:bg-red-700" title="Delete">✕</button>
+              <div class="absolute bottom-0 left-0 right-0 bg-black/50 text-white text-[9px] text-center rounded-b-lg">${kb}KB</div>
             </div>
-            <p><strong>Model:</strong> ${escapeHtmlOP(phoneModel)}</p>
-            <p><strong>IMEI:</strong> <span style="font-family:monospace;">${escapeHtmlOP(imei)}</span></p>
-            <p><strong>RAM / Storage:</strong> ${opSelectedRam} / ${opSelectedStorage}</p>
-            <p><strong>Network:</strong> ${opSelectedNetwork}</p>
-            <p><strong>Agreed Value:</strong> ₹${value.toLocaleString('en-IN')}</p>
-            <p><strong>Photos:</strong> ${outsidePickupImages.length ? `${outsidePickupImages.length} uploaded` : 'None (optional)'}</p>
-            ${customerName ? `<p><strong>Customer:</strong> ${escapeHtmlOP(customerName)}</p>` : ''}
-            ${aadhaarNumber ? `<p><strong>Aadhaar:</strong> ${escapeHtmlOP(aadhaarNumber)}</p>` : ''}
-            ${billNumber ? `<p><strong>Bill No:</strong> ${escapeHtmlOP(billNumber)}</p>` : ''}
-            <div style="margin-top:10px;padding:8px;background:#fef3c7;border:1px solid #fde68a;border-radius:8px;font-size:11px;color:#92400e;">
-                <strong>ℹ️ Status:</strong> Record will be saved as <strong>Pending Approval</strong>. Admin will verify and approve. No WhatsApp message will be sent.
-            </div>
-        </div>`;
+          `;
+        }).join('') + `</div>`;
+      }
 
-    const result = await Swal.fire({
-        title: 'Review Outside Pickup',
-        html: summaryHtml,
+      return `
+        <div class="rounded-xl border border-gray-200 p-3 ${colorClass.card}">
+          <div class="flex items-center justify-between mb-2">
+            <p class="text-xs font-bold ${colorClass.text} uppercase tracking-wide">${label} <span class="text-[10px] text-gray-500 font-normal">(${imgs.length}/${ADMIN_MAX_DOC_IMAGES})</span></p>
+            <button onclick="adminSaveDocNumber('${which}')" class="text-[11px] text-indigo-600 font-semibold hover:underline">✏️ Edit No.</button>
+          </div>
+          <div class="text-sm font-mono font-semibold text-gray-800 mb-2 break-all">${num || '<span class="text-gray-400 font-sans font-normal">— no number —</span>'}</div>
+          ${gallery}
+        </div>
+      `;
+    };
+
+    html += `
+      <div class="mt-5 pt-4 border-t border-gray-100">
+        <p class="text-xs font-bold text-gray-500 uppercase tracking-wide mb-3">📄 Documents</p>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          ${docCard('bill', 'Bill', item.billNumber || '', billImgs, { card: 'bg-blue-50', text: 'text-blue-700' })}
+          ${docCard('aadhaar', 'Aadhaar', item.aadhaarNumber || '', aadImgs, { card: 'bg-indigo-50', text: 'text-indigo-700' })}
+        </div>
+      </div>
+    `;
+
+    content.innerHTML = html;
+    refreshIcons();
+    editData = { ...item };
+  } catch (e) {
+    console.error('renderDetailView error:', e);
+    setHTML('detailContent', `<div class="empty-state"><i data-lucide="alert-circle"></i><p class="text-sm font-medium text-red-500">Render error</p></div>`);
+    showToast('Error rendering details', 'error');
+  }
+}
+
+// ================================================================
+// HOLD / UNHOLD / REVERT SALE
+// ================================================================
+async function holdOrderFromDetail() {
+  if (!detailOrderId) return;
+
+  const { value: reason, isConfirmed } = await Swal.fire({
+    title: 'Hold Order',
+    text: 'Enter reason for holding this order:',
+    input: 'text',
+    inputPlaceholder: 'Reason...',
+    showCancelButton: true,
+    confirmButtonColor: '#3730a3',
+    cancelButtonColor: '#64748b',
+    confirmButtonText: 'Hold',
+    cancelButtonText: 'Cancel'
+  });
+
+  if (!isConfirmed || !reason) return;
+
+  try {
+    const snap = await db.ref('pickups/' + detailOrderId).once('value');
+    const order = snap.val();
+
+    if (!order) {
+      showToast('Order not found', 'error');
+      return;
+    }
+
+    await db.ref('pickups/' + detailOrderId).update({
+      status: 'on_hold',
+      hold_reason: reason,
+      previous_status: order.status || 'pickup'
+    });
+
+    invalidate('pickups');
+    showToast('⏸️ Order put on hold', 'success');
+
+    closeDetail();
+    refreshOrderRelated();
+  } catch (e) {
+    showToast('Error holding order', 'error');
+    console.error(e);
+  }
+}
+
+async function unholdOrderFromDetail() {
+  if (!detailOrderId) return;
+
+  const confirm = await Swal.fire({
+    title: 'Unhold Order?',
+    text: 'This will set the order status back to its previous state.',
+    icon: 'question',
+    showCancelButton: true,
+    confirmButtonColor: '#059669',
+    cancelButtonColor: '#64748b',
+    confirmButtonText: 'Yes, Unhold',
+    cancelButtonText: 'Cancel'
+  });
+
+  if (!confirm.isConfirmed) return;
+
+  try {
+    const snap = await db.ref('pickups/' + detailOrderId).once('value');
+    const order = snap.val();
+
+    if (!order) {
+      showToast('Order not found', 'error');
+      return;
+    }
+
+    const previousStatus = order.previous_status || 'pickup';
+
+    await db.ref('pickups/' + detailOrderId).update({
+      status: previousStatus,
+      hold_reason: null,
+      previous_status: null
+    });
+
+    invalidate('pickups');
+    showToast(`▶️ Order unheld. Reverted to ${previousStatus}`, 'success');
+
+    closeDetail();
+    refreshOrderRelated();
+  } catch (e) {
+    showToast('Error unholding order', 'error');
+    console.error(e);
+  }
+}
+
+async function revertSale() {
+  if (!detailOrderId) return;
+
+  const confirm = await Swal.fire({
+    title: 'Revert Sale?',
+    text: 'This will remove sale details and put the phone back in inventory.',
+    icon: 'warning',
+    showCancelButton: true,
+    confirmButtonColor: '#dc2626',
+    cancelButtonColor: '#64748b',
+    confirmButtonText: 'Yes, Revert',
+    cancelButtonText: 'Cancel'
+  });
+
+  if (!confirm.isConfirmed) return;
+
+  try {
+    await db.ref('pickups/' + detailOrderId).update({
+      sold: false,
+      salePrice: null,
+      buyerName: null,
+      buyerContact: null,
+      saleDate: null,
+      saleTimestamp: null,
+      grossProfit: null,
+      finalNetProfit: null
+    });
+
+    invalidate('pickups');
+    showToast('↩️ Sale reverted', 'success');
+
+    closeDetail();
+    refreshOrderRelated();
+  } catch (e) {
+    showToast('Error reverting sale', 'error');
+    console.error(e);
+  }
+}
+
+async function refreshOrderRelated() {
+  invalidate('pickups', 'pending');
+
+  await Promise.allSettled([
+    loadOrders(true),
+    loadPendingAdmin(true),
+    loadRejectedAdmin(true),
+    loadInventory(true),
+    loadSales(true),
+    loadDashboard(true)
+  ]);
+}
+
+// ================================================================
+// EDIT MODE
+// ================================================================
+function toggleEditMode() {
+  if (isEditMode) return;
+
+  isEditMode = true;
+
+  setText('detailModalTitle', 'Edit Order');
+
+  const actBar = $('detailActions');
+  const saveBar = $('detailSaveActions');
+
+  if (actBar) actBar.style.display = 'none';
+
+  if (saveBar) {
+    saveBar.style.setProperty('display', 'flex', 'important');
+    saveBar.style.zIndex = '20';
+  }
+
+  const content = $('detailContent');
+  const item = editData;
+
+  let datetimeVal = '';
+
+  if (item.timestamp) {
+    const d = new Date(item.timestamp);
+    if (!isNaN(d)) {
+      const year = d.getFullYear();
+      const month = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      const hours = String(d.getHours()).padStart(2, '0');
+      const mins = String(d.getMinutes()).padStart(2, '0');
+      datetimeVal = `${year}-${month}-${day}T${hours}:${mins}`;
+    }
+  }
+
+  const imeiVal = item.imei || '';
+  const imei2Val = item.imei2 || '';
+  const imeiOver = imeiVal.length > 15;
+  const imei2Over = imei2Val.length > 15;
+
+  let html = `
+    <div class="space-y-4">
+      <div><label class="edit-label">Order ID</label><input type="text" id="edit-orderId" value="${item.orderId || item.id || ''}" class="edit-field" readonly style="background:#f1f5f9;cursor:not-allowed;"></div>
+
+      <div><label class="edit-label">Status</label>
+        <select id="edit-status" class="status-select">
+          <option value="pickup" ${item.status === 'pickup' ? 'selected' : ''}>Pickup</option>
+          <option value="rejected" ${item.status === 'rejected' ? 'selected' : ''}>Rejected</option>
+          <option value="reschedule" ${item.status === 'reschedule' ? 'selected' : ''}>Pending</option>
+          <option value="on_hold" ${item.status === 'on_hold' ? 'selected' : ''}>Hold</option>
+        </select>
+      </div>
+
+      <div><label class="edit-label">Phone Model</label><input type="text" id="edit-model" value="${item.phoneModel || ''}" class="edit-field" placeholder="Optional"></div>
+
+      <div><label class="edit-label">IMEI</label>
+        <div class="imei-wrap">
+          <input type="text" id="edit-imei" value="${item.imei || ''}" class="edit-field font-mono" maxlength="15" placeholder="15 digits max">
+          <button id="imeiAllowBtn" class="imei-allow-btn ${imeiOver ? 'allowed' : ''}" onclick="toggleImeiLimit('edit-imei', 'imeiAllowBtn')">${imeiOver ? '✅ Unlimited' : 'Add more'}</button>
+        </div>
+      </div>
+
+      <div><label class="edit-label">IMEI 2</label>
+        <div class="imei-wrap">
+          <input type="text" id="edit-imei2" value="${item.imei2 || ''}" class="edit-field font-mono" maxlength="15" placeholder="15 digits max">
+          <button id="imei2AllowBtn" class="imei-allow-btn ${imei2Over ? 'allowed' : ''}" onclick="toggleImeiLimit('edit-imei2', 'imei2AllowBtn')">${imei2Over ? '✅ Unlimited' : 'Add more'}</button>
+        </div>
+      </div>
+
+      <div><label class="edit-label">Purchase Price (₹)</label><input type="number" id="edit-value" value="${item.value !== undefined && item.value !== null ? item.value : ''}" class="edit-field" placeholder="Optional"></div>
+
+      <div><label class="edit-label">Customer Name</label><input type="text" id="edit-customer" value="${item.customerName || ''}" class="edit-field" placeholder="Optional"></div>
+
+      <div class="grid grid-cols-2 gap-2">
+        <div><label class="edit-label">RAM</label><select id="edit-ram" class="edit-field">${buildOptionList(ADMIN_RAM_OPTIONS, getRam(item))}</select></div>
+        <div><label class="edit-label">Storage</label><select id="edit-storage" class="edit-field">${buildOptionList(ADMIN_STORAGE_OPTIONS, getStorage(item))}</select></div>
+      </div>
+
+      <div><label class="edit-label">Network</label><select id="edit-network" class="edit-field">${buildOptionList(ADMIN_NETWORK_OPTIONS, item.networkType || '')}</select></div>
+
+      <div><label class="edit-label">Reason</label><input type="text" id="edit-reason" value="${item.reason || ''}" class="edit-field" placeholder="Optional"></div>
+
+      <div><label class="edit-label">Date & Time (IST)</label><input type="datetime-local" id="edit-datetime" value="${datetimeVal}" class="edit-field"></div>
+
+      <div class="pt-3 border-t border-gray-100">
+        <p class="text-xs font-bold text-gray-500 uppercase tracking-wide mb-2">📄 Documents</p>
+
+        <div><label class="edit-label">Bill Number</label><input type="text" id="edit-billNumber" value="${item.billNumber || ''}" class="edit-field" placeholder="Optional"></div>
+
+        <div class="mt-2">
+          <label class="edit-label">Bill Images (${getDocImages(item, 'bill').length}/${ADMIN_MAX_DOC_IMAGES})</label>
+          <button type="button" onclick="adminUploadDocImage('bill')" class="w-full py-2.5 rounded-lg border-2 border-dashed border-blue-300 bg-blue-50 text-blue-700 font-semibold text-sm">
+            ${getDocImages(item, 'bill').length >= ADMIN_MAX_DOC_IMAGES ? '✅ Max reached' : '➕ Add Bill Image'}
+          </button>
+          ${getDocImages(item, 'bill').length ? `<div class="mt-2 grid grid-cols-3 gap-2">${getDocImages(item, 'bill').map((im, i) => `<div class="relative"><img loading="lazy" src="${im}" onclick="openImageViewer('${esc(im)}','Bill ${i + 1}')" class="w-full h-20 object-cover rounded-lg border cursor-zoom-in"><button type="button" onclick="adminDeleteDocImage('bill',${i})" class="absolute -top-1.5 -right-1.5 w-6 h-6 rounded-full bg-red-600 text-white text-xs font-bold shadow-md">✕</button></div>`).join('')}</div>` : ''}
+        </div>
+
+        <div class="mt-3"><label class="edit-label">Aadhaar Number</label><input type="text" id="edit-aadhaarNumber" value="${item.aadhaarNumber || ''}" class="edit-field font-mono" placeholder="Optional" maxlength="14"></div>
+
+        <div class="mt-2">
+          <label class="edit-label">Aadhaar Images (${getDocImages(item, 'aadhaar').length}/${ADMIN_MAX_DOC_IMAGES})</label>
+          <button type="button" onclick="adminUploadDocImage('aadhaar')" class="w-full py-2.5 rounded-lg border-2 border-dashed border-indigo-300 bg-indigo-50 text-indigo-700 font-semibold text-sm">
+            ${getDocImages(item, 'aadhaar').length >= ADMIN_MAX_DOC_IMAGES ? '✅ Max reached' : '➕ Add Aadhaar Image'}
+          </button>
+          ${getDocImages(item, 'aadhaar').length ? `<div class="mt-2 grid grid-cols-3 gap-2">${getDocImages(item, 'aadhaar').map((im, i) => `<div class="relative"><img loading="lazy" src="${im}" onclick="openImageViewer('${esc(im)}','Aadhaar ${i + 1}')" class="w-full h-20 object-cover rounded-lg border cursor-zoom-in"><button type="button" onclick="adminDeleteDocImage('aadhaar',${i})" class="absolute -top-1.5 -right-1.5 w-6 h-6 rounded-full bg-red-600 text-white text-xs font-bold shadow-md">✕</button></div>`).join('')}</div>` : ''}
+        </div>
+      </div>
+    </div>
+  `;
+
+  if (item.sold) {
+    html += `
+      <div class="border-t pt-3">
+        <p class="font-bold">Sale Details</p>
+        <div><label class="edit-label">Sale Price</label><input type="number" id="edit-salePrice" value="${item.salePrice || ''}" class="edit-field" placeholder="Optional"></div>
+        <div><label class="edit-label">Buyer</label><input type="text" id="edit-buyer" value="${item.buyerName || ''}" class="edit-field" placeholder="Optional"></div>
+        <div><label class="edit-label">Buyer Contact</label><input type="text" id="edit-buyerContact" value="${item.buyerContact || ''}" class="edit-field" placeholder="Optional"></div>
+        <div><label class="edit-label">Sale Date</label><input type="date" id="edit-saleDate" value="${item.saleDate || ''}" class="edit-field"></div>
+      </div>
+    `;
+  }
+
+  content.innerHTML = html;
+  refreshIcons();
+
+  setTimeout(() => {
+    setupImeiValidation('edit-imei', 'imeiAllowBtn');
+    setupImeiValidation('edit-imei2', 'imei2AllowBtn');
+
+    const saveBar = $('detailSaveActions');
+    if (saveBar) {
+      saveBar.style.setProperty('display', 'flex', 'important');
+      try {
+        saveBar.scrollIntoView({ behavior: 'smooth', block: 'end' });
+      } catch (_) {}
+    }
+  }, 100);
+}
+
+function toggleImeiLimit(inputId, btnId) {
+  const input = $(inputId);
+  const btn = $(btnId);
+
+  if (!input || !btn) return;
+
+  const currentMax = input.maxLength;
+
+  if (currentMax === -1 || currentMax === 999) {
+    Swal.fire({
+      title: 'Limit IMEI to 15 digits?',
+      icon: 'question',
+      showCancelButton: true,
+      confirmButtonColor: '#4f46e5',
+      cancelButtonColor: '#64748b',
+      confirmButtonText: 'Yes, limit',
+      cancelButtonText: 'Cancel'
+    }).then((result) => {
+      if (result.isConfirmed) {
+        input.maxLength = 15;
+        btn.textContent = 'Add more';
+        btn.classList.remove('allowed');
+        if (input.value.length > 15) input.value = input.value.slice(0, 15);
+        showToast('IMEI limited to 15 digits', 'info');
+      }
+    });
+  } else {
+    Swal.fire({
+      title: 'Allow more than 15 digits?',
+      icon: 'question',
+      showCancelButton: true,
+      confirmButtonColor: '#059669',
+      cancelButtonColor: '#64748b',
+      confirmButtonText: 'Yes, allow more',
+      cancelButtonText: 'Cancel'
+    }).then((result) => {
+      if (result.isConfirmed) {
+        input.maxLength = 999;
+        btn.textContent = '✅ Unlimited';
+        btn.classList.add('allowed');
+        showToast('IMEI limit removed', 'success');
+      }
+    });
+  }
+}
+
+function setupImeiValidation(inputId, btnId) {
+  const input = $(inputId);
+  const btn = $(btnId);
+
+  if (!input) return;
+
+  input.addEventListener('input', function () {
+    if (input.maxLength === 15 && this.value.length > 15) {
+      Swal.fire({
+        title: 'More than 15 digits?',
+        text: 'Allow unlimited digits?',
         icon: 'question',
         showCancelButton: true,
-        confirmButtonText: '✅ Submit for Approval',
-        cancelButtonText: 'Edit',
-        confirmButtonColor: '#7c3aed',
+        confirmButtonColor: '#059669',
         cancelButtonColor: '#64748b',
-        width: 'min(520px, 96vw)'
-    });
-    if (result.isConfirmed) submitOutsidePickup();
+        confirmButtonText: 'Yes, allow more',
+        cancelButtonText: 'No, keep 15'
+      }).then((result) => {
+        if (result.isConfirmed) {
+          input.maxLength = 999;
+          if (btn) {
+            btn.textContent = '✅ Unlimited';
+            btn.classList.add('allowed');
+          }
+          showToast('IMEI limit removed', 'success');
+        } else {
+          this.value = this.value.slice(0, 15);
+          showToast('Kept at 15 digits', 'info');
+        }
+      });
+    }
+  });
+
+  input.addEventListener('paste', function () {
+    setTimeout(() => {
+      if (input.maxLength === 15 && this.value.length > 15) {
+        input.dispatchEvent(new Event('input'));
+      }
+    }, 50);
+  });
 }
 
-async function submitOutsidePickup() {
-    if (!currentUser) { showToast('Please login first', 'error'); return; }
-    if (opSubmitInFlight) { showToast('Submission already in progress…', 'info'); return; }
+function cancelEdit() {
+  isEditMode = false;
 
-    const phoneModel = (document.getElementById('opPhoneModel').value || '').trim();
-    const imei = (document.getElementById('opImei').value || '').trim();
-    const value = parseInt((document.getElementById('opValue').value || '').trim());
-    const customerName = (document.getElementById('opCustomerName').value || '').trim();
-    const aadhaarNumber = (document.getElementById('opAadhaarNumber').value || '').trim();
-    const billNumber = (document.getElementById('opBillNumber').value || '').trim();
+  if (detailOrderId) {
+    db.ref('pickups/' + detailOrderId).once('value').then(snap => {
+      const item = snap.val();
 
-    if (!imei) { showToast('IMEI missing. Please re-enter.', 'error'); return; }
+      if (item) {
+        renderDetailView(item);
 
-    opSubmitInFlight = true;
-    let reservedId = '';
-    let recordSaved = false;
-    let claimHeld = false;
+        const detailActions = $('detailActions');
+        const detailSaveActions = $('detailSaveActions');
+        const detailEditBtn = $('detailEditBtn');
+
+        if (detailActions) detailActions.style.display = 'flex';
+        if (detailSaveActions) detailSaveActions.style.display = 'none';
+
+        setText('detailModalTitle', 'Order Details');
+
+        if (detailEditBtn) {
+          detailEditBtn.textContent = '✏️ Edit';
+          detailEditBtn.onclick = toggleEditMode;
+        }
+
+        editData = { ...item, id: detailOrderId };
+      }
+    });
+  }
+}
+
+// ================================================================
+// SAVE EDIT
+// ================================================================
+async function saveEdit() {
+  if (!detailOrderId) {
+    showToast('No order selected', 'error');
+    return;
+  }
+
+  const orderId = getVal('edit-orderId').trim();
+  const status = getVal('edit-status');
+  const model = getVal('edit-model').trim();
+  const imei = getVal('edit-imei').trim();
+  const imei2 = getVal('edit-imei2').trim();
+  const value = parseFloat(getVal('edit-value')) || 0;
+  const customer = getVal('edit-customer').trim();
+  const reason = getVal('edit-reason').trim();
+  const ramVal = getVal('edit-ram') || '';
+  const storageVal = getVal('edit-storage') || '';
+  const networkVal = getVal('edit-network') || '';
+  const datetimeVal = getVal('edit-datetime');
+  const salePrice = parseFloat(getVal('edit-salePrice')) || 0;
+  const buyer = getVal('edit-buyer').trim() || '';
+  const buyerContact = getVal('edit-buyerContact').trim() || '';
+  const saleDate = getVal('edit-saleDate') || '';
+
+  if (!orderId) {
+    showToast('Order ID required', 'error');
+    return;
+  }
+
+  const billNumberVal = getVal('edit-billNumber').trim();
+  const aadhaarNumberVal = getVal('edit-aadhaarNumber').trim();
+
+  let updated = {
+    orderId,
+    status,
+    phoneModel: model || '',
+    imei: imei || '',
+    imei2: imei2 || '',
+    value: value || 0,
+    customerName: customer || '',
+    reason: reason || '',
+    ram: ramVal,
+    storage: storageVal,
+    ramStorage: (ramVal && storageVal) ? (ramVal + '/' + storageVal) : (ramVal || storageVal || ''),
+    networkType: networkVal,
+    billNumber: billNumberVal,
+    aadhaarNumber: aadhaarNumberVal,
+    timestamp: editData.timestamp,
+    timestampIST: editData.timestampIST || ''
+  };
+
+  if (datetimeVal) {
+    const d = new Date(datetimeVal);
+
+    if (!isNaN(d)) {
+      updated.timestamp = d.toISOString();
+
+      const istOffset = 5.5 * 60 * 60 * 1000;
+      const istTime = new Date(d.getTime() + istOffset);
+
+      const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+      const dd = String(istTime.getUTCDate()).padStart(2, '0');
+      const mmm = months[istTime.getUTCMonth()];
+      const yyyy = istTime.getUTCFullYear();
+
+      let hours = istTime.getUTCHours();
+      const minutes = String(istTime.getUTCMinutes()).padStart(2, '0');
+      const seconds = String(istTime.getUTCSeconds()).padStart(2, '0');
+      const ampm = hours >= 12 ? 'PM' : 'AM';
+
+      hours = hours % 12 || 12;
+      const hh = String(hours).padStart(2, '0');
+
+      updated.timestampIST = `${dd}-${mmm}-${yyyy}, ${hh}:${minutes}:${seconds} ${ampm} IST`;
+    }
+  }
+
+  if (editData.sold) {
+    const commission = calculateCommission(value);
+    const grossProfit = salePrice - commission - value;
+    const finalProfit = grossProfit - overheadPerPhone;
+
+    updated.sold = true;
+    updated.salePrice = salePrice || 0;
+    updated.commission = commission;
+    updated.buyerName = buyer || '';
+    updated.buyerContact = buyerContact || '';
+    updated.saleDate = saleDate || '';
+    updated.profit = grossProfit;
+    updated.grossProfit = grossProfit;
+    updated.finalNetProfit = finalProfit;
+  }
+
+  if (status === 'on_hold' && editData.status !== 'on_hold') {
+    updated.previous_status = editData.status;
+    updated.hold_reason = reason || 'Manually held';
+  } else if (status !== 'on_hold' && editData.status === 'on_hold') {
+    updated.previous_status = null;
+    updated.hold_reason = null;
+  }
+
+  const confirm = await Swal.fire({
+    title: 'Save Changes?',
+    icon: 'question',
+    showCancelButton: true,
+    confirmButtonColor: '#4f46e5',
+    cancelButtonColor: '#64748b',
+    confirmButtonText: 'Yes',
+    cancelButtonText: 'Cancel'
+  });
+
+  if (!confirm.isConfirmed) return;
+
+  try {
+    const dup = await findDuplicateImei(imei, detailOrderId);
+    if (dup) {
+      showToast('IMEI already exists in ' + (dup.source === 'pickups' ? 'inventory' : 'outside pickups'), 'error');
+      return;
+    }
+
+    await db.ref('pickups/' + detailOrderId).update(updated);
+
+    invalidate('pickups');
+    showToast('✅ Updated', 'success');
+
+    isEditMode = false;
+
+    const snap = await db.ref('pickups/' + detailOrderId).once('value');
+    const item = snap.val();
+
+    if (item) {
+      renderDetailView(item);
+
+      const detailActions = $('detailActions');
+      const detailSaveActions = $('detailSaveActions');
+      const detailEditBtn = $('detailEditBtn');
+
+      if (detailActions) detailActions.style.display = 'flex';
+      if (detailSaveActions) detailSaveActions.style.display = 'none';
+
+      setText('detailModalTitle', 'Order Details');
+
+      if (detailEditBtn) {
+        detailEditBtn.textContent = '✏️ Edit';
+        detailEditBtn.onclick = toggleEditMode;
+      }
+
+      editData = { ...item, id: detailOrderId };
+    }
+
+    refreshOrderRelated();
+  } catch (e) {
+    console.error(e);
+    showToast('Error updating', 'error');
+  }
+}
+
+// ================================================================
+// DELETE ORDER
+// ================================================================
+async function deleteOrder(orderId) {
+  const result = await Swal.fire({
+    title: 'Delete Order?',
+    text: 'Cannot be undone.',
+    icon: 'warning',
+    showCancelButton: true,
+    confirmButtonColor: '#dc2626',
+    cancelButtonColor: '#64748b',
+    confirmButtonText: 'Yes, delete',
+    cancelButtonText: 'Cancel'
+  });
+
+  if (!result.isConfirmed) return;
+
+  try {
+    const snap = await db.ref('pickups/' + orderId).once('value');
+    const item = snap.val();
+
+    if (item) {
+      const billImages = getDocImages(item, 'bill');
+      const aadhaarImages = getDocImages(item, 'aadhaar');
+      const allImages = [...billImages, ...aadhaarImages];
+
+      for (const url of allImages) {
+        await _deleteImageFromStorageAdmin(url);
+      }
+    }
+
+    await db.ref('pickups/' + orderId).remove();
+    await db.ref('pending/' + orderId).remove();
+
+    invalidate('pickups', 'pending');
+    showToast('🗑️ Deleted', 'success');
+
+    closeDetail();
+    refreshOrderRelated();
+  } catch (e) {
+    showToast('Error deleting', 'error');
+    console.error(e);
+  }
+}
+
+function deleteOrderFromDetail() {
+  if (detailOrderId) deleteOrder(detailOrderId);
+}
+
+function closeDetail() {
+  const modal = $('detailModal');
+  if (modal) modal.style.display = 'none';
+
+  detailOrderId = null;
+  isEditMode = false;
+
+  const detailActions = $('detailActions');
+  const detailSaveActions = $('detailSaveActions');
+
+  if (detailActions) detailActions.style.display = 'flex';
+  if (detailSaveActions) detailSaveActions.style.display = 'none';
+}
+
+// ================================================================
+// EXPORT ORDERS CSV
+// ================================================================
+function exportCSV() {
+  if (!allOrders.length) {
+    showToast('No data', 'error');
+    return;
+  }
+
+  const headers = ['Order ID', 'Status', 'Model', 'RAM/Storage', 'Network', 'IMEI', 'IMEI2', 'Value', 'Customer', 'Reason', 'Time (IST)', 'Agent'];
+
+  const rows = allOrders.map(item => [
+    item.orderId || item.id || '',
+    item.status || '',
+    item.phoneModel || '',
+    getRamStorageText(item) || '',
+    item.networkType || '',
+    item.imei || '',
+    item.imei2 || '',
+    item.value !== undefined ? item.value : '',
+    item.customerName || '',
+    item.reason || '',
+    item.timestampIST || item.timestamp || '',
+    item.agent || ''
+  ]);
+
+  let csv = '\uFEFF' + headers.join(',') + '\n';
+
+  rows.forEach(row => {
+    csv += row.map(val => `"${String(val).replace(/"/g, '""')}"`).join(',') + '\n';
+  });
+
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(blob);
+  link.download = `flipkart_orders_${getLocalYMD()}.csv`;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(link.href);
+
+  showToast('📥 Exported', 'success');
+}
+
+// ================================================================
+// DEPOSITS
+// ================================================================
+
+// ---------- Deposit helpers ----------
+function getDepositAddedOn(item) {
+  if (!item || !item.timestamp) return '';
+  const d = new Date(item.timestamp);
+  if (isNaN(d)) return '';
+  return getLocalYMD(d);
+}
+
+// Default sort → Transaction Date (newest first), tie-break by Added-On (newest first)
+function depositSortByTransactionDateDesc(a, b) {
+  const da = a.date || '';
+  const db = b.date || '';
+  if (da !== db) return db.localeCompare(da); // ISO date compare → correct for day/month/year
+  return (b.timestamp || 0) - (a.timestamp || 0);
+}
+
+// Added-On sort → chronological ascending (oldest added-on first), tie-break oldest first
+function depositSortByAddedOnAsc(a, b) {
+  const aa = getDepositAddedOn(a);
+  const bb = getDepositAddedOn(b);
+  if (aa !== bb) return aa.localeCompare(bb);
+  return (a.timestamp || 0) - (b.timestamp || 0);
+}
+
+// Dynamically inject "Added On" filter inputs next to the existing Transaction Date filter,
+// plus a small style block for the backdated indicator. This avoids touching HTML/CSS files.
+function injectDepositFilterInputs() {
+  if ($('depositAddedFrom')) return;
+  const anchor = $('depositDateFrom');
+  if (!anchor || !anchor.parentElement) return;
+
+  const parent = anchor.parentElement;
+
+  const wrap = document.createElement('div');
+  wrap.id = 'depositAddedFilterWrap';
+  wrap.style.cssText = 'display:inline-flex; align-items:center; gap:6px; margin-left:10px; flex-wrap:wrap;';
+
+  wrap.innerHTML = `
+    <label style="font-size:11px;font-weight:700;color:#64748b;">Added On:</label>
+    <input type="date" id="depositAddedFrom" style="padding:6px 8px;border:1px solid #e2e8f0;border-radius:8px;font-size:12px;" />
+    <span style="color:#94a3b8;font-size:11px;">→</span>
+    <input type="date" id="depositAddedTo" style="padding:6px 8px;border:1px solid #e2e8f0;border-radius:8px;font-size:12px;" />
+    <button type="button" onclick="applyDepositAddedFilter()" style="padding:6px 10px;border-radius:8px;background:#4f46e5;color:#fff;font-size:11px;font-weight:600;border:none;cursor:pointer;">Apply</button>
+    <button type="button" onclick="clearDepositAddedFilter()" style="padding:6px 10px;border-radius:8px;background:#f1f5f9;color:#334155;font-size:11px;font-weight:600;border:none;cursor:pointer;">Clear</button>
+  `;
+  parent.appendChild(wrap);
+
+  if (!$('depositBackdatedStyle')) {
+    const style = document.createElement('style');
+    style.id = 'depositBackdatedStyle';
+    style.textContent = `
+      .deposit-row-backdated {
+        background: linear-gradient(90deg, #fef3c7 0%, #fffbeb 45%, transparent 100%);
+      }
+      .deposit-row-backdated:hover {
+        background: linear-gradient(90deg, #fde68a 0%, #fef3c7 45%, #f8fafc 100%);
+      }
+      .deposit-backdated-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 3px;
+        margin-left: 6px;
+        padding: 1px 6px;
+        border-radius: 6px;
+        font-size: 9px;
+        font-weight: 700;
+        background: #fef3c7;
+        color: #92400e;
+        border: 1px solid #fde68a;
+        vertical-align: middle;
+        white-space: nowrap;
+      }
+    `;
+    document.head.appendChild(style);
+  }
+}
+
+// ---------- Load / filter / sort ----------
+async function loadDeposits(force = false) {
+  try {
+    injectDepositFilterInputs();
+
+    const data = await getData('deposits', force);
+
+    allDeposits = Object.entries(data).map(([id, item]) => ({ id, ...item }));
+    // Default chronological order: transaction date newest → oldest
+    allDeposits.sort(depositSortByTransactionDateDesc);
+
+    applyDepositFilters();
+    updateDepositStats();
+  } catch (e) {
+    console.error('Load deposits error:', e);
+    showToast('Error loading deposits', 'error');
+  }
+}
+
+function applyDepositFilters() {
+  let filtered = [...allDeposits];
+
+  const dateFrom  = getVal('depositDateFrom');   // Transaction Date From
+  const dateTo    = getVal('depositDateTo');     // Transaction Date To
+  const addedFrom = getVal('depositAddedFrom');  // Added-On From
+  const addedTo   = getVal('depositAddedTo');    // Added-On To
+
+  // Filter by Transaction Date
+  if (dateFrom) filtered = filtered.filter(item => item.date && item.date >= dateFrom);
+  if (dateTo)   filtered = filtered.filter(item => item.date && item.date <= dateTo);
+
+  // Filter by Added-On Date (derived from item.timestamp)
+  if (addedFrom) filtered = filtered.filter(item => {
+    const ao = getDepositAddedOn(item);
+    return ao && ao >= addedFrom;
+  });
+  if (addedTo) filtered = filtered.filter(item => {
+    const ao = getDepositAddedOn(item);
+    return ao && ao <= addedTo;
+  });
+
+  // Sorting:
+  //   • If Added-On filter is active → sort by Added-On ASC (chronological, oldest first)
+  //   • Otherwise → sort by Transaction Date DESC (newest first, default)
+  const filterByAddedOn = Boolean(addedFrom || addedTo);
+
+  if (filterByAddedOn) {
+    filtered.sort(depositSortByAddedOnAsc);
+  } else {
+    filtered.sort(depositSortByTransactionDateDesc);
+  }
+
+  filteredDeposits = filtered;
+  depositCurrentPage = 1;
+  renderDepositsTable();
+}
+
+function applyDepositDateFilter() {
+  applyDepositFilters();
+}
+
+function applyDepositAddedFilter() {
+  applyDepositFilters();
+  showToast('Filtered by Added-On date', 'info');
+}
+
+function clearDepositDateFilter() {
+  setVal('depositDateFrom', '');
+  setVal('depositDateTo', '');
+  applyDepositFilters();
+  showToast('Transaction date filters cleared', 'info');
+}
+
+function clearDepositAddedFilter() {
+  setVal('depositAddedFrom', '');
+  setVal('depositAddedTo', '');
+  applyDepositFilters();
+  showToast('Added-On date filters cleared', 'info');
+}
+
+async function updateDepositStats() {
+  let total = 0;
+
+  allDeposits.forEach(d => {
+    total += d.amount || 0;
+  });
+
+  setText('depositTotal', formatINR(total));
+  setText('depositCount', allDeposits.length);
+  setText('depositCountDisplay', allDeposits.length + ' entries');
+  setText('depositsBadge', allDeposits.length);
+
+  let stockValue = 0;
+  let totalCommission = 0;
+
+  const pickups = cache.pickups || await getData('pickups', false);
+
+  Object.values(pickups).forEach(item => {
+    if (item.status === 'pickup') stockValue += item.value || 0;
+
+    if (item.status !== 'on_hold') {
+      totalCommission += item.commission !== undefined
+        ? item.commission
+        : calculateCommission(item.value || 0);
+    }
+  });
+
+  setText('depositStockValue', formatINR(stockValue));
+  setText('depositBalance', formatINR(total - stockValue));
+  setText('depositCommission', formatINR(totalCommission));
+}
+
+// ---------- Table rendering ----------
+function renderDepositsTable() {
+  const tbody = $('depositsTableBody');
+  if (!tbody) return;
+
+  const total = filteredDeposits.length;
+  const totalPages = Math.ceil(total / depositPageSize) || 1;
+  if (depositCurrentPage > totalPages) depositCurrentPage = totalPages;
+
+  const start = (depositCurrentPage - 1) * depositPageSize;
+  const end = Math.min(start + depositPageSize, total);
+  const pageItems = filteredDeposits.slice(start, end);
+
+  setText('depositCountDisplay', total + ' entries');
+  setText('depositPageInfo', `${depositCurrentPage} / ${totalPages}`);
+
+  const prevBtn = $('prevDepositPageBtn');
+  const nextBtn = $('nextDepositPageBtn');
+
+  if (prevBtn) prevBtn.disabled = depositCurrentPage <= 1;
+  if (nextBtn) nextBtn.disabled = depositCurrentPage >= totalPages;
+
+  if (!pageItems.length) {
+    tbody.innerHTML = `<tr><td colspan="6"><div class="empty-state"><i data-lucide="inbox"></i><p class="text-sm font-medium">No deposits found</p></div></td></tr>`;
+    refreshIcons();
+    return;
+  }
+
+  let html = '';
+
+  pageItems.forEach((item, idx) => {
+    const num = start + idx + 1;
+    const addedOn = getDepositAddedOn(item);
+    const addedDisplay = item.timestamp ? new Date(item.timestamp).toLocaleString() : '—';
+
+    // Backdated if the transaction date is earlier than the date it was added.
+    // (i.e. user added the entry today/on a later day, but the transaction itself is older.)
+    const isBackdated = Boolean(item.date && addedOn && addedOn > item.date);
+
+    const rowClass = isBackdated
+      ? 'order-row border-b border-gray-50 deposit-row-backdated'
+      : 'order-row border-b border-gray-50';
+
+    const backdatedBadge = isBackdated
+      ? `<span class="deposit-backdated-badge" title="Transaction date: ${item.date} · Added on: ${addedOn}">🕓 Backdated</span>`
+      : '';
+
+    html += `
+      <tr class="${rowClass}">
+        <td class="py-2 sm:py-3 px-2 sm:px-4 text-gray-400 font-mono text-[10px] sm:text-xs">${num}</td>
+        <td class="py-2 sm:py-3 px-2 sm:px-4 font-bold text-green-600 text-xs sm:text-sm">${formatINR(item.amount || 0)}</td>
+        <td class="py-2 sm:py-3 px-2 sm:px-4 text-gray-600 text-[11px] sm:text-sm">
+          <div class="line-clamp-2">${item.description || '—'} ${backdatedBadge}</div>
+        </td>
+        <td class="py-2 sm:py-3 px-2 sm:px-4 hidden sm:table-cell text-xs text-gray-500">
+          <div class="font-semibold text-gray-700">${item.date || '—'}</div>
+          ${addedOn ? `<div class="text-[10px] text-gray-400 mt-0.5">Added: ${addedOn}</div>` : ''}
+        </td>
+        <td class="py-2 sm:py-3 px-2 sm:px-4 hidden md:table-cell text-xs text-gray-400">${addedDisplay}</td>
+        <td class="py-2 sm:py-3 px-2 sm:px-4">
+          <button onclick="deleteDeposit('${item.id}')" class="btn-action delete" title="Delete"><i data-lucide="trash-2"></i></button>
+        </td>
+      </tr>
+    `;
+  });
+
+  tbody.innerHTML = html;
+  refreshIcons();
+}
+
+function prevDepositPage() {
+  if (depositCurrentPage > 1) {
+    depositCurrentPage--;
+    renderDepositsTable();
+  }
+}
+
+function nextDepositPage() {
+  const totalPages = Math.ceil(filteredDeposits.length / depositPageSize);
+
+  if (depositCurrentPage < totalPages) {
+    depositCurrentPage++;
+    renderDepositsTable();
+  }
+}
+
+// ---------- Add / delete / export ----------
+function submitDeposit(e) {
+  e.preventDefault();
+
+  const amount = parseFloat(getVal('depositAmount'));
+  const date = getVal('depositDate') || getLocalYMD();
+  const description = getVal('depositDescription').trim();
+
+  if (!amount || amount <= 0) {
+    showToast('Please enter a valid amount', 'error');
+    return;
+  }
+
+  Swal.fire({
+    title: 'Add Deposit?',
+    text: `Amount: ${formatINR(amount)} | Date: ${date}`,
+    icon: 'question',
+    showCancelButton: true,
+    confirmButtonColor: '#059669',
+    cancelButtonColor: '#64748b',
+    confirmButtonText: 'Yes, Add',
+    cancelButtonText: 'Cancel'
+  }).then(async (result) => {
+    if (!result.isConfirmed) return;
 
     try {
-        // ---- 1) Only one submission per phone at a time (atomic, auto-expiring) ----
-        const claim = await acquireOutsidePickupClaim(imei);
-        claimHeld = claim.held;
-        if (claim.supported && !claim.held) {
-            Swal.fire({
-                icon: 'info',
-                title: 'Already Submitting',
-                html: 'This phone is being submitted right now.<br><span style="font-size:12px;color:#6b7280;">Please wait a few seconds, then check the pickup list.</span>',
-                confirmButtonColor: '#7c3aed'
-            });
-            return;
-        }
+      const newRef = db.ref('deposits').push();
 
-        // ---- 2) Reject repeats of a phone that is already pending / approved ----
-        // IMEI is the unique key. Same model alone is NOT a duplicate.
-        const duplicate = await findDuplicateOutsidePickup(imei);
-        if (duplicate) {
-            const dupModel = duplicate.phoneModel || '—';
-            const statusLabel = duplicate.status === 'approved' ? 'Approved (in inventory)' : 'Pending Approval';
-            const modelNote = (phoneModel && duplicate.phoneModel &&
-                phoneModel.toLowerCase() !== dupModel.toLowerCase())
-                ? `<div style="margin-top:4px;">New entry model: <b>${escapeHtmlOP(phoneModel)}</b> <span style="color:#b91c1c;">(different from above)</span></div>`
-                : '';
-            Swal.fire({
-                icon: 'warning',
-                title: 'Duplicate Entry: This IMEI number already exists.',
-                html: `
-                    <div style="text-align:left;font-size:13px;line-height:1.75;">
-                        <div>IMEI: <b style="font-family:monospace;">${escapeHtmlOP(imei)}</b></div>
-                        <div>Existing Model: <b>${escapeHtmlOP(dupModel)}</b></div>
-                        <div>Existing Pickup ID: <b style="font-family:monospace;">${escapeHtmlOP(duplicate.pickupId)}</b></div>
-                        <div>Status: <b>${escapeHtmlOP(statusLabel)}</b></div>
-                        ${duplicate.rider ? `<div>Rider: <b>${escapeHtmlOP(duplicate.rider)}</b></div>` : ''}
-                        ${duplicate.date ? `<div style="color:#6b7280;">Date: ${escapeHtmlOP(duplicate.date)}</div>` : ''}
-                        ${modelNote}
-                        <div style="margin-top:10px;padding:9px;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;font-size:11.5px;color:#991b1b;">
-                            This entry was NOT saved. The same IMEI cannot be added twice.
-                        </div>
-                    </div>`,
-                confirmButtonText: 'OK',
-                confirmButtonColor: '#dc2626',
-                width: 'min(460px, 94vw)'
-            });
-            return;
-        }
+      await newRef.set({
+        amount,
+        date,
+        description: description || '',
+        timestamp: Date.now()   // Added-On timestamp
+      });
 
-        // ---- 3) Upload photos first, so a failed upload never burns a number ----
-        Swal.fire({ title: outsidePickupImages.length ? 'Uploading photos...' : 'Saving pickup...', allowOutsideClick: false, didOpen: () => Swal.showLoading() });
-        const photoUrls = [];
-        const uploadToken = `${currentUser.username}_${Date.now()}`;
-        for (let i = 0; i < outsidePickupImages.length; i++) {
-            try {
-                const blob = await (await fetch(outsidePickupImages[i])).blob();
-                const fileName = `${i}_${Date.now()}.jpg`;
-                const storageRef = storage.ref(`outside_pickup_docs/pending/${uploadToken}/${fileName}`);
-                const snapshot = await storageRef.put(blob, { contentType: 'image/jpeg' });
-                photoUrls.push(await snapshot.ref.getDownloadURL());
-            } catch (e) {
-                console.error('Photo upload failed:', e);
-                Swal.close();
-                showToast('❌ Photo upload failed. Try again.', 'error');
-                return;
-            }
-        }
+      invalidate('deposits');
+      showToast('✅ Deposit added successfully!', 'success');
 
-        // ---- 4) Reserve the number only now, then write atomically ----
-        const now = new Date();
-        const istDateTime = getISTDateTime();
+      setVal('depositAmount', '');
+      setVal('depositDescription', '');
+      setVal('depositDate', getLocalYMD());
 
-        for (let attempt = 0; attempt < 2 && !recordSaved; attempt++) {
-            reservedId = await reserveOutsidePickupId();
-            outsidePickupId = reservedId;
-            const idEl = document.getElementById('outsidePickupIdDisplay');
-            if (idEl) idEl.textContent = reservedId;
-
-            const record = {
-                pickupId: reservedId,
-                status: 'pending',
-                // Rider = logged-in user (same person as agent). Never hardcode.
-                rider: currentUser.name || currentUser.username,
-                agent: currentUser.username,
-                agentName: currentUser.name || currentUser.username,
-                phoneModel,
-                imei,
-                value,
-                ram: opSelectedRam,
-                storage: opSelectedStorage,
-                ramStorage: opSelectedRam + '/' + opSelectedStorage,
-                networkType: opSelectedNetwork,
-                customerName: customerName || '',
-                aadhaarNumber: aadhaarNumber || '',
-                billNumber: billNumber || '',
-                phoneImages: photoUrls,
-                createdAt: Date.now(),
-                timestamp: now.toISOString(),
-                timestampIST: istDateTime,
-                date: now.toLocaleDateString('en-IN'),
-                inventoryCreated: false
-            };
-
-            // Atomic create: abort if this key already has a record (no overwrite,
-            // so a repeated request can never create/edit a second entry).
-            const write = await db.ref('outside_pickups/' + reservedId).transaction(current => {
-                if (current !== null) return; // abort — ID already used
-                return record;
-            }, undefined, false);
-
-            if (write.committed) {
-                recordSaved = true;
-            } else {
-                // ID already occupied (counter desync). Do NOT roll the counter
-                // back — that number genuinely belongs to the existing record.
-                // Just take the next number.
-                reservedId = '';
-            }
-        }
-
-        if (!recordSaved) throw new Error('ID collision — could not save pickup');
-
-        const pickupId = reservedId;
-        Swal.close();
-
-        // Success modal
-        Swal.fire({
-            icon: 'success',
-            title: '✅ Submitted for Approval',
-            html: `
-                <div style="text-align:left;">
-                    <div style="background:linear-gradient(135deg,#faf5ff,#f3e8ff);border:2px solid #d8b4fe;border-radius:12px;padding:14px;text-align:center;margin-bottom:12px;">
-                        <div style="font-size:10px;font-weight:800;color:#7c3aed;letter-spacing:1.5px;">PICKUP ID</div>
-                        <div style="font-family:monospace;font-size:16px;font-weight:800;color:#4c1d95;margin-top:4px;word-break:break-all;">${escapeHtmlOP(pickupId)}</div>
-                    </div>
-                    <div style="background:#fef3c7;border:1px solid #fde68a;border-radius:10px;padding:12px;font-size:12px;color:#92400e;text-align:center;">
-                        <strong>⏳ Status: Pending Approval</strong><br>
-                        <span style="font-size:11px;">Admin will verify and approve this pickup. WhatsApp message will be sent by admin after approval.</span>
-                    </div>
-                </div>`,
-            confirmButtonText: 'OK',
-            confirmButtonColor: '#7c3aed',
-            width: 'min(420px, 96vw)'
-        });
-
-        // Reset state and close
-        outsidePickupImages = [];
-        outsidePickupId = '';
-        opSelectedRam = ''; opSelectedStorage = ''; opSelectedNetwork = '';
-        hiddenImei2 = '';
-
-        // Return to pickup tab (without the discard confirmation)
-        document.getElementById('outsidePickupPage').style.display = 'none';
-        document.getElementById('mainTabBar').style.display = 'flex';
-        switchTab('pickup');
-
+      loadDeposits(true);
+      loadDashboard(true);
     } catch (e) {
-        console.error('Outside pickup submit error:', e);
-        Swal.close();
-        if (!recordSaved && reservedId) await releaseOutsidePickupCounter(reservedId);
-        // Keep the on-screen number in sync with the real counter after a failure.
-        try {
-            outsidePickupId = await peekOutsidePickupId();
-            const idEl = document.getElementById('outsidePickupIdDisplay');
-            if (idEl) idEl.textContent = outsidePickupId;
-        } catch (_) {}
-        showToast('❌ Submit failed. Please try again.', 'error');
-    } finally {
-        if (claimHeld) await releaseOutsidePickupClaim(imei);
-        opSubmitInFlight = false;
+      console.error('Add deposit error:', e);
+      showToast('Error adding deposit', 'error');
     }
+  });
+}
+
+async function deleteDeposit(depositId) {
+  const confirm = await Swal.fire({
+    title: 'Delete Deposit?',
+    text: 'This action cannot be undone.',
+    icon: 'warning',
+    showCancelButton: true,
+    confirmButtonColor: '#dc2626',
+    cancelButtonColor: '#64748b',
+    confirmButtonText: 'Delete',
+    cancelButtonText: 'Cancel'
+  });
+
+  if (!confirm.isConfirmed) return;
+
+  try {
+    await db.ref('deposits/' + depositId).remove();
+
+    invalidate('deposits');
+    showToast('🗑️ Deposit deleted', 'success');
+
+    loadDeposits(true);
+    loadDashboard(true);
+  } catch (e) {
+    showToast('Error deleting deposit', 'error');
+    console.error(e);
+  }
+}
+
+function exportDepositsCSV() {
+  if (!filteredDeposits.length) {
+    showToast('No deposits to export', 'error');
+    return;
+  }
+
+  const headers = ['Amount', 'Description', 'Transaction Date', 'Added On', 'Added Timestamp'];
+
+  const rows = filteredDeposits.map(item => [
+    item.amount || 0,
+    item.description || '—',
+    item.date || '—',
+    getDepositAddedOn(item) || '—',
+    item.timestamp ? new Date(item.timestamp).toLocaleString() : '—'
+  ]);
+
+  let csv = '\uFEFF' + headers.join(',') + '\n';
+
+  rows.forEach(row => {
+    csv += row.map(val => `"${String(val).replace(/"/g, '""')}"`).join(',') + '\n';
+  });
+
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(blob);
+  link.download = `deposits_${getLocalYMD()}.csv`;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(link.href);
+
+  showToast('📥 Deposits CSV exported', 'success');
+}
+
+function refreshDeposits() {
+  loadDeposits(true);
+  showToast('🔄 Deposits refreshed', 'info');
+}
+// ================================================================
+// AGENTS
+// ================================================================
+async function loadAgents(force = false) {
+  try {
+    const data = await getData('users', force);
+
+    agentsList = Object.entries(data).map(([username, item]) => {
+      if (!item.role) item.role = 'agent';
+      return { username, ...item };
+    });
+
+    agentsList.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+
+    renderAgentsTable();
+    setText('agentsBadge', agentsList.filter(u => u.role === 'agent' && u.is_active !== false).length);
+
+    loadAgentsForFilter(force);
+  } catch (e) {
+    console.error(e);
+    showToast('Error loading agents', 'error');
+  }
+}
+
+function renderAgentsTable() {
+  const tbody = $('agentsTableBody');
+  if (!tbody) return;
+
+  if (!agentsList.length) {
+    tbody.innerHTML = `<tr><td colspan="11"><div class="empty-state"><i data-lucide="inbox"></i><p class="text-sm font-medium">No users</p></div></td></tr>`;
+    refreshIcons();
+    return;
+  }
+
+  let html = '';
+
+  agentsList.forEach((item, idx) => {
+    const pw = item.password || '****';
+    const showPw = passwordVisible[item.username] || false;
+    const pwDisplay = showPw ? pw : '••••••••';
+
+    const salary = item.role === 'agent' ? (item.salary || 0) : '—';
+    const pickupInc = item.role === 'agent' ? (item.pickup_incentive || 0) : '—';
+    const rejectInc = item.role === 'agent' ? (item.reject_incentive || 0) : '—';
+
+    const roleDisplay = item.role === 'admin' ? '<span class="admin-tag">Admin</span>' : 'Agent';
+    const isAgent = item.role === 'agent';
+    const isActive = item.is_active !== false;
+
+    const statusBadge = isActive
+      ? '<span class="badge-status pickup" style="font-size:10px;">✅ Active</span>'
+      : '<span class="badge-status rejected" style="font-size:10px;">🚫 Left</span>';
+
+    const leaveBtn = isActive
+      ? `<button onclick="leaveAgent('${item.username}')" class="btn-action delete" title="Mark as Left"><i data-lucide="user-x"></i></button>`
+      : `<button onclick="reactivateAgent('${item.username}')" class="btn-action approve" title="Reactivate"><i data-lucide="user-check"></i></button>`;
+
+    const promoteBtn = isAgent
+      ? `<button onclick="promoteToAdmin('${item.username}')" class="btn-action promote" title="Promote to Admin"><i data-lucide="user-cog"></i></button>`
+      : '';
+
+    const hasAccess = item.sales_access === true;
+    const btnClass = hasAccess ? 'btn-action approve' : 'btn-action hold';
+    const icon = hasAccess ? 'shield-check' : 'shield-off';
+    const title = hasAccess ? 'Revoke Sales Manager access' : 'Grant Sales Manager access';
+    const label = hasAccess ? 'Sales ✓' : 'Sales ✗';
+    const salesAccessBtn = `<button onclick="toggleSalesAccess('${item.username}', ${hasAccess})" class="${btnClass}" title="${title}" style="font-size:11px;padding:6px 10px;"><i data-lucide="${icon}"></i> ${label}</button>`;
+
+    html += `
+      <tr class="user-row border-b border-gray-50">
+        <td class="py-3 px-4 text-gray-400 font-mono text-xs">${idx + 1}</td>
+        <td class="py-3 px-4 font-medium text-gray-800">${item.name || '—'}</td>
+        <td class="py-3 px-4 font-mono text-sm text-gray-700">${item.username}</td>
+        <td class="py-3 px-4 hidden sm:table-cell">${roleDisplay}</td>
+        <td class="py-3 px-4 hidden sm:table-cell">${statusBadge}</td>
+        <td class="py-3 px-4 hidden sm:table-cell font-bold">${typeof salary === 'number' ? formatINR(salary) : salary}</td>
+        <td class="py-3 px-4 hidden md:table-cell">${typeof pickupInc === 'number' ? formatINR(pickupInc) : pickupInc}</td>
+        <td class="py-3 px-4 hidden lg:table-cell">${typeof rejectInc === 'number' ? formatINR(rejectInc) : rejectInc}</td>
+        <td class="py-3 px-4 hidden sm:table-cell text-gray-600">${item.mobile || '—'}</td>
+        <td class="py-3 px-4 font-mono"><span class="pw-hidden">${pwDisplay}</span><button onclick="togglePassword('${item.username}')" class="btn-action show ml-1"><i data-lucide="${showPw ? 'eye-off' : 'eye'}"></i></button></td>
+        <td class="py-3 px-4">
+          <div class="promote-btn-wrap">
+            ${leaveBtn}
+            ${promoteBtn}
+            ${salesAccessBtn}
+            <button onclick="viewAgentActivity('${item.username}')" class="btn-action activity"><i data-lucide="activity"></i></button>
+            <button onclick="showChangePasswordModal('${item.username}')" class="btn-action edit"><i data-lucide="key"></i></button>
+            <button onclick="forceLogout('${item.username}')" class="btn-action logout"><i data-lucide="log-out"></i></button>
+            <button onclick="deleteAgent('${item.username}')" class="btn-action delete"><i data-lucide="trash-2"></i></button>
+          </div>
+        </td>
+      </tr>
+    `;
+  });
+
+  tbody.innerHTML = html;
+  setText('agentsCount', agentsList.length + ' users');
+  refreshIcons();
+}
+
+async function toggleSalesAccess(username, currentAccess) {
+  const isGranted = currentAccess === true;
+  const action = isGranted ? 'Revoke' : 'Grant';
+
+  const confirm = await Swal.fire({
+    title: `${action} Sales Access?`,
+    html: `
+      <div class="text-left text-sm space-y-2">
+        <p class="text-gray-600">Agent: <strong>${username}</strong></p>
+        <p class="text-gray-600">
+          ${isGranted
+            ? 'Revoking will immediately block this agent from logging into the <strong>Sales Manager</strong> app. Their Rider Portal login will still work normally.'
+            : 'Granting will allow this agent to log into the <strong>Sales Manager</strong> app using their existing Rider Portal username/password.'}
+        </p>
+        ${isGranted ? '<p class="text-xs text-rose-600 font-semibold mt-2">⚠️ The agent will be logged out of Sales Manager on next action.</p>' : ''}
+      </div>
+    `,
+    icon: 'question',
+    showCancelButton: true,
+    confirmButtonColor: isGranted ? '#dc2626' : '#059669',
+    cancelButtonColor: '#64748b',
+    confirmButtonText: `Yes, ${action}`,
+    cancelButtonText: 'Cancel'
+  });
+
+  if (!confirm.isConfirmed) return;
+
+  try {
+    await db.ref('users/' + username).update({
+      sales_access: !isGranted
+    });
+
+    invalidate('users');
+    showToast(`✅ Sales access ${isGranted ? 'revoked' : 'granted'} for ${username}`, 'success');
+
+    loadAgents(true);
+  } catch (e) {
+    console.error('Sales access toggle error:', e);
+    showToast('Failed to update sales access', 'error');
+  }
+}
+
+async function leaveAgent(username) {
+  const { value: reason, isConfirmed } = await Swal.fire({
+    title: `Agent "${username}" ko leave karna?`,
+    text: 'Is agent ne job chhod di hai. Account block ho jayega.',
+    input: 'text',
+    inputPlaceholder: 'Reason (optional)',
+    showCancelButton: true,
+    confirmButtonColor: '#dc2626',
+    cancelButtonColor: '#64748b',
+    confirmButtonText: 'Yes, Leave',
+    cancelButtonText: 'Cancel'
+  });
+
+  if (!isConfirmed) return;
+
+  try {
+    const today = getLocalYMD();
+
+    await db.ref('users/' + username).update({
+      is_active: false,
+      left_date: today,
+      left_reason: reason || 'Left the job'
+    });
+
+    invalidate('users');
+    showToast(`✅ ${username} marked as left.`, 'success');
+
+    loadAgents(true);
+    loadDashboard(true);
+    loadAttendance(true);
+    loadSalaryData(true);
+
+    await db.ref('users/' + username + '/forceLogout').set(true);
+
+    setTimeout(() => {
+      db.ref('users/' + username + '/forceLogout').remove().catch(() => {});
+    }, 3000);
+  } catch (e) {
+    showToast('Error', 'error');
+    console.error(e);
+  }
+}
+
+async function reactivateAgent(username) {
+  const confirm = await Swal.fire({
+    title: `Reactivate "${username}"?`,
+    text: 'Agent ka account dobara active ho jayega.',
+    icon: 'question',
+    showCancelButton: true,
+    confirmButtonColor: '#059669',
+    cancelButtonColor: '#64748b',
+    confirmButtonText: 'Yes, Reactivate',
+    cancelButtonText: 'Cancel'
+  });
+
+  if (!confirm.isConfirmed) return;
+
+  try {
+    await db.ref('users/' + username).update({
+      is_active: true,
+      left_date: null,
+      left_reason: null
+    });
+
+    invalidate('users');
+    showToast(`✅ ${username} reactivated.`, 'success');
+
+    loadAgents(true);
+    loadDashboard(true);
+    loadAttendance(true);
+    loadSalaryData(true);
+  } catch (e) {
+    showToast('Error', 'error');
+    console.error(e);
+  }
+}
+
+async function promoteToAdmin(username) {
+  const confirm = await Swal.fire({
+    title: `Promote "${username}" to Admin?`,
+    text: 'This will remove salary/incentive fields.',
+    icon: 'question',
+    showCancelButton: true,
+    confirmButtonColor: '#5b21b6',
+    cancelButtonColor: '#64748b',
+    confirmButtonText: 'Promote',
+    cancelButtonText: 'Cancel'
+  });
+
+  if (!confirm.isConfirmed) return;
+
+  try {
+    await db.ref('users/' + username).update({
+      role: 'admin',
+      salary: null,
+      pickup_incentive: null,
+      reject_incentive: null,
+      is_active: true
+    });
+
+    invalidate('users');
+    showToast(`✅ ${username} is now an admin`, 'success');
+
+    loadAgents(true);
+    loadDashboard(true);
+  } catch (e) {
+    showToast('Error promoting user', 'error');
+    console.error(e);
+  }
+}
+
+async function forceLogout(username) {
+  const result = await Swal.fire({
+    title: `Force Logout "${username}"?`,
+    text: 'Immediately log out the user.',
+    icon: 'warning',
+    showCancelButton: true,
+    confirmButtonColor: '#dc2626',
+    cancelButtonColor: '#64748b',
+    confirmButtonText: 'Yes',
+    cancelButtonText: 'Cancel'
+  });
+
+  if (!result.isConfirmed) return;
+
+  try {
+    await db.ref('users/' + username + '/forceLogout').set(true);
+    showToast('✅ Force logout sent', 'success');
+  } catch (e) {
+    showToast('Error', 'error');
+    console.error(e);
+  }
+}
+
+function togglePassword(username) {
+  passwordVisible[username] = !passwordVisible[username];
+  renderAgentsTable();
+}
+
+async function deleteAgent(username) {
+  const result = await Swal.fire({
+    title: 'Delete User?',
+    text: `Delete "${username}"?`,
+    icon: 'warning',
+    showCancelButton: true,
+    confirmButtonColor: '#dc2626',
+    cancelButtonColor: '#64748b',
+    confirmButtonText: 'Yes',
+    cancelButtonText: 'Cancel'
+  });
+
+  if (!result.isConfirmed) return;
+
+  try {
+    await db.ref('users/' + username).remove();
+
+    invalidate('users');
+    showToast('✅ Deleted', 'success');
+
+    loadAgents(true);
+  } catch (e) {
+    showToast('Error', 'error');
+    console.error(e);
+  }
+}
+
+function registerAgent(e) {
+  e.preventDefault();
+
+  const name = getVal('regName').trim();
+  const username = getVal('regUsername').trim().toLowerCase();
+  const password = getVal('regPassword').trim();
+  const mobile = getVal('regMobile').trim();
+  const aadhar = getVal('regAadhar').trim();
+  const alternate = getVal('regAlternate').trim();
+
+  const roleEl = document.querySelector('input[name="regRole"]:checked');
+  const role = roleEl ? roleEl.value : 'agent';
+
+  const salary = parseFloat(getVal('regSalary').trim()) || 0;
+  const pickupIncentive = parseFloat(getVal('regPickupIncentive').trim()) || 0;
+  const rejectIncentive = parseFloat(getVal('regRejectIncentive').trim()) || 0;
+
+  const errorEl = $('agentError');
+  const successEl = $('agentSuccess');
+
+  if (errorEl) errorEl.style.display = 'none';
+  if (successEl) successEl.style.display = 'none';
+
+  if (!name || !username || !password || !mobile) {
+    if (errorEl) {
+      errorEl.textContent = 'Please fill Name, Username, Password, and Mobile.';
+      errorEl.style.display = 'block';
+    }
+    return;
+  }
+
+  if (username.length < 3 || password.length < 4 || mobile.length < 10) {
+    if (errorEl) {
+      errorEl.textContent = 'Username (3+), Password (4+), Mobile (10 digits).';
+      errorEl.style.display = 'block';
+    }
+    return;
+  }
+
+  if (role === 'agent' && (!salary || !pickupIncentive || !rejectIncentive)) {
+    if (errorEl) {
+      errorEl.textContent = 'For Agent, Salary, Pickup Incentive and Reject Incentive are required.';
+      errorEl.style.display = 'block';
+    }
+    return;
+  }
+
+  const userData = {
+    name,
+    username,
+    password,
+    aadhar: aadhar || '',
+    mobile,
+    alternate: alternate || '',
+    role,
+    createdAt: Date.now(),
+    joinDate: getLocalYMD(),
+    is_active: true
+  };
+
+  if (role === 'agent') {
+    userData.salary = salary;
+    userData.pickup_incentive = pickupIncentive;
+    userData.reject_incentive = rejectIncentive;
+  }
+
+  db.ref('users/' + username).once('value').then(snap => {
+    if (snap.exists()) {
+      if (errorEl) {
+        errorEl.textContent = 'Username taken.';
+        errorEl.style.display = 'block';
+      }
+      return;
+    }
+
+    return db.ref('users/' + username).set(userData);
+  }).then(() => {
+    if (successEl) {
+      successEl.textContent = '✅ User registered!';
+      successEl.style.display = 'block';
+    }
+
+    setVal('regName', '');
+    setVal('regUsername', '');
+    setVal('regPassword', '');
+    setVal('regMobile', '');
+    setVal('regAadhar', '');
+    setVal('regAlternate', '');
+    setVal('regSalary', '');
+    setVal('regPickupIncentive', '');
+    setVal('regRejectIncentive', '');
+
+    invalidate('users');
+    loadAgents(true);
+
+    setTimeout(() => {
+      if (successEl) successEl.style.display = 'none';
+    }, 5000);
+  }).catch(err => {
+    console.error(err);
+    if (errorEl) {
+      errorEl.textContent = 'Something went wrong.';
+      errorEl.style.display = 'block';
+    }
+  });
+}
+
+function toggleAdminFields() {
+  const roleEl = document.querySelector('input[name="regRole"]:checked');
+  const role = roleEl ? roleEl.value : 'agent';
+  const agentFields = $('agentFields');
+
+  if (role === 'admin') {
+    if (agentFields) agentFields.style.display = 'none';
+
+    $('regSalary')?.removeAttribute('required');
+    $('regPickupIncentive')?.removeAttribute('required');
+    $('regRejectIncentive')?.removeAttribute('required');
+  } else {
+    if (agentFields) agentFields.style.display = 'grid';
+
+    $('regSalary')?.setAttribute('required', '');
+    $('regPickupIncentive')?.setAttribute('required', '');
+    $('regRejectIncentive')?.setAttribute('required', '');
+  }
+}
+
+function showChangePasswordModal(username) {
+  Swal.fire({
+    title: `Change Password for "${username}"`,
+    html: `<input type="password" id="newPassword" class="swal2-input" placeholder="New password" minlength="4"><input type="password" id="confirmPassword" class="swal2-input" placeholder="Confirm" minlength="4">`,
+    showCancelButton: true,
+    confirmButtonText: 'Update',
+    cancelButtonText: 'Cancel',
+    confirmButtonColor: '#4f46e5',
+    preConfirm: () => {
+      const newPw = $('newPassword')?.value;
+      const confirmPw = $('confirmPassword')?.value;
+
+      if (!newPw || newPw.length < 4) {
+        Swal.showValidationMessage('Min 4 chars');
+        return false;
+      }
+
+      if (newPw !== confirmPw) {
+        Swal.showValidationMessage('No match');
+        return false;
+      }
+
+      return newPw;
+    }
+  }).then(async (result) => {
+    if (result.isConfirmed) {
+      try {
+        await db.ref('users/' + username + '/password').set(result.value);
+
+        invalidate('users');
+        showToast('✅ Password updated', 'success');
+
+        loadAgents(true);
+      } catch (e) {
+        showToast('Error', 'error');
+        console.error(e);
+      }
+    }
+  });
 }
 
 // ================================================================
-// === SECTION 21: INITIALIZATION (DOMContentLoaded) =============
+// DATE ACTIVITIES — per-activity incentive override
+// ----------------------------------------------------------------
+// Admin can open this from the Salary page. It lists all pickup /
+// approved-reject activities for a selected date, and lets the admin
+// override the incentive amount for any individual activity.
+//
+// Override is stored as:
+//     pickups/{orderId}/pickup_incentive_override
+//     pickups/{orderId}/reject_incentive_override
+//
+// Agent's default pickup_incentive / reject_incentive are never touched.
+// ================================================================
+
+async function promptDateActivities() {
+  const defaultDate = getVal('salaryDate') || getLocalYMD();
+
+  const { value: dateVal, isConfirmed } = await Swal.fire({
+    title: '📅 View Activities For Date',
+    html: `
+      <div class="text-left text-sm space-y-2">
+        <p class="text-gray-600 text-xs">Select a date to view all pickup &amp; approved-reject activities:</p>
+        <input type="date" id="dateActivitiesPicker" class="swal2-input" value="${defaultDate}" />
+        <p class="text-[11px] text-gray-500 mt-1">You can adjust the incentive for individual activities on this date. Only that activity changes — the agent's default stays the same.</p>
+      </div>
+    `,
+    showCancelButton: true,
+    confirmButtonText: '📅 View Activities',
+    confirmButtonColor: '#4f46e5',
+    cancelButtonColor: '#64748b',
+    preConfirm: () => {
+      const v = document.getElementById('dateActivitiesPicker').value;
+      if (!v) { Swal.showValidationMessage('Select a date'); return false; }
+      return v;
+    }
+  });
+
+  if (!isConfirmed || !dateVal) return;
+  openDateActivitiesModal(dateVal);
+}
+
+async function openDateActivitiesModal(dateVal) {
+  if (!dateVal) dateVal = currentActivitiesDate || getVal('salaryDate') || getLocalYMD();
+  currentActivitiesDate = dateVal;
+
+  try {
+    const [pickups, users] = await Promise.all([
+      getData('pickups', true),
+      getData('users', true)
+    ]);
+
+    const activities = [];
+
+    Object.entries(pickups).forEach(([id, ord]) => {
+      if (!ord || !ord.timestamp) return;
+      if (getLocalYMD(new Date(ord.timestamp)) !== dateVal) return;
+
+      const isPickup = ord.status === 'pickup';
+      const isApprovedReject = ord.status === 'rejected' && Boolean(ord.incentive_approved);
+
+      if (!isPickup && !isApprovedReject) return;
+
+      const type = isPickup ? 'pickup' : 'reject';
+      const agentUser = users[ord.agent] || {};
+      const defaultField = type === 'pickup' ? 'pickup_incentive' : 'reject_incentive';
+      const overrideField = type === 'pickup' ? 'pickup_incentive_override' : 'reject_incentive_override';
+
+      const defaultInc = Number(agentUser[defaultField]) || 0;
+      const hasOv = ord[overrideField] !== undefined && ord[overrideField] !== null && ord[overrideField] !== '';
+      const currentInc = hasOv ? (Number(ord[overrideField]) || 0) : defaultInc;
+
+      activities.push({
+        id,
+        orderId: ord.orderId || id,
+        agent: ord.agent || '',
+        agentName: agentUser.name || ord.agent || '',
+        phoneModel: ord.phoneModel || '',
+        type,
+        defaultInc,
+        currentInc,
+        hasOverride: hasOv,
+        timestamp: ord.timestamp || 0,
+        timestampIST: ord.timestampIST || ''
+      });
+    });
+
+    activities.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+
+    let rows = '';
+
+    if (!activities.length) {
+      rows = `
+        <tr>
+          <td colspan="6" class="text-center py-10 text-gray-400">
+            <div class="text-sm font-semibold text-gray-500">No pickup or approved-reject activities</div>
+            <div class="text-xs text-gray-400 mt-1">on ${dateVal}</div>
+          </td>
+        </tr>
+      `;
+    } else {
+      activities.forEach((a, i) => {
+        const typeBadge = a.type === 'pickup'
+          ? '<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-green-100 text-green-800">📦 PICKUP</span>'
+          : '<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800">❌ REJECT</span>';
+
+        const customIndicator = a.hasOverride
+          ? '<span class="ml-1 text-[9px] px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-700 font-bold">CUSTOM</span>'
+          : '';
+
+        const resetBtn = a.hasOverride
+          ? `<button onclick="resetActivityIncentive('${a.id}', '${a.type}')" class="px-2 py-1 rounded text-[10px] font-bold bg-gray-100 text-gray-700 border border-gray-200 hover:bg-gray-200" title="Reset to agent default">↩️</button>`
+          : '';
+
+        rows += `
+          <tr class="border-b border-gray-100 hover:bg-gray-50 text-xs">
+            <td class="py-2 px-2 text-gray-400 font-mono">${i + 1}</td>
+            <td class="py-2 px-2">
+              <div class="font-mono font-bold text-gray-800 text-[11px]">${esc(a.orderId)}</div>
+              <div class="text-[10px] text-gray-400">${esc(a.phoneModel || '—')}</div>
+            </td>
+            <td class="py-2 px-2">
+              <div class="font-semibold text-gray-700 text-[11px]">${esc(a.agentName)}</div>
+              <div class="text-[10px] text-gray-400 font-mono">${esc(a.agent)}</div>
+              ${a.timestampIST ? `<div class="text-[9px] text-gray-400">${esc(a.timestampIST)}</div>` : ''}
+            </td>
+            <td class="py-2 px-2">${typeBadge}</td>
+            <td class="py-2 px-2 text-right font-bold text-gray-600">${formatINR(a.defaultInc)}</td>
+            <td class="py-2 px-2">
+              <div class="flex items-center gap-1 flex-nowrap">
+                <input type="number" id="incInput_${a.id}" value="${a.currentInc}" min="0" step="1"
+                  class="w-20 px-2 py-1 border-2 border-gray-200 rounded text-xs font-bold text-indigo-700 outline-none focus:border-indigo-500" />
+                ${customIndicator}
+                <button onclick="saveActivityIncentive('${a.id}', '${a.type}')" class="px-2 py-1 rounded text-[10px] font-bold bg-emerald-500 text-white hover:bg-emerald-600" title="Save">💾</button>
+                ${resetBtn}
+              </div>
+            </td>
+          </tr>
+        `;
+      });
+    }
+
+    const totalDefaults = activities.reduce((s, a) => s + a.defaultInc, 0);
+    const totalCurrent = activities.reduce((s, a) => s + a.currentInc, 0);
+    const changedCount = activities.filter(a => a.hasOverride).length;
+
+    await Swal.fire({
+      title: `📅 Activities for ${dateVal}`,
+      width: '1050px',
+      html: `
+        <div class="text-left font-sans">
+          <div class="bg-blue-50 border border-blue-200 rounded-xl p-3 mb-4 text-xs">
+            <p class="font-bold text-blue-900 mb-1">💡 How it works</p>
+            <p class="text-gray-700">Each activity uses the agent's default incentive. Override a specific activity by entering a new amount and clicking <strong>💾 Save</strong>. Only that activity changes — the agent's default and other activities stay the same. Use <strong>↩️ Reset</strong> to revert to the default.</p>
+          </div>
+
+          <div class="flex items-center justify-between mb-3 flex-wrap gap-2 text-xs">
+            <span class="text-gray-500">Total activities: <strong>${activities.length}</strong>
+              ${changedCount ? ` · Changed: <strong class="text-indigo-600">${changedCount}</strong>` : ''}
+            </span>
+            <span class="text-gray-500">
+              Default: <strong>${formatINR(totalDefaults)}</strong>
+              ${totalCurrent !== totalDefaults ? ` · Applied: <strong class="text-indigo-600">${formatINR(totalCurrent)}</strong>` : ''}
+            </span>
+          </div>
+
+          <div class="max-h-[520px] overflow-y-auto border border-gray-200 rounded-xl">
+            <table class="w-full text-left">
+              <thead class="bg-gray-50 border-b border-gray-200 text-gray-600 text-[10px] uppercase font-bold sticky top-0">
+                <tr>
+                  <th class="py-2 px-2">#</th>
+                  <th class="py-2 px-2">Order</th>
+                  <th class="py-2 px-2">Agent / Time</th>
+                  <th class="py-2 px-2">Type</th>
+                  <th class="py-2 px-2 text-right">Default</th>
+                  <th class="py-2 px-2">Applied Incentive</th>
+                </tr>
+              </thead>
+              <tbody>${rows}</tbody>
+            </table>
+          </div>
+        </div>
+      `,
+      showConfirmButton: false,
+      showCloseButton: true
+    });
+  } catch (e) {
+    console.error(e);
+    showToast('Failed to load activities', 'error');
+  }
+}
+
+async function saveActivityIncentive(orderId, type) {
+  const inputEl = document.getElementById('incInput_' + orderId);
+  if (!inputEl) return;
+
+  const val = parseFloat(inputEl.value);
+  if (isNaN(val) || val < 0) {
+    showToast('Enter a valid amount (≥ 0)', 'error');
+    return;
+  }
+
+  const overrideField = type === 'pickup' ? 'pickup_incentive_override' : 'reject_incentive_override';
+  const defaultField = type === 'pickup' ? 'pickup_incentive' : 'reject_incentive';
+
+  try {
+    const snap = await db.ref('pickups/' + orderId).once('value');
+    const ord = snap.val();
+    if (!ord) { showToast('Order not found', 'error'); return; }
+
+    const users = await getData('users', false);
+    const agentUser = users[ord.agent] || {};
+    const defaultVal = Number(agentUser[defaultField]) || 0;
+
+    if (val === defaultVal) {
+      // Same as default → remove override so it stays clean
+      await db.ref('pickups/' + orderId + '/' + overrideField).remove();
+      showToast(`↩️ Reset to default ${formatINR(defaultVal)}`, 'info');
+    } else {
+      await db.ref('pickups/' + orderId).update({ [overrideField]: val });
+      showToast(`✅ Applied ${formatINR(val)} to this activity`, 'success');
+    }
+
+    invalidate('pickups');
+
+    // Refresh the modal with updated values + recalc salary if on salary page
+    setTimeout(() => openDateActivitiesModal(currentActivitiesDate), 300);
+    if (currentPageView === 'salary') loadSalaryData(true);
+  } catch (e) {
+    console.error(e);
+    showToast('Failed to save', 'error');
+  }
+}
+
+async function resetActivityIncentive(orderId, type) {
+  const overrideField = type === 'pickup' ? 'pickup_incentive_override' : 'reject_incentive_override';
+
+  try {
+    await db.ref('pickups/' + orderId + '/' + overrideField).remove();
+    invalidate('pickups');
+    showToast('↩️ Reset to agent default', 'info');
+    setTimeout(() => openDateActivitiesModal(currentActivitiesDate), 300);
+    if (currentPageView === 'salary') loadSalaryData(true);
+  } catch (e) {
+    console.error(e);
+    showToast('Failed to reset', 'error');
+  }
+}
+
+// ================================================================
+// AGENT ACTIVITY
+// ================================================================
+function viewAgentActivity(username) {
+  const today = getLocalYMD();
+  viewAgentActivityWithPeriod(username, { mode: 'today', date: today });
+}
+
+async function viewAgentActivityWithPeriod(username, period) {
+  const modal = $('activityModal');
+  const content = $('activityContent');
+  const title = $('activityModalTitle');
+
+  if (!modal || !content) return;
+
+  if (title) title.textContent = `Activity: ${username}`;
+
+  modal.style.display = 'flex';
+  content.innerHTML = `<div class="text-center py-8"><span class="spinner-sm"></span> Loading...</div>`;
+
+  let filterFn;
+  let periodLabel = '';
+
+  if (period.mode === 'today') {
+    const today = getLocalYMD();
+    filterFn = (ts) => ts && getLocalYMD(new Date(ts)) === today;
+    periodLabel = 'Today';
+  } else if (period.mode === 'monthly') {
+    const year = period.year;
+    const month = period.month;
+
+    filterFn = (ts) => {
+      if (!ts) return false;
+      const d = new Date(ts);
+      return d.getFullYear() === year && (d.getMonth() + 1) === month;
+    };
+
+    periodLabel = `${String(month).padStart(2, '0')}-${year}`;
+  } else if (period.mode === 'date') {
+    const date = period.date;
+    filterFn = (ts) => ts && getLocalYMD(new Date(ts)) === date;
+    periodLabel = date;
+  } else if (period.mode === 'current_cycle') {
+    const startD = period.cycleStart || '2020-01-01';
+    const endD = period.cycleEnd || getLocalYMD();
+    filterFn = (ts) => {
+      if (!ts) return false;
+      const ds = getLocalYMD(new Date(ts));
+      return ds >= startD && ds <= endD;
+    };
+    periodLabel = `${startD} → ${endD}`;
+  } else {
+    filterFn = () => true;
+    periodLabel = 'All Time';
+  }
+
+  try {
+    const data = await getData('pickups', false);
+
+    const orders = Object.entries(data)
+      .filter(([_, item]) => item.agent === username && filterFn(item.timestamp))
+      .map(([id, item]) => ({ id, ...item }));
+
+    orders.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+
+    let pickupCount = 0;
+    let rejectCount = 0;
+    let rescheduleCount = 0;
+    const totalOrders = orders.length;
+
+    orders.forEach(item => {
+      if (item.status === 'pickup') pickupCount++;
+      else if (item.status === 'rejected') rejectCount++;
+      else if (item.status === 'reschedule') rescheduleCount++;
+    });
+
+    let allPickup = 0;
+    let allReject = 0;
+    let allReschedule = 0;
+    let allTotal = 0;
+
+    Object.values(data).forEach(item => {
+      if (filterFn(item.timestamp)) {
+        allTotal++;
+
+        if (item.status === 'pickup') allPickup++;
+        else if (item.status === 'rejected') allReject++;
+        else if (item.status === 'reschedule') allReschedule++;
+      }
+    });
+
+    let html = `
+      <div class="mb-4">
+        <p class="text-sm text-gray-500">Period: <strong>${periodLabel}</strong></p>
+
+        <div class="activity-stats" style="display:flex;gap:12px;flex-wrap:wrap;margin-top:8px;">
+          <div class="stat-box" style="background:#f8fafc;padding:8px 14px;border-radius:8px;border:1px solid #e2e8f0;"><div class="num text-green-600" style="font-size:18px;font-weight:700;">${pickupCount}</div><div class="label" style="font-size:10px;color:#94a3b8;">${username} Pickups</div></div>
+          <div class="stat-box" style="background:#f8fafc;padding:8px 14px;border-radius:8px;border:1px solid #e2e8f0;"><div class="num text-red-600" style="font-size:18px;font-weight:700;">${rejectCount}</div><div class="label" style="font-size:10px;color:#94a3b8;">${username} Rejects</div></div>
+          <div class="stat-box" style="background:#f8fafc;padding:8px 14px;border-radius:8px;border:1px solid #e2e8f0;"><div class="num text-amber-600" style="font-size:18px;font-weight:700;">${rescheduleCount}</div><div class="label" style="font-size:10px;color:#94a3b8;">${username} Pending</div></div>
+          <div class="stat-box" style="background:#f8fafc;padding:8px 14px;border-radius:8px;border:1px solid #e2e8f0;"><div class="num text-blue-600" style="font-size:18px;font-weight:700;">${totalOrders}</div><div class="label" style="font-size:10px;color:#94a3b8;">${username} Total</div></div>
+        </div>
+
+        <div class="activity-stats" style="display:flex;gap:12px;flex-wrap:wrap;margin-top:8px;">
+          <div class="stat-box" style="background:#f8fafc;padding:8px 14px;border-radius:8px;border:1px solid #e2e8f0;"><div class="num text-green-600" style="font-size:18px;font-weight:700;">${allPickup}</div><div class="label" style="font-size:10px;color:#94a3b8;">All Agents Pickups</div></div>
+          <div class="stat-box" style="background:#f8fafc;padding:8px 14px;border-radius:8px;border:1px solid #e2e8f0;"><div class="num text-red-600" style="font-size:18px;font-weight:700;">${allReject}</div><div class="label" style="font-size:10px;color:#94a3b8;">All Agents Rejects</div></div>
+          <div class="stat-box" style="background:#f8fafc;padding:8px 14px;border-radius:8px;border:1px solid #e2e8f0;"><div class="num text-amber-600" style="font-size:18px;font-weight:700;">${allReschedule}</div><div class="label" style="font-size:10px;color:#94a3b8;">All Agents Pending</div></div>
+          <div class="stat-box" style="background:#f8fafc;padding:8px 14px;border-radius:8px;border:1px solid #e2e8f0;"><div class="num text-blue-600" style="font-size:18px;font-weight:700;">${allTotal}</div><div class="label" style="font-size:10px;color:#94a3b8;">All Agents Total</div></div>
+        </div>
+      </div>
+    `;
+
+    if (!orders.length) {
+      html += `<div class="empty-state"><i data-lucide="inbox"></i><p class="text-sm font-medium">No activity for this period</p></div>`;
+      content.innerHTML = html;
+      refreshIcons();
+      return;
+    }
+
+    html += `<div class="space-y-2">`;
+
+    orders.forEach(item => {
+      let rejectActions = '';
+
+      if (item.status === 'rejected') {
+        const approved = Boolean(item.incentive_approved);
+        const statusText = approved ? '✅ Approved' : '⏳ Pending';
+        const approvalTime = item.incentive_approved_at ? new Date(item.incentive_approved_at).toLocaleString() : '—';
+
+        rejectActions = `
+          <span class="text-xs font-bold ${approved ? 'text-green-600' : 'text-amber-600'}">${statusText}</span>
+          ${!approved
+            ? `<button onclick="toggleRejectApproval('${item.id}', true)" class="btn-action approve text-xs py-0.5 px-2"><i data-lucide="check-circle"></i></button>`
+            : `<button onclick="toggleRejectApproval('${item.id}', false)" class="btn-action delete text-xs py-0.5 px-2"><i data-lucide="x-circle"></i></button>`
+          }
+          ${approved ? `<span class="text-[10px] text-gray-400" title="Approved at ${approvalTime}">⏱️ ${approvalTime}</span>` : ''}
+        `;
+      }
+
+      html += `
+        <div class="activity-item flex items-center justify-between py-2 px-3 rounded-xl hover:bg-gray-50 cursor-pointer" onclick="viewOrder('${item.id}')">
+          <div class="flex items-center gap-3">
+            <span class="badge-status ${getStatusClass(item)}">${getStatusDisplay(item)}</span>
+            <span class="font-mono font-bold text-gray-700 text-sm">${item.orderId || item.id}</span>
+            <span class="text-xs text-gray-400 hidden sm:inline">${item.phoneModel || '—'}</span>
+            <span class="text-xs text-gray-400 hidden md:inline">${item.value !== undefined ? formatINR(item.value) : '—'}</span>
+          </div>
+          <div class="flex items-center gap-2">
+            ${rejectActions}
+            <span class="text-[10px] text-gray-400">${item.timestampIST || item.timestamp || ''}</span>
+          </div>
+        </div>
+      `;
+    });
+
+    html += `</div>`;
+
+    content.innerHTML = html;
+    refreshIcons();
+  } catch (e) {
+    content.innerHTML = `<div class="empty-state"><i data-lucide="alert-circle"></i><p class="text-sm font-medium text-red-500">Error</p></div>`;
+    showToast('Error', 'error');
+  }
+}
+
+function closeActivityModal() {
+  const modal = $('activityModal');
+  if (modal) modal.style.display = 'none';
+}
+
+// ================================================================
+// ATTENDANCE & OTP MANAGEMENT SYSTEM
+// ================================================================
+function getActiveAgents(users) {
+  return Object.fromEntries(
+    Object.entries(users || {}).filter(([_, u]) => {
+      const role = (u.role || 'agent').toLowerCase();
+      const isActive = u.is_active !== false && u.status !== 'inactive' && u.active !== false;
+      return role === 'agent' && isActive;
+    })
+  );
+}
+
+async function generateOTPs() {
+  const users = await getData('users', true);
+  const dateInput = $('attendanceDate');
+  const targetDate = (dateInput && dateInput.value) ? dateInput.value : getLocalYMD();
+
+  const activeAgents = getActiveAgents(users);
+  const agentKeys = Object.keys(activeAgents);
+
+  if (!agentKeys.length) {
+    showToast('No active agents found to generate OTP.', 'warning');
+    return;
+  }
+
+  const confirm = await Swal.fire({
+    title: 'Generate Daily OTPs?',
+    text: `Generate 6-digit attendance OTP for ${agentKeys.length} active agents for ${targetDate}?`,
+    icon: 'question',
+    showCancelButton: true,
+    confirmButtonColor: '#059669',
+    cancelButtonColor: '#64748b',
+    confirmButtonText: 'Yes, Generate',
+    cancelButtonText: 'Cancel'
+  });
+
+  if (!confirm.isConfirmed) return;
+
+  try {
+    const updates = {};
+    const expiresAt = new Date().setHours(23, 59, 59, 999);
+
+    for (const uname of agentKeys) {
+      const otp = String(Math.floor(100000 + Math.random() * 900000));
+      updates[`daily_otp/${targetDate}/${uname}`] = {
+        otp,
+        generated_at: Date.now(),
+        expires_at: expiresAt,
+        used: false,
+        valid_date: targetDate
+      };
+      updates[`otp/${uname}`] = {
+        otp,
+        date: targetDate,
+        expiresAt,
+        used: false,
+        createdBy: 'admin'
+      };
+    }
+
+    await db.ref().update(updates);
+    showToast(`✅ Generated OTPs for ${agentKeys.length} active agents`, 'success');
+    loadAttendance(true);
+  } catch (e) {
+    showToast('Error generating OTPs', 'error');
+    console.error(e);
+  }
+}
+
+async function openOtpGeneratorModal(username) {
+  const dateInput = $('attendanceDate');
+  const targetDate = (dateInput && dateInput.value) ? dateInput.value : getLocalYMD();
+
+  const snap = await db.ref(`daily_otp/${targetDate}/${username}`).once('value');
+  const otpData = snap.val();
+  const currentOtp = otpData ? otpData.otp : 'Not Generated';
+
+  const { value: action } = await Swal.fire({
+    title: `OTP: ${username}`,
+    html: `
+      <div class="text-left text-sm space-y-2 py-2">
+        <p class="text-gray-600">Date: <strong>${targetDate}</strong></p>
+        <div class="p-3 bg-gray-50 border border-gray-200 rounded-xl text-center">
+          <span class="text-xs text-gray-500 uppercase font-semibold">Today's OTP</span>
+          <div class="text-2xl font-mono font-bold text-indigo-600 mt-1">${currentOtp}</div>
+        </div>
+      </div>
+    `,
+    showDenyButton: true,
+    showCancelButton: true,
+    confirmButtonText: '📋 Copy OTP',
+    denyButtonText: '🔄 Regenerate OTP',
+    cancelButtonText: 'Close',
+    confirmButtonColor: '#4f46e5',
+    denyButtonColor: '#059669'
+  });
+
+  if (action) {
+    if (currentOtp && currentOtp !== 'Not Generated') {
+      navigator.clipboard.writeText(currentOtp);
+      showToast('OTP copied to clipboard!', 'success');
+    } else {
+      showToast('Generate OTP first', 'info');
+    }
+  } else if (action === false) {
+    await generateSingleAgentOtp(username, targetDate);
+  }
+}
+
+async function generateSingleAgentOtp(username, targetDate) {
+  const newOtp = String(Math.floor(100000 + Math.random() * 900000));
+  const expiresAt = new Date().setHours(23, 59, 59, 999);
+
+  try {
+    const updates = {};
+    updates[`daily_otp/${targetDate}/${username}`] = {
+      otp: newOtp,
+      generated_at: Date.now(),
+      expires_at: expiresAt,
+      used: false,
+      valid_date: targetDate
+    };
+    updates[`otp/${username}`] = {
+      otp: newOtp,
+      date: targetDate,
+      expiresAt,
+      used: false,
+      createdBy: 'admin'
+    };
+    await db.ref().update(updates);
+    showToast(`✅ New OTP: ${newOtp}`, 'success');
+    loadAttendance(true);
+  } catch (e) {
+    console.error(e);
+    showToast('Failed to regenerate OTP', 'error');
+  }
+}
+
+async function loadAttendance(force = false) {
+  const dateInput = $('attendanceDate');
+  if (dateInput && !dateInput.value) {
+    dateInput.value = getLocalYMD();
+  }
+  const date = dateInput ? dateInput.value : getLocalYMD();
+  const container = $('attendanceList');
+  if (!container) return;
+
+  container.innerHTML = `<div class="text-center py-6"><span class="spinner-sm"></span> Loading attendance...</div>`;
+
+  try {
+    const [users, allAttendance, otpSnap] = await Promise.all([
+      getData('users', force),
+      getData('attendance', force),
+      db.ref('daily_otp/' + date).once('value')
+    ]);
+
+    const otps = otpSnap.val() || {};
+    const agents = getActiveAgents(users);
+    const activeCount = Object.keys(agents).length;
+
+    if (!activeCount) {
+      container.innerHTML = `<div class="empty-state p-6 text-center text-gray-500 font-medium">No active agents found.</div>`;
+      return;
+    }
+
+    let presentCount = 0;
+    let absentCount = 0;
+    let halfDayCount = 0;
+    let unmarkedCount = 0;
+
+    let itemsHtml = '';
+
+    for (const [uname, uData] of Object.entries(agents)) {
+      const att = (allAttendance[uname] && allAttendance[uname][date]) || {};
+      const otpData = otps[uname] || {};
+      const otp = otpData.otp || '—';
+
+      const status = att.status || 'unmarked';
+      const isBlocked = att.blocked === true || uData.is_blocked === true;
+      const isHalf = att.half_day === true;
+      const isMarked = status === 'present' || status === 'absent';
+
+      let badge = '<span class="px-2.5 py-1 rounded-full text-xs font-semibold bg-gray-100 text-gray-600">Not Marked</span>';
+
+      if (status === 'present') {
+        if (isHalf) {
+          halfDayCount++;
+          badge = '<span class="px-2.5 py-1 rounded-full text-xs font-semibold bg-amber-100 text-amber-800">🌗 Half Day</span>';
+        } else {
+          presentCount++;
+          badge = '<span class="px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-800">✅ Present</span>';
+        }
+      } else if (status === 'absent') {
+        absentCount++;
+        badge = isBlocked
+          ? '<span class="px-2.5 py-1 rounded-full text-xs font-semibold bg-rose-100 text-rose-800">🚫 Blocked</span>'
+          : '<span class="px-2.5 py-1 rounded-full text-xs font-semibold bg-rose-50 text-rose-700">❌ Absent</span>';
+      } else {
+        unmarkedCount++;
+      }
+
+      const unmarkBtn = isMarked
+        ? `<button onclick="setAgentAttendanceStatus('${uname}', '${date}', 'unmarked', false)" title="Unmark attendance" class="px-2 py-1 text-xs rounded-lg border border-gray-300 text-gray-600 hover:bg-gray-100 font-semibold">
+             ⚪ Unmark
+           </button>`
+        : '';
+
+      itemsHtml += `
+        <div class="glass rounded-xl p-4 border border-gray-100 flex flex-wrap items-center justify-between gap-3 hover:shadow-sm transition">
+          <div>
+            <div class="flex items-center gap-2">
+              <span class="font-bold text-gray-800 text-sm hover:text-indigo-600 cursor-pointer" onclick="viewAttendanceHistory('${uname}')">${uData.name || uname}</span>
+              <span class="text-xs text-gray-400 font-mono">(${uname})</span>
+            </div>
+            <div class="flex items-center gap-3 mt-1 text-xs text-gray-500">
+              <span>OTP: <strong class="text-indigo-600 font-mono cursor-pointer" onclick="openOtpGeneratorModal('${uname}')">${otp}</strong></span>
+              ${att.timestamp ? `<span>• Marked: ${new Date(att.timestamp).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</span>` : ''}
+              ${att.reason ? `<span class="text-rose-600 font-medium">• ${att.reason}</span>` : ''}
+            </div>
+          </div>
+
+          <div class="flex items-center gap-2 flex-wrap">
+            <div>${badge}</div>
+
+            <div class="flex items-center gap-1.5 ml-2 flex-wrap">
+              <button onclick="setAgentAttendanceStatus('${uname}', '${date}', 'present', false)" title="Mark Present" class="px-2 py-1 text-xs rounded-lg border border-emerald-300 text-emerald-700 hover:bg-emerald-50 font-semibold">
+                Present
+              </button>
+              <button onclick="setAgentAttendanceStatus('${uname}', '${date}', 'present', true)" title="Mark Half Day" class="px-2 py-1 text-xs rounded-lg border border-amber-300 text-amber-700 hover:bg-amber-50 font-semibold">
+                Half Day
+              </button>
+              <button onclick="setAgentAttendanceStatus('${uname}', '${date}', 'absent', false)" title="Mark Absent" class="px-2 py-1 text-xs rounded-lg border border-rose-300 text-rose-700 hover:bg-rose-50 font-semibold">
+                Absent
+              </button>
+              ${unmarkBtn}
+              <button onclick="openOtpGeneratorModal('${uname}')" title="Manage OTP" class="px-2 py-1 text-xs rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-700 font-semibold">
+                🔑 OTP
+              </button>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    const summaryBanner = `
+      <div class="grid grid-cols-5 gap-3 mb-4 text-center">
+        <div class="p-3 bg-blue-50 border border-blue-100 rounded-xl">
+          <div class="text-xs text-blue-600 font-semibold">Active Agents</div>
+          <div class="text-xl font-bold text-blue-800">${activeCount}</div>
+        </div>
+        <div class="p-3 bg-emerald-50 border border-emerald-100 rounded-xl">
+          <div class="text-xs text-emerald-600 font-semibold">Present</div>
+          <div class="text-xl font-bold text-emerald-800">${presentCount}</div>
+        </div>
+        <div class="p-3 bg-amber-50 border border-amber-100 rounded-xl">
+          <div class="text-xs text-amber-600 font-semibold">Half Day</div>
+          <div class="text-xl font-bold text-amber-800">${halfDayCount}</div>
+        </div>
+        <div class="p-3 bg-rose-50 border border-rose-100 rounded-xl">
+          <div class="text-xs text-rose-600 font-semibold">Absent</div>
+          <div class="text-xl font-bold text-rose-800">${absentCount}</div>
+        </div>
+        <div class="p-3 bg-gray-50 border border-gray-200 rounded-xl">
+          <div class="text-xs text-gray-600 font-semibold">Unmarked</div>
+          <div class="text-xl font-bold text-gray-700">${unmarkedCount}</div>
+        </div>
+      </div>
+    `;
+
+    container.innerHTML = summaryBanner + `<div class="space-y-2.5">${itemsHtml}</div>`;
+    refreshIcons();
+  } catch (e) {
+    console.error(e);
+    container.innerHTML = `<div class="p-4 text-center text-rose-500 font-medium">Failed to load attendance records.</div>`;
+  }
+}
+
+async function setAgentAttendanceStatus(username, date, status, isHalfDay = false) {
+  try {
+    if (status === 'unmarked') {
+      await db.ref(`attendance/${username}/${date}`).remove();
+
+      await db.ref(`users/${username}`).update({
+        is_blocked: false,
+        blocked_date: null
+      });
+
+      invalidate('attendance', 'users');
+      showToast(`⚪ Unmarked ${username} for ${date}`, 'info');
+      loadAttendance(true);
+      loadDashboard(true);
+      return;
+    }
+
+    const record = {
+      status: status,
+      timestamp: Date.now(),
+      marked_by: 'admin',
+      salary_counted: status === 'present',
+      half_day: isHalfDay,
+      blocked: status === 'absent'
+    };
+
+    await db.ref(`attendance/${username}/${date}`).update(record);
+
+    if (status === 'absent') {
+      await db.ref(`users/${username}`).update({
+        is_blocked: true,
+        blocked_date: date
+      });
+    } else {
+      await db.ref(`users/${username}`).update({
+        is_blocked: false,
+        blocked_date: null
+      });
+    }
+
+    invalidate('attendance', 'users');
+    showToast(`Updated ${username} to ${isHalfDay ? 'Half Day' : status}`, 'success');
+    loadAttendance(true);
+    loadDashboard(true);
+  } catch (e) {
+    console.error(e);
+    showToast('Failed to update status', 'error');
+  }
+}
+
+async function markAllPresent() {
+  const dateInput = $('attendanceDate');
+  const targetDate = (dateInput && dateInput.value) ? dateInput.value : getLocalYMD();
+
+  const users = await getData('users', true);
+  const activeAgents = getActiveAgents(users);
+  const agentKeys = Object.keys(activeAgents);
+
+  if (!agentKeys.length) {
+    showToast('No active agents to mark.', 'warning');
+    return;
+  }
+
+  const confirm = await Swal.fire({
+    title: 'Mark All Present?',
+    text: `Mark all ${agentKeys.length} active agents as Present for ${targetDate}?`,
+    icon: 'question',
+    showCancelButton: true,
+    confirmButtonColor: '#059669',
+    cancelButtonColor: '#64748b',
+    confirmButtonText: 'Yes, Mark All Present',
+    cancelButtonText: 'Cancel'
+  });
+
+  if (!confirm.isConfirmed) return;
+
+  try {
+    const updates = {};
+    for (const uname of agentKeys) {
+      updates[`attendance/${uname}/${targetDate}`] = {
+        status: 'present',
+        timestamp: Date.now(),
+        marked_by: 'admin_bulk',
+        salary_counted: true,
+        half_day: false,
+        blocked: false
+      };
+      updates[`users/${uname}/is_blocked`] = false;
+      updates[`users/${uname}/blocked_date`] = null;
+    }
+
+    await db.ref().update(updates);
+    invalidate('attendance');
+    showToast(`✅ Marked ${agentKeys.length} agents Present`, 'success');
+    loadAttendance(true);
+  } catch (e) {
+    console.error(e);
+    showToast('Failed to mark all present', 'error');
+  }
+}
+
+async function viewAttendanceHistory(username) {
+  const monthInput = $('salaryMonth');
+  let monthVal = monthInput ? monthInput.value : '';
+
+  if (!monthVal) {
+    const today = new Date();
+    monthVal = today.getFullYear() + '-' + String(today.getMonth() + 1).padStart(2, '0');
+  }
+
+  const [year, month] = monthVal.split('-').map(Number);
+  const monthStr = String(month).padStart(2, '0');
+  const daysInMonth = new Date(year, month, 0).getDate();
+
+  try {
+    const userSnap = await db.ref('users/' + username).once('value');
+    const userData = userSnap.val();
+
+    if (!userData) {
+      showToast('User not found', 'error');
+      return;
+    }
+
+    const allAtt = await getData('attendance', false);
+    const userAtt = allAtt[username] || {};
+
+    let rows = '';
+    let presentCount = 0;
+    let absentCount = 0;
+
+    for (let d = 1; d <= daysInMonth; d++) {
+      const dateStr = `${year}-${monthStr}-${String(d).padStart(2, '0')}`;
+      const att = userAtt[dateStr] || {};
+      const status = att.status || 'Not Marked';
+
+      let statusDisplay = '—';
+      let statusClass = 'text-gray-400';
+
+      if (status === 'present') {
+        presentCount++;
+
+        if (att.half_day === true) {
+          statusDisplay = '🌗 Present (Half Day)';
+          statusClass = 'text-red-600';
+        } else if (att.half_day === false && att.timestamp && isAfter12Local(att.timestamp)) {
+          statusDisplay = '✅ Present (Late, Full Day)';
+          statusClass = 'text-green-600';
+        } else if (att.timestamp && isAfter12Local(att.timestamp)) {
+          statusDisplay = '⚠️ Present (Late)';
+          statusClass = 'text-amber-600';
+        } else {
+          statusDisplay = '✅ Present';
+          statusClass = 'text-green-600';
+        }
+      } else if (status === 'absent') {
+        statusDisplay = '❌ Absent';
+        statusClass = 'text-red-600';
+        absentCount++;
+      }
+
+      const markedBy = att.marked_by || '—';
+      const markedDisplay = markedBy === 'admin' ? 'Admin' : (markedBy === 'otp' ? 'OTP' : '—');
+
+      rows += `
+        <tr class="border-b border-gray-100">
+          <td class="py-2 px-3 text-sm">${dateStr}</td>
+          <td class="py-2 px-3 text-sm ${statusClass}">${statusDisplay}</td>
+          <td class="py-2 px-3 text-sm text-gray-500">${markedDisplay}</td>
+        </tr>
+      `;
+    }
+
+    const total = daysInMonth;
+    const presentPercent = total > 0 ? Math.round((presentCount / total) * 100) : 0;
+
+    const html = `
+      <div class="text-left">
+        <p class="font-bold text-lg">${userData.name} (${username})</p>
+        <p class="text-sm text-gray-500 mb-2">Attendance for ${monthVal}</p>
+        <div class="flex gap-4 mb-3 text-sm">
+          <span>✅ Present: <strong>${presentCount}</strong></span>
+          <span>❌ Absent: <strong>${absentCount}</strong></span>
+          <span>📊 ${presentPercent}%</span>
+        </div>
+        <div class="max-h-[400px] overflow-y-auto border rounded-lg">
+          <table class="w-full text-sm">
+            <thead class="bg-gray-50 sticky top-0">
+              <tr>
+                <th class="py-2 px-3 text-left font-bold text-gray-500">Date</th>
+                <th class="py-2 px-3 text-left font-bold text-gray-500">Status</th>
+                <th class="py-2 px-3 text-left font-bold text-gray-500">Marked By</th>
+              </tr>
+            </thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>
+      </div>
+    `;
+
+    await Swal.fire({
+      title: 'Attendance History',
+      html,
+      icon: 'info',
+      confirmButtonColor: '#4f46e5',
+      confirmButtonText: 'Close',
+      width: 600
+    });
+  } catch (e) {
+    console.error(e);
+    showToast('Error loading history', 'error');
+  }
+}
+
+async function markPresentManually(username, date) {
+  const confirm = await Swal.fire({
+    title: `Mark ${username} Present?`,
+    text: `Mark attendance for ${username} on ${date}?`,
+    icon: 'question',
+    showCancelButton: true,
+    confirmButtonColor: '#059669',
+    cancelButtonColor: '#64748b',
+    confirmButtonText: 'Yes',
+    cancelButtonText: 'Cancel'
+  });
+
+  if (!confirm.isConfirmed) return;
+
+  try {
+    await db.ref('attendance/' + username + '/' + date).set({
+      status: 'present',
+      timestamp: Date.now(),
+      blocked: false,
+      salary_counted: true,
+      marked_by: 'admin'
+    });
+
+    invalidate('attendance');
+    showToast('✅ Marked present (by admin)', 'success');
+
+    loadAttendance(true);
+    loadDashboard(true);
+  } catch (e) {
+    showToast('Error', 'error');
+    console.error(e);
+  }
+}
+
+async function unblockAgent(username, date) {
+  const result = await Swal.fire({
+    title: `Unblock ${username}?`,
+    text: 'Do you want to count salary for this day?',
+    icon: 'question',
+    showDenyButton: true,
+    showCancelButton: true,
+    confirmButtonText: 'Yes, Count Salary',
+    denyButtonText: "No, Don't Count",
+    cancelButtonText: 'Cancel',
+    confirmButtonColor: '#059669',
+    denyButtonColor: '#dc2626'
+  });
+
+  if (result.isDismissed) return;
+
+  const countSalary = result.isConfirmed;
+
+  try {
+    await db.ref('users/' + username + '/is_blocked').set(false);
+
+    await db.ref('attendance/' + username + '/' + date).update({
+      blocked: false,
+      salary_counted: countSalary,
+      marked_by: 'admin'
+    });
+
+    invalidate('attendance', 'users');
+
+    if (!countSalary) {
+      showToast(`✅ Unblocked. Salary counted: No`, 'success');
+    } else {
+      showToast(`✅ Unblocked. Salary will be counted.`, 'success');
+    }
+
+    loadAttendance(true);
+    loadDashboard(true);
+  } catch (e) {
+    showToast('Error unblocking', 'error');
+    console.error(e);
+  }
+}
+
+async function blockAgent(username, date) {
+  const confirm = await Swal.fire({
+    title: 'Block Agent?',
+    text: `Block ${username} for ${date}?`,
+    icon: 'warning',
+    showCancelButton: true,
+    confirmButtonColor: '#dc2626',
+    cancelButtonColor: '#64748b',
+    confirmButtonText: 'Block',
+    cancelButtonText: 'Cancel'
+  });
+
+  if (!confirm.isConfirmed) return;
+
+  try {
+    await db.ref('users/' + username + '/is_blocked').set(true);
+
+    await db.ref('attendance/' + username + '/' + date).update({
+      status: 'absent',
+      blocked: true,
+      reason: 'Manually blocked by admin',
+      marked_by: 'admin'
+    });
+
+    invalidate('attendance', 'users');
+    showToast('🔒 Agent blocked', 'success');
+
+    loadAttendance(true);
+    loadDashboard(true);
+  } catch (e) {
+    showToast('Error blocking', 'error');
+    console.error(e);
+  }
+}
+
+// ================================================================
+// SALARY / EARNINGS — V3
+// ================================================================
+// FLOW:
+//   Current Cycle Calculation
+//      → Mark as Paid (snapshot saved to salary_payments)
+//      → Cycle Closes → New Cycle Starts (auto, from next day)
+//
+//   Paid History → Open → Undo Paid
+//      → Status flips to UNDONE → Data auto-restores (cycle reopens)
+//
+//   Paid History → Open → Delete Paid
+//      → Permanent removal from Firebase (with confirmation)
+//
+//   Adjustment History → Revert (soft) / Delete (permanent)
+//
+// RULES:
+//   • All paid cycles are stored as immutable snapshots (never auto-deleted).
+//   • Undo = set status = 'UNDONE'. Cycle range recalculates from last
+//     ACTIVE payment automatically.
+//   • Adjustments: include "settledInCycle" only for record; date-range
+//     filtering is the primary mechanism for cycle separation.
+//   • Activity incentive uses per-order override if set, else agent default.
+// ================================================================
+
+// ---------- Cycle helpers ----------
+function getActivePaymentsForAgent(allPayments, agentUsername) {
+  const agentPays = allPayments[agentUsername] || {};
+  return Object.values(agentPays)
+    .filter(p => p.status !== 'UNDONE')
+    .sort((a, b) => {
+      const da = a.paymentDate || '';
+      const dbb = b.paymentDate || '';
+      if (da !== dbb) return dbb.localeCompare(da);
+      return (b.createdAt || 0) - (a.createdAt || 0);
+    });
+}
+
+function getLastActivePayment(allPayments, agentUsername) {
+  const list = getActivePaymentsForAgent(allPayments, agentUsername);
+  return list[0] || null;
+}
+
+function getPaymentHistoryForAgent(allPayments, agentUsername) {
+  const agentPays = allPayments[agentUsername] || {};
+  return Object.values(agentPays).sort((a, b) => {
+    const da = a.paymentDate || '';
+    const dbb = b.paymentDate || '';
+    if (da !== dbb) return dbb.localeCompare(da);
+    return (b.createdAt || 0) - (a.createdAt || 0);
+  });
+}
+
+function computeCycleRangeForAgent(mode, uData, lastActivePayment, selectedDate) {
+  const today = getLocalYMD();
+  const joinDateStr = uData.joinDate || null;
+
+  if (mode === 'today') {
+    return { start: today, end: today };
+  }
+  if (mode === 'date') {
+    const d = selectedDate || today;
+    return { start: d, end: d };
+  }
+  if (mode === 'since_join') {
+    return { start: joinDateStr || '2020-01-01', end: today };
+  }
+  if (mode === 'current_cycle') {
+    if (lastActivePayment && lastActivePayment.paymentDate) {
+      const nextDay = addDays(lastActivePayment.paymentDate, 1);
+      return { start: nextDay, end: today };
+    }
+    return { start: joinDateStr || '2020-01-01', end: today };
+  }
+  return { start: today, end: today };
+}
+
+function computeCycleTotals({ uname, uData, cycleStart, cycleEnd, allAttendance, pickupsByAgentDate, allAdjustments }) {
+  const salary = uData.salary || 0;
+  const perDaySalary = salary / 30;
+
+  const joinDateObj = uData.joinDate ? new Date(uData.joinDate + 'T00:00:00') : null;
+
+  let totalBaseSalary = 0;
+  let totalPickupIncentive = 0;
+  let totalRejectIncentive = 0;
+  let totalBonus = 0;
+  let totalDeduction = 0;
+
+  let presentDays = 0;
+  let halfDays = 0;
+  let absentDays = 0;
+
+  let agentPickupCount = 0;
+  let agentRejectCount = 0;
+  let agentPendingCount = 0;
+  let agentHalfDayCount = 0;
+
+  let detailsHtml = '';
+  const pendingRejects = [];
+  const usedAdjustmentIds = [];
+
+  const userAttendance = allAttendance[uname] || {};
+
+  const startD = new Date(cycleStart + 'T00:00:00');
+  const endD = new Date(cycleEnd + 'T00:00:00');
+
+  let currentDate = new Date(startD);
+
+  while (currentDate <= endD) {
+    const dateStr = getLocalYMD(currentDate);
+
+    if (joinDateObj && currentDate < joinDateObj) {
+      currentDate.setDate(currentDate.getDate() + 1);
+      continue;
+    }
+
+    const att = userAttendance[dateStr] || {};
+    const isPresent = att.status === 'present';
+    const salaryCounted = att.salary_counted !== false;
+
+    if (isPresent && salaryCounted) {
+      if (att.half_day === true) {
+        totalBaseSalary += perDaySalary * 0.5;
+        halfDays++;
+        agentHalfDayCount++;
+      } else {
+        totalBaseSalary += perDaySalary;
+        presentDays++;
+      }
+    } else if (att.status === 'absent') {
+      absentDays++;
+    }
+
+    const key = uname + '|' + dateStr;
+    const dayPickups = pickupsByAgentDate[key] || [];
+
+    for (const ord of dayPickups) {
+      if (ord.status === 'pickup') {
+        totalPickupIncentive += getActivityIncentive(ord, uData, 'pickup');
+        agentPickupCount++;
+      }
+      if (ord.status === 'rejected' && Boolean(ord.incentive_approved)) {
+        totalRejectIncentive += getActivityIncentive(ord, uData, 'reject');
+        agentRejectCount++;
+      }
+      if (ord.status === 'rejected' && !Boolean(ord.incentive_approved)) {
+        pendingRejects.push({ id: ord.orderId || ord.id, ...ord });
+      }
+      if (ord.status === 'reschedule') {
+        agentPendingCount++;
+      }
+    }
+
+    if (isPresent || att.status === 'absent') {
+      let icon;
+      if (isPresent) icon = att.half_day === true ? '🌗' : '✅';
+      else icon = att.blocked ? '🔒' : '❌';
+      detailsHtml += `<span class="text-xs mx-0.5" title="${dateStr}">${icon}</span>`;
+    }
+
+    currentDate.setDate(currentDate.getDate() + 1);
+  }
+
+  // ADJUSTMENTS — all pending (unsettled) + non-reverted count in every mode
+  const agentAdjustments = Object.values(allAdjustments[uname] || {});
+  for (const adj of agentAdjustments) {
+    if (adj.status === 'REVERTED') continue;
+    if (adj.settledInCycle) continue;
+
+    const amt = Number(adj.amount) || 0;
+    if (adj.effect === 'add') totalBonus += amt;
+    else if (adj.effect === 'deduct') totalDeduction += amt;
+
+    usedAdjustmentIds.push(adj.id);
+  }
+
+  // Grand Total = Base + Bonus − Deduction (incentives EXCLUDED)
+  const grandTotal = Math.max(0, totalBaseSalary + totalBonus - totalDeduction);
+
+  const uniquePending = [];
+  const seen = new Set();
+  for (const pr of pendingRejects) {
+    if (!seen.has(pr.id)) { seen.add(pr.id); uniquePending.push(pr); }
+  }
+
+  return {
+    totalBaseSalary,
+    totalBonus,
+    totalDeduction,
+    grandTotal,
+    totalPickupIncentive,
+    totalRejectIncentive,
+    agentPickupCount,
+    agentRejectCount,
+    agentPendingCount,
+    agentHalfDayCount,
+    presentDays,
+    halfDays,
+    absentDays,
+    detailsHtml,
+    uniquePending,
+    usedAdjustmentIds
+  };
+}
+
+// ---------- Premium salary card ----------
+function buildSalaryCard({
+  uname, uData,
+  cycleStart, cycleEnd, lastPaidDate, mode,
+  totals,
+  cycleAlreadyPaid, pendingAmount,
+  joinDateDisplay, periodAttr,
+  paidCyclesCount
+}) {
+  const t = totals;
+
+  const fullyPaid = pendingAmount <= 0 && t.grandTotal > 0;
+  const partiallyPaid = cycleAlreadyPaid > 0 && pendingAmount > 0;
+
+  let statusBadge = '<span class="px-2 sm:px-2.5 py-0.5 sm:py-1 rounded-full text-[9px] sm:text-[10px] font-bold bg-rose-100 text-rose-800">🔴 UNPAID</span>';
+  if (fullyPaid) statusBadge = '<span class="px-2 sm:px-2.5 py-0.5 sm:py-1 rounded-full text-[9px] sm:text-[10px] font-bold bg-emerald-100 text-emerald-800">✅ FULLY PAID</span>';
+  else if (partiallyPaid) statusBadge = '<span class="px-2 sm:px-2.5 py-0.5 sm:py-1 rounded-full text-[9px] sm:text-[10px] font-bold bg-amber-100 text-amber-800">⏳ PARTIALLY PAID</span>';
+
+  const cycleLabel = cycleStart === cycleEnd
+    ? cycleStart
+    : `${cycleStart} → ${cycleEnd}`;
+
+  return `
+    <div class="glass rounded-2xl p-3 sm:p-5 shadow-sm border border-gray-100 salary-summary-card">
+      <div class="flex flex-wrap items-center justify-between gap-2 mb-2 sm:mb-3">
+        <div class="min-w-0 flex-1">
+          <span class="font-bold text-gray-800 text-sm sm:text-base cursor-pointer hover:text-indigo-600 hover:underline transition break-words"
+                onclick="openRiderStatementFlow('${uname}')"
+                title="Click to view Pickup/Reject Statement">${uData.name || uname}</span>
+          <span class="text-[11px] sm:text-sm text-gray-500 ml-1">(${uname})</span>
+          <span class="block sm:inline text-[10px] sm:text-xs text-gray-400 ml-0 sm:ml-2 mt-0.5 sm:mt-0">Joined: ${joinDateDisplay}</span>
+        </div>
+        <div class="flex items-center gap-1.5 sm:gap-2 flex-shrink-0">
+          ${statusBadge}
+          <span class="text-[9px] sm:text-[10px] text-gray-400">${paidCyclesCount} paid cycle${paidCyclesCount !== 1 ? 's' : ''}</span>
+        </div>
+      </div>
+
+      <div class="mb-2 sm:mb-3 px-2 sm:px-3 py-1.5 sm:py-2 rounded-lg sm:rounded-xl bg-indigo-50 border border-indigo-100 flex flex-wrap items-center justify-between gap-1 sm:gap-2 text-[10px] sm:text-xs">
+        <span class="text-indigo-700 font-semibold">📅 Cycle: <strong class="break-all">${cycleLabel}</strong></span>
+        ${lastPaidDate ? `<span class="text-gray-500">Last paid: <strong>${lastPaidDate}</strong></span>` : '<span class="text-gray-500">No payment yet</span>'}
+      </div>
+
+      <div class="grid grid-cols-2 sm:grid-cols-4 gap-1.5 sm:gap-2 mb-2 sm:mb-3">
+        <div class="bg-gray-50 border border-gray-200 p-2 sm:p-3 rounded-lg sm:rounded-xl">
+          <div class="text-[9px] sm:text-[10px] text-gray-500 font-bold uppercase tracking-wide">Base Salary</div>
+          <div class="text-sm sm:text-base font-bold text-gray-800 mt-0.5 sm:mt-1">${formatINR(t.totalBaseSalary)}</div>
+          <div class="text-[9px] sm:text-[10px] text-gray-400 mt-0.5">${t.presentDays} full · ${t.halfDays} half</div>
+        </div>
+        <div class="bg-blue-50 border border-blue-200 p-2 sm:p-3 rounded-lg sm:rounded-xl">
+          <div class="text-[9px] sm:text-[10px] text-blue-600 font-bold uppercase tracking-wide">+ Bonus</div>
+          <div class="text-sm sm:text-base font-bold text-blue-700 mt-0.5 sm:mt-1">+${formatINR(t.totalBonus)}</div>
+        </div>
+        <div class="bg-rose-50 border border-rose-200 p-2 sm:p-3 rounded-lg sm:rounded-xl">
+          <div class="text-[9px] sm:text-[10px] text-rose-600 font-bold uppercase tracking-wide">− Deduction</div>
+          <div class="text-sm sm:text-base font-bold text-rose-700 mt-0.5 sm:mt-1">-${formatINR(t.totalDeduction)}</div>
+        </div>
+        <div class="bg-emerald-50 border-2 border-emerald-300 p-2 sm:p-3 rounded-lg sm:rounded-xl">
+          <div class="text-[9px] sm:text-[10px] text-emerald-700 font-bold uppercase tracking-wide">Grand Total</div>
+          <div class="text-base sm:text-lg font-black text-emerald-800 mt-0.5 sm:mt-1">${formatINR(t.grandTotal)}</div>
+        </div>
+      </div>
+
+      <div class="mb-2 sm:mb-3 p-2 sm:p-3 rounded-lg sm:rounded-xl bg-amber-50 border border-dashed border-amber-300">
+        <div class="flex items-center gap-1 sm:gap-2 mb-1.5 sm:mb-2 flex-wrap">
+          <span class="text-[9px] sm:text-[10px] font-bold text-amber-700 uppercase tracking-wide">💡 Incentives</span>
+          <span class="text-[8px] sm:text-[9px] px-1.5 sm:px-2 py-0.5 rounded-full bg-amber-200 text-amber-900 font-bold">Excluded from Grand Total</span>
+        </div>
+        <div class="grid grid-cols-2 gap-1.5 sm:gap-2">
+          <div class="bg-white p-1.5 sm:p-2 rounded-lg border border-amber-200">
+            <div class="text-[9px] sm:text-[10px] text-gray-500 font-semibold">📦 Pickup Incentive</div>
+            <div class="text-xs sm:text-sm font-bold text-green-700">${formatINR(t.totalPickupIncentive)}</div>
+            <div class="text-[9px] sm:text-[10px] text-gray-400">${t.agentPickupCount} pickups</div>
+          </div>
+          <div class="bg-white p-1.5 sm:p-2 rounded-lg border border-amber-200">
+            <div class="text-[9px] sm:text-[10px] text-gray-500 font-semibold">❌ Reject Incentive</div>
+            <div class="text-xs sm:text-sm font-bold text-amber-700">${formatINR(t.totalRejectIncentive)}</div>
+            <div class="text-[9px] sm:text-[10px] text-gray-400">${t.agentRejectCount} rejects</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="mb-2 sm:mb-3 grid grid-cols-2 gap-1.5 sm:gap-2">
+        <div class="p-2 sm:p-3 rounded-lg sm:rounded-xl bg-gray-100 border border-gray-200">
+          <div class="text-[9px] sm:text-[10px] text-gray-500 font-bold uppercase tracking-wide">Already Paid (this cycle)</div>
+          <div class="text-sm sm:text-base font-bold text-gray-800 mt-0.5 sm:mt-1">${formatINR(cycleAlreadyPaid)}</div>
+        </div>
+        <div class="p-2 sm:p-3 rounded-lg sm:rounded-xl ${pendingAmount > 0 ? 'bg-rose-50 border border-rose-200' : 'bg-emerald-50 border border-emerald-200'}">
+          <div class="text-[9px] sm:text-[10px] font-bold uppercase tracking-wide ${pendingAmount > 0 ? 'text-rose-600' : 'text-emerald-600'}">Pending / Current</div>
+          <div class="text-sm sm:text-base font-black mt-0.5 sm:mt-1 ${pendingAmount > 0 ? 'text-rose-700' : 'text-emerald-700'}">${formatINR(pendingAmount)}</div>
+        </div>
+      </div>
+
+      <div class="flex flex-wrap items-center gap-1.5 sm:gap-2">
+        <button onclick="openRiderStatementFlow('${uname}')"
+                class="px-2.5 sm:px-4 py-1.5 sm:py-2 bg-gradient-to-r from-indigo-500 to-purple-600 text-white rounded-lg sm:rounded-xl text-[10px] sm:text-xs font-bold shadow-md hover:shadow-lg transition flex items-center gap-1"
+                title="Pickup/Reject Statement">
+          📋 Statement
+        </button>
+        <button onclick="openPaidModal('${uname}')" class="px-2.5 sm:px-4 py-1.5 sm:py-2 bg-gradient-to-r from-emerald-500 to-green-600 text-white rounded-lg sm:rounded-xl text-[10px] sm:text-xs font-bold shadow-md hover:shadow-lg transition flex items-center gap-1">
+          💰 Mark as Paid
+        </button>
+        <button onclick="openPaymentHistoryModal('${uname}')" class="px-2.5 sm:px-4 py-1.5 sm:py-2 bg-indigo-50 text-indigo-700 rounded-lg sm:rounded-xl text-[10px] sm:text-xs font-bold border border-indigo-200 hover:bg-indigo-100 transition flex items-center gap-1">
+          📜 Paid History
+        </button>
+        <button onclick="openAddAdjustmentModal('${uname}')" class="px-2 sm:px-3 py-1.5 sm:py-2 bg-gray-50 text-gray-700 rounded-lg sm:rounded-xl text-[10px] sm:text-xs font-semibold border border-gray-200 hover:bg-gray-100 transition">
+          ➕ Adjustment
+        </button>
+        <button onclick="openAdjustmentHistoryModal('${uname}')" class="px-2 sm:px-3 py-1.5 sm:py-2 bg-purple-50 text-purple-700 rounded-lg sm:rounded-xl text-[10px] sm:text-xs font-bold border border-purple-200 hover:bg-purple-100 transition">
+          📋 Adj History
+        </button>
+        <button onclick='viewAgentActivityWithPeriod("${uname}", ${periodAttr})' class="px-2 sm:px-3 py-1.5 sm:py-2 bg-gray-50 text-gray-700 rounded-lg sm:rounded-xl text-[10px] sm:text-xs font-semibold border border-gray-200 hover:bg-gray-100 transition">
+          📊 Activity
+        </button>
+      </div>
+
+      <div class="mt-1.5 sm:mt-2 text-[9px] sm:text-xs text-gray-400 break-words">Attendance: ${t.detailsHtml}</div>
+
+      ${t.uniquePending.length > 0 ? `
+        <div class="mt-1.5 sm:mt-2 pt-1.5 sm:pt-2 border-t border-gray-200">
+          <p class="text-[10px] sm:text-xs font-bold text-amber-600">⏳ Pending Reject Approvals (${t.uniquePending.length})</p>
+          <div class="flex flex-wrap gap-1 mt-1">
+            ${t.uniquePending.map(pr => `
+              <span class="text-[10px] sm:text-xs bg-gray-100 px-1.5 sm:px-2 py-0.5 rounded flex items-center gap-1">
+                ${pr.orderId || pr.id}
+                <button onclick="toggleRejectApproval('${pr.id}', true)" class="text-green-600 font-bold">✅</button>
+                <button onclick="toggleRejectApproval('${pr.id}', false)" class="text-red-600 font-bold">❌</button>
+              </span>
+            `).join('')}
+          </div>
+        </div>
+      ` : ''}
+    </div>
+  `;
+}
+
+// ---------- Main salary loader ----------
+async function loadSalaryData(force = false) {
+  const mode = currentSalaryMode || 'today';
+  const container = $('salaryContainer');
+
+  if (!container) return;
+
+  container.innerHTML = `<div class="text-center py-4"><span class="spinner-sm"></span> Calculating...</div>`;
+
+  try {
+    const [users, pickups, allAttendance, allAdjustmentsSnap, allPaymentsSnap] = await Promise.all([
+      getData('users', force),
+      getData('pickups', force),
+      getData('attendance', force),
+      db.ref('adjustments').once('value'),
+      db.ref('salary_payments').once('value')
+    ]);
+
+    const allAdjustments = allAdjustmentsSnap.val() || {};
+    const allPayments = allPaymentsSnap.val() || {};
+
+    const agents = Object.fromEntries(
+      Object.entries(users).filter(([_, u]) => (u.role || 'agent') === 'agent' && u.is_active !== false)
+    );
+
+    if (!Object.keys(agents).length) {
+      container.innerHTML = `<div class="empty-state"><i data-lucide="inbox"></i><p class="text-sm font-medium">No active agents</p></div>`;
+      setText('globalPickups', '0');
+      setText('globalRejects', '0');
+      setText('globalPending', '0');
+      setText('globalEarnings', '₹0');
+      return;
+    }
+
+    const pickupsByAgentDate = {};
+    Object.values(pickups).forEach(ord => {
+      if (!ord.timestamp) return;
+      if (ord.status === 'on_hold') return;
+      if (!ord.agent) return;
+      const ds = getLocalYMD(new Date(ord.timestamp));
+      const key = ord.agent + '|' + ds;
+      if (!pickupsByAgentDate[key]) pickupsByAgentDate[key] = [];
+      pickupsByAgentDate[key].push(ord);
+    });
+
+    let html = '';
+    let grandTotalAll = 0;
+    let globalPickup = 0, globalReject = 0, globalPending = 0;
+
+    const selectedDate = mode === 'date' ? (getVal('salaryDate') || getLocalYMD()) : null;
+
+    for (const [uname, uData] of Object.entries(agents)) {
+      const lastActivePayment = getLastActivePayment(allPayments, uname);
+      const lastPaidDate = lastActivePayment ? lastActivePayment.paymentDate : null;
+
+      const { start: cycleStart, end: cycleEnd } = computeCycleRangeForAgent(mode, uData, lastActivePayment, selectedDate);
+
+      const totals = computeCycleTotals({
+        uname, uData,
+        cycleStart, cycleEnd,
+        allAttendance,
+        pickupsByAgentDate,
+        allAdjustments
+      });
+
+      const agentPaysActive = getActivePaymentsForAgent(allPayments, uname);
+      const cycleAlreadyPaid = agentPaysActive
+        .filter(p => p.paymentDate && p.paymentDate >= cycleStart && p.paymentDate <= cycleEnd)
+        .reduce((s, p) => s + (Number(p.amount) || 0), 0);
+
+      const pendingAmount = Math.max(0, totals.grandTotal - cycleAlreadyPaid);
+
+      grandTotalAll += totals.grandTotal;
+      globalPickup += totals.agentPickupCount;
+      globalReject += totals.agentRejectCount;
+      globalPending += totals.agentPendingCount;
+
+      const joinDateDisplay = uData.joinDate || '—';
+      const paidCyclesCount = getActivePaymentsForAgent(allPayments, uname).length;
+
+      const periodAttr = JSON.stringify({
+        mode: 'current_cycle',
+        cycleStart,
+        cycleEnd,
+        lastPaidDate
+      }).replace(/"/g, '&quot;');
+
+      html += buildSalaryCard({
+        uname, uData,
+        cycleStart, cycleEnd, lastPaidDate, mode,
+        totals,
+        cycleAlreadyPaid,
+        pendingAmount,
+        joinDateDisplay,
+        periodAttr,
+        paidCyclesCount
+      });
+    }
+
+    setText('globalPickups', globalPickup);
+    setText('globalRejects', globalReject);
+    setText('globalPending', globalPending);
+    setText('globalEarnings', formatINR(grandTotalAll));
+
+    html += `<div class="text-right font-bold text-xl mt-4">Grand Total (All Agents): ${formatINR(grandTotalAll)}</div>`;
+
+    container.innerHTML = html;
+    refreshIcons();
+  } catch (e) {
+    console.error(e);
+    container.innerHTML = `<div class="empty-state"><i data-lucide="alert-circle"></i><p class="text-sm text-red-500">Error calculating salary</p></div>`;
+    showToast('Error calculating salary', 'error');
+  }
+}
+
+async function recalculateAllSalary() {
+  showToast('🔄 Recalculating...', 'info');
+  invalidate('salary_payments');
+  await loadSalaryData(true);
+}
+
+function setSalaryMode(mode) {
+  currentSalaryMode = mode;
+
+  $('salaryModeToday')?.classList.toggle('active', mode === 'today');
+  $('salaryModeSinceJoin')?.classList.toggle('active', mode === 'since_join');
+  $('salaryModeDate')?.classList.toggle('active', mode === 'date');
+  $('salaryModeCurrentCycle')?.classList.toggle('active', mode === 'current_cycle');
+
+  const wrapper = $('salaryDateWrapper');
+  if (wrapper) wrapper.style.display = mode === 'date' ? 'inline-block' : 'none';
+
+  const label = $('salaryModeLabel');
+
+  if (label) {
+    if (mode === 'today') {
+      label.textContent = "Today's Earnings";
+    } else if (mode === 'since_join') {
+      label.textContent = "Complete Record — Since Joining Date";
+    } else if (mode === 'date') {
+      const dateVal = getVal('salaryDate') || 'selected date';
+      label.textContent = `Earnings for ${dateVal}`;
+    } else if (mode === 'current_cycle') {
+      label.textContent = "Current Cycle — Since Last Payment";
+    }
+  }
+
+  loadSalaryData(true);
+}
+
+// ---------- Mark as Paid ----------
+async function openPaidModal(agentUsername) {
+  if (!agentUsername) return;
+
+  const users = await getData('users', false);
+  const uData = users[agentUsername];
+  if (!uData) { showToast('Agent not found', 'error'); return; }
+
+  const paymentsSnap = await db.ref('salary_payments/' + agentUsername).once('value');
+  const agentPayments = paymentsSnap.val() || {};
+
+  const activePayments = Object.values(agentPayments)
+    .filter(p => p.status !== 'UNDONE')
+    .sort((a, b) => {
+      const da = a.paymentDate || '';
+      const dbb = b.paymentDate || '';
+      if (da !== dbb) return dbb.localeCompare(da);
+      return (b.createdAt || 0) - (a.createdAt || 0);
+    });
+  const lastActivePayment = activePayments[0] || null;
+  const lastPaidDate = lastActivePayment ? lastActivePayment.paymentDate : null;
+
+  const today = getLocalYMD();
+  const joinDateStr = uData.joinDate || null;
+  const cycleStart = lastPaidDate ? addDays(lastPaidDate, 1) : (joinDateStr || '2020-01-01');
+  const cycleEnd = today;
+
+  const [pickups, allAttendance, allAdjustmentsSnap] = await Promise.all([
+    getData('pickups', false),
+    getData('attendance', false),
+    db.ref('adjustments').once('value')
+  ]);
+  const allAdjustments = allAdjustmentsSnap.val() || {};
+
+  const pickupsByAgentDate = {};
+  Object.values(pickups).forEach(ord => {
+    if (!ord.timestamp || ord.status === 'on_hold' || !ord.agent) return;
+    const ds = getLocalYMD(new Date(ord.timestamp));
+    const key = ord.agent + '|' + ds;
+    if (!pickupsByAgentDate[key]) pickupsByAgentDate[key] = [];
+    pickupsByAgentDate[key].push(ord);
+  });
+
+  const totals = computeCycleTotals({
+    uname: agentUsername, uData,
+    cycleStart, cycleEnd,
+    allAttendance,
+    pickupsByAgentDate,
+    allAdjustments
+  });
+
+  const alreadyPaid = activePayments
+    .filter(p => p.paymentDate && p.paymentDate >= cycleStart && p.paymentDate <= cycleEnd)
+    .reduce((s, p) => s + (Number(p.amount) || 0), 0);
+  const pending = Math.max(0, totals.grandTotal - alreadyPaid);
+
+  const step1 = await Swal.fire({
+    title: '💰 Mark Salary as Paid?',
+    html: `
+      <div class="text-left text-sm space-y-2">
+        <p class="text-gray-600">Are you sure you want to record a payment for:</p>
+        <p class="font-bold text-lg text-gray-800">${uData.name || agentUsername}</p>
+        <div class="bg-gray-50 p-3 rounded-xl border border-gray-200">
+          <div class="flex justify-between text-xs"><span>Cycle:</span><strong>${cycleStart} → ${cycleEnd}</strong></div>
+          <div class="flex justify-between text-xs mt-1"><span>Base Salary:</span><strong>${formatINR(totals.totalBaseSalary)}</strong></div>
+          <div class="flex justify-between text-xs mt-1"><span>Bonus:</span><strong class="text-blue-600">+${formatINR(totals.totalBonus)}</strong></div>
+          <div class="flex justify-between text-xs mt-1"><span>Deduction:</span><strong class="text-rose-600">-${formatINR(totals.totalDeduction)}</strong></div>
+          <div class="flex justify-between text-xs mt-1 pt-1 border-t border-gray-200"><span>Grand Total:</span><strong>${formatINR(totals.grandTotal)}</strong></div>
+          ${alreadyPaid > 0 ? `<div class="flex justify-between text-xs mt-1 text-gray-600"><span>Already Paid:</span><strong>${formatINR(alreadyPaid)}</strong></div>` : ''}
+          <div class="flex justify-between text-sm mt-2 pt-2 border-t border-gray-200"><span class="font-bold">Pending:</span><strong class="text-rose-600">${formatINR(pending)}</strong></div>
+        </div>
+        <p class="text-[11px] text-gray-500 font-semibold mt-2">✔️ Mark as Paid → cycle will close & a new fresh cycle starts automatically.</p>
+        <p class="text-[11px] text-gray-400">Pickup/Reject incentives are excluded from Grand Total. Can be undone anytime.</p>
+      </div>
+    `,
+    icon: 'question',
+    showCancelButton: true,
+    confirmButtonText: 'Yes, Continue',
+    cancelButtonText: 'Cancel',
+    confirmButtonColor: '#059669',
+    cancelButtonColor: '#64748b'
+  });
+
+  if (!step1.isConfirmed) return;
+
+  const step2 = await Swal.fire({
+    title: '💵 Enter Paid Amount',
+    html: `
+      <div class="text-left text-sm space-y-3">
+        <p class="text-gray-500 text-xs">Enter the amount you are paying now:</p>
+        <div>
+          <label class="block font-semibold text-gray-700 mb-1 text-xs">Amount (₹)</label>
+          <input type="number" id="paid_amount" class="swal2-input" placeholder="Enter amount" min="1" value="${pending || totals.grandTotal}">
+        </div>
+        <div>
+          <label class="block font-semibold text-gray-700 mb-1 text-xs">Payment Date</label>
+          <input type="date" id="paid_date" class="swal2-input" value="${today}">
+        </div>
+        <div>
+          <label class="block font-semibold text-gray-700 mb-1 text-xs">Note (optional)</label>
+          <input type="text" id="paid_note" class="swal2-input" placeholder="e.g. UPI transfer">
+        </div>
+        <p class="text-[11px] text-gray-400">ℹ️ After payment, a new cycle will start the next day.</p>
+      </div>
+    `,
+    showCancelButton: true,
+    confirmButtonText: '✅ Confirm Payment',
+    cancelButtonText: 'Cancel',
+    confirmButtonColor: '#059669',
+    cancelButtonColor: '#64748b',
+    preConfirm: () => {
+      const amt = parseFloat(document.getElementById('paid_amount').value);
+      const dt = document.getElementById('paid_date').value;
+      const note = document.getElementById('paid_note').value.trim();
+      if (!amt || amt <= 0) { Swal.showValidationMessage('Enter a valid amount'); return false; }
+      if (!dt) { Swal.showValidationMessage('Select payment date'); return false; }
+      return { amt, dt, note };
+    }
+  });
+
+  if (!step2.isConfirmed) return;
+  const { amt, dt, note } = step2.value;
+
+  try {
+    const payId = 'pay_' + Date.now();
+    const entry = {
+      id: payId,
+      agent: agentUsername,
+
+      // Payment info
+      amount: Number(amt),
+      paymentDate: dt,
+      note: note || '',
+
+      // Cycle snapshot (immutable)
+      cycleStartDate: cycleStart,
+      cycleEndDate: cycleEnd,
+      cycleBaseSalary: totals.totalBaseSalary,
+      cycleBonus: totals.totalBonus,
+      cycleDeduction: totals.totalDeduction,
+      cycleGrandTotal: totals.grandTotal,
+      cyclePickupIncentive: totals.totalPickupIncentive,
+      cycleRejectIncentive: totals.totalRejectIncentive,
+      cyclePickupCount: totals.agentPickupCount,
+      cycleRejectCount: totals.agentRejectCount,
+      cycleHalfDayCount: totals.agentHalfDayCount,
+      cyclePresentDays: totals.presentDays,
+      cycleHalfDays: totals.halfDays,
+      cycleAbsentDays: totals.absentDays,
+      cycleAdjustmentIds: totals.usedAdjustmentIds || [],
+
+      // Meta
+      status: 'PAID',
+      createdAt: Date.now(),
+      createdBy: 'admin'
+    };
+
+    await db.ref('salary_payments/' + agentUsername + '/' + payId).set(entry);
+
+    // Mark adjustments as settled (linked to this cycle) for cleaner next-cycle filtering
+    if (totals.usedAdjustmentIds && totals.usedAdjustmentIds.length) {
+      const adjUpdates = {};
+      for (const adjId of totals.usedAdjustmentIds) {
+        adjUpdates[`adjustments/${agentUsername}/${adjId}/settledInCycle`] = payId;
+        adjUpdates[`adjustments/${agentUsername}/${adjId}/settledAt`] = Date.now();
+      }
+      await db.ref().update(adjUpdates);
+    }
+
+    invalidate('salary_payments');
+    showToast(`✅ Payment of ${formatINR(amt)} recorded`, 'success');
+    showToast(`🔄 Cycle closed. New cycle starts from ${addDays(dt, 1)}`, 'info', 4500);
+
+    loadSalaryData(true);
+    loadDashboard(true);
+  } catch (e) {
+    console.error(e);
+    showToast('Failed to save payment', 'error');
+  }
+}
+
+// ---------- Undo Paid Cycle ----------
+async function undoPaidCycle(agentUsername, payId) {
+  if (!agentUsername || !payId) return;
+
+  const snap = await db.ref(`salary_payments/${agentUsername}/${payId}`).once('value');
+  const entry = snap.val();
+
+  if (!entry) {
+    showToast('Payment record not found', 'error');
+    return;
+  }
+
+  if (entry.status === 'UNDONE') {
+    showToast('Already undone', 'info');
+    return;
+  }
+
+  const confirm = await Swal.fire({
+    title: '↩️ Undo Paid Cycle?',
+    html: `
+      <div class="text-left text-sm space-y-2">
+        <p class="text-gray-600">This will reopen the cycle:</p>
+        <div class="bg-amber-50 p-3 rounded-xl border border-amber-200">
+          <div class="flex justify-between text-xs"><span>Cycle:</span><strong>${entry.cycleStartDate || '—'} → ${entry.cycleEndDate || '—'}</strong></div>
+          <div class="flex justify-between text-xs mt-1"><span>Paid amount:</span><strong class="text-emerald-700">${formatINR(entry.amount || 0)}</strong></div>
+          <div class="flex justify-between text-xs mt-1"><span>Paid on:</span><strong>${entry.paymentDate || '—'}</strong></div>
+        </div>
+        <p class="text-xs text-gray-500 mt-2">The cycle's Base Salary, Pickup, Reject, Bonus, and Deduction will be <strong>restored</strong> into the current cycle so you can correct and re-pay.</p>
+        <p class="text-xs text-rose-600 font-semibold">⚠️ No data will be deleted — this action is fully reversible.</p>
+      </div>
+    `,
+    icon: 'warning',
+    showCancelButton: true,
+    confirmButtonText: 'Yes, Undo',
+    cancelButtonText: 'Cancel',
+    confirmButtonColor: '#dc2626',
+    cancelButtonColor: '#64748b'
+  });
+
+  if (!confirm.isConfirmed) return;
+
+  try {
+    const updates = {
+      status: 'UNDONE',
+      undoneAt: Date.now(),
+      undoneBy: 'admin'
+    };
+
+    await db.ref(`salary_payments/${agentUsername}/${payId}`).update(updates);
+
+    if (Array.isArray(entry.cycleAdjustmentIds) && entry.cycleAdjustmentIds.length) {
+      const adjUpdates = {};
+      for (const adjId of entry.cycleAdjustmentIds) {
+        adjUpdates[`adjustments/${agentUsername}/${adjId}/settledInCycle`] = null;
+        adjUpdates[`adjustments/${agentUsername}/${adjId}/settledAt`] = null;
+      }
+      await db.ref().update(adjUpdates);
+    }
+
+    invalidate('salary_payments');
+    showToast('↩️ Paid cycle undone. Data restored.', 'success');
+
+    loadSalaryData(true);
+    loadDashboard(true);
+
+    setTimeout(() => openPaymentHistoryModal(agentUsername), 300);
+  } catch (e) {
+    console.error(e);
+    showToast('Failed to undo payment', 'error');
+  }
+}
+
+async function redoPaidCycle(agentUsername, payId) {
+  const snap = await db.ref(`salary_payments/${agentUsername}/${payId}`).once('value');
+  const entry = snap.val();
+  if (!entry) { showToast('Not found', 'error'); return; }
+
+  if (entry.status !== 'UNDONE') { showToast('Already active', 'info'); return; }
+
+  const confirm = await Swal.fire({
+    title: 'Re-apply this Paid Cycle?',
+    text: 'This will close the cycle again and start a fresh one.',
+    icon: 'question',
+    showCancelButton: true,
+    confirmButtonText: 'Yes, Re-apply',
+    cancelButtonText: 'Cancel',
+    confirmButtonColor: '#059669',
+    cancelButtonColor: '#64748b'
+  });
+
+  if (!confirm.isConfirmed) return;
+
+  try {
+    await db.ref(`salary_payments/${agentUsername}/${payId}`).update({
+      status: 'PAID',
+      redoneAt: Date.now()
+    });
+
+    if (Array.isArray(entry.cycleAdjustmentIds) && entry.cycleAdjustmentIds.length) {
+      const adjUpdates = {};
+      for (const adjId of entry.cycleAdjustmentIds) {
+        adjUpdates[`adjustments/${agentUsername}/${adjId}/settledInCycle`] = payId;
+        adjUpdates[`adjustments/${agentUsername}/${adjId}/settledAt`] = Date.now();
+      }
+      await db.ref().update(adjUpdates);
+    }
+
+    invalidate('salary_payments');
+    showToast('✅ Cycle re-applied', 'success');
+
+    loadSalaryData(true);
+    loadDashboard(true);
+
+    setTimeout(() => openPaymentHistoryModal(agentUsername), 300);
+  } catch (e) {
+    console.error(e);
+    showToast('Failed to re-apply', 'error');
+  }
+}
+
+// ---------- Delete Paid Cycle ----------
+async function deletePaidCycle(agentUsername, payId) {
+  if (!agentUsername || !payId) return;
+
+  const snap = await db.ref(`salary_payments/${agentUsername}/${payId}`).once('value');
+  const entry = snap.val();
+
+  if (!entry) {
+    showToast('Payment record not found', 'error');
+    return;
+  }
+
+  const confirm = await Swal.fire({
+    title: '🗑️ Delete Paid Cycle Permanently?',
+    html: `
+      <div class="text-left text-sm space-y-2">
+        <p class="text-rose-600 font-semibold">⚠️ This will PERMANENTLY remove the payment record from Firebase.</p>
+        <div class="bg-gray-50 p-3 rounded-xl border border-gray-200">
+          <div class="flex justify-between text-xs"><span>Cycle:</span><strong>${entry.cycleStartDate || '—'} → ${entry.cycleEndDate || '—'}</strong></div>
+          <div class="flex justify-between text-xs mt-1"><span>Paid amount:</span><strong>${formatINR(entry.amount || 0)}</strong></div>
+          <div class="flex justify-between text-xs mt-1"><span>Paid on:</span><strong>${entry.paymentDate || '—'}</strong></div>
+          <div class="flex justify-between text-xs mt-1"><span>Status:</span><strong>${entry.status || 'PAID'}</strong></div>
+        </div>
+        <p class="text-xs text-gray-600 mt-2">Agar sirf cycle ko reopen karna hai, to <strong>Undo</strong> use karein.<br>
+        Delete sirf tab karein jab aap Firebase se record hataana chahte hain (irreversible).</p>
+      </div>
+    `,
+    icon: 'warning',
+    showCancelButton: true,
+    confirmButtonColor: '#dc2626',
+    cancelButtonColor: '#64748b',
+    confirmButtonText: 'Yes, Delete Permanently',
+    cancelButtonText: 'Cancel'
+  });
+
+  if (!confirm.isConfirmed) return;
+
+  try {
+    if (Array.isArray(entry.cycleAdjustmentIds) && entry.cycleAdjustmentIds.length) {
+      const adjUpdates = {};
+      for (const adjId of entry.cycleAdjustmentIds) {
+        adjUpdates[`adjustments/${agentUsername}/${adjId}/settledInCycle`] = null;
+        adjUpdates[`adjustments/${agentUsername}/${adjId}/settledAt`] = null;
+      }
+      await db.ref().update(adjUpdates);
+    }
+
+    await db.ref(`salary_payments/${agentUsername}/${payId}`).remove();
+
+    invalidate('salary_payments');
+    showToast('🗑️ Paid cycle deleted from Firebase', 'success');
+
+    loadSalaryData(true);
+    loadDashboard(true);
+
+    setTimeout(() => openPaymentHistoryModal(agentUsername), 300);
+  } catch (e) {
+    console.error(e);
+    showToast('Failed to delete paid cycle', 'error');
+  }
+}
+
+// ---------- Payment History modal ----------
+async function openPaymentHistoryModal(agentUsername) {
+  if (!agentUsername) return;
+
+  try {
+    const users = await getData('users', false);
+    const uData = users[agentUsername] || { name: agentUsername };
+
+    const snap = await db.ref('salary_payments/' + agentUsername).once('value');
+    const payments = snap.val() || {};
+    const list = Object.values(payments).sort((a, b) => {
+      const da = a.paymentDate || '';
+      const dbb = b.paymentDate || '';
+      if (da !== dbb) return dbb.localeCompare(da);
+      return (b.createdAt || 0) - (a.createdAt || 0);
+    });
+
+    let rows = '';
+
+    if (!list.length) {
+      rows = '<tr><td colspan="8" class="text-center py-6 text-gray-400 text-sm">No payments recorded yet.</td></tr>';
+    } else {
+      rows = list.map((p, i) => {
+        const isUndone = p.status === 'UNDONE';
+        const statusBadge = isUndone
+          ? '<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-gray-200 text-gray-700">↩️ UNDONE</span>'
+          : '<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800">✅ PAID</span>';
+
+        const cycle = p.cycleStartDate === p.cycleEndDate
+          ? (p.cycleStartDate || '—')
+          : `${p.cycleStartDate || '—'} → ${p.cycleEndDate || '—'}`;
+
+        const undoBtn = !isUndone
+          ? `<button onclick="undoPaidCycle('${agentUsername}','${p.id}')" class="px-2 py-1 rounded bg-rose-50 text-rose-700 text-[11px] font-bold border border-rose-200 hover:bg-rose-100" title="Undo (restore data)">↩️ Undo</button>`
+          : `<button onclick="redoPaidCycle('${agentUsername}','${p.id}')" class="px-2 py-1 rounded bg-emerald-50 text-emerald-700 text-[11px] font-bold border border-emerald-200 hover:bg-emerald-100" title="Re-apply">✔️ Re-apply</button>`;
+
+        const deleteBtn = `<button onclick="deletePaidCycle('${agentUsername}','${p.id}')" class="px-2 py-1 rounded bg-red-50 text-red-600 text-[11px] font-bold border border-red-200 hover:bg-red-100 ml-1" title="Delete permanently from Firebase">🗑️</button>`;
+
+        const rowStyle = isUndone ? 'opacity-60 line-through decoration-gray-300' : '';
+
+        return `
+          <tr class="border-b border-gray-100 hover:bg-gray-50 text-xs ${rowStyle}">
+            <td class="py-2.5 px-3 text-gray-500 font-mono">${i + 1}</td>
+            <td class="py-2.5 px-3 font-semibold text-gray-800">${p.paymentDate || '—'}</td>
+            <td class="py-2.5 px-3 text-gray-600">${cycle}</td>
+            <td class="py-2.5 px-3 font-bold text-gray-800">${formatINR(p.cycleGrandTotal || 0)}</td>
+            <td class="py-2.5 px-3 font-bold text-emerald-600">${formatINR(p.amount || 0)}</td>
+            <td class="py-2.5 px-3">${statusBadge}</td>
+            <td class="py-2.5 px-3 text-gray-500 max-w-[140px] truncate" title="${esc(p.note || '')}">${p.note || '—'}</td>
+            <td class="py-2.5 px-3 text-right whitespace-nowrap">${undoBtn}${deleteBtn}</td>
+          </tr>
+        `;
+      }).join('');
+    }
+
+    const activeList = list.filter(p => p.status !== 'UNDONE');
+    const totalPaid = activeList.reduce((s, p) => s + (Number(p.amount) || 0), 0);
+
+    await Swal.fire({
+      title: `📜 Paid History — ${uData.name || agentUsername}`,
+      width: '1050px',
+      html: `
+        <div class="text-left py-2 font-sans">
+          <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
+            <span class="text-xs text-gray-500">Active cycles: <strong>${activeList.length}</strong> · Total cycles: <strong>${list.length}</strong></span>
+            <span class="text-xs text-gray-500">Total paid: <strong class="text-emerald-600">${formatINR(totalPaid)}</strong></span>
+          </div>
+          <div class="max-h-[460px] overflow-y-auto border border-gray-200 rounded-xl">
+            <table class="w-full text-left">
+              <thead class="bg-gray-50 border-b border-gray-200 text-gray-600 text-[11px] uppercase font-bold sticky top-0">
+                <tr>
+                  <th class="py-2.5 px-3">#</th>
+                  <th class="py-2.5 px-3">Payment Date</th>
+                  <th class="py-2.5 px-3">Cycle Period</th>
+                  <th class="py-2.5 px-3">Grand Total</th>
+                  <th class="py-2.5 px-3">Paid Amount</th>
+                  <th class="py-2.5 px-3">Status</th>
+                  <th class="py-2.5 px-3">Note</th>
+                  <th class="py-2.5 px-3 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody>${rows}</tbody>
+            </table>
+          </div>
+          <div class="mt-3 p-3 bg-blue-50 rounded-lg border border-blue-100 text-[11px] text-gray-700 leading-relaxed">
+            <p><strong>💡 Options:</strong></p>
+            <p>• <strong>↩️ Undo</strong> → Cycle reopen ho jaayegi, saara data wapas restore ho jaayega.</p>
+            <p>• <strong>✔️ Re-apply</strong> → Undone cycle ko wapas PAID mark kar dega.</p>
+            <p>• <strong>🗑️ Delete</strong> → Firebase se permanently hata dega (irreversible).</p>
+          </div>
+        </div>
+      `,
+      showConfirmButton: false,
+      showCloseButton: true
+    });
+  } catch (e) {
+    console.error(e);
+    showToast('Failed to load payment history', 'error');
+  }
+}
+
+async function openAllPaymentsHistoryModal() {
+  try {
+    const [users, snap] = await Promise.all([
+      getData('users', false),
+      db.ref('salary_payments').once('value')
+    ]);
+    const allPayments = snap.val() || {};
+
+    let list = [];
+    for (const [uname, uPays] of Object.entries(allPayments)) {
+      for (const p of Object.values(uPays)) {
+        list.push({ ...p, agent: uname });
+      }
+    }
+
+    list.sort((a, b) => {
+      const da = a.paymentDate || '';
+      const dbb = b.paymentDate || '';
+      if (da !== dbb) return dbb.localeCompare(da);
+      return (b.createdAt || 0) - (a.createdAt || 0);
+    });
+
+    let rows = '';
+    if (!list.length) {
+      rows = '<tr><td colspan="8" class="text-center py-6 text-gray-400 text-sm">No payments recorded yet.</td></tr>';
+    } else {
+      rows = list.map((p, i) => {
+        const isUndone = p.status === 'UNDONE';
+        const statusBadge = isUndone
+          ? '<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-gray-200 text-gray-700">↩️ UNDONE</span>'
+          : '<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800">✅ PAID</span>';
+
+        const cycle = p.cycleStartDate === p.cycleEndDate
+          ? (p.cycleStartDate || '—')
+          : `${p.cycleStartDate || '—'} → ${p.cycleEndDate || '—'}`;
+
+        const agentName = (users[p.agent] && users[p.agent].name) || p.agent;
+
+        const undoBtn = !isUndone
+          ? `<button onclick="undoPaidCycle('${p.agent}','${p.id}')" class="px-2 py-1 rounded bg-rose-50 text-rose-700 text-[11px] font-bold border border-rose-200 hover:bg-rose-100">↩️</button>`
+          : `<button onclick="redoPaidCycle('${p.agent}','${p.id}')" class="px-2 py-1 rounded bg-emerald-50 text-emerald-700 text-[11px] font-bold border border-emerald-200 hover:bg-emerald-100">✔️</button>`;
+
+        const deleteBtn = `<button onclick="deletePaidCycle('${p.agent}','${p.id}')" class="px-2 py-1 rounded bg-red-50 text-red-600 text-[11px] font-bold border border-red-200 hover:bg-red-100 ml-1">🗑️</button>`;
+
+        const rowStyle = isUndone ? 'opacity-60' : '';
+
+        return `
+          <tr class="border-b border-gray-100 hover:bg-gray-50 text-xs ${rowStyle}">
+            <td class="py-2.5 px-3 text-gray-500 font-mono">${i + 1}</td>
+            <td class="py-2.5 px-3 font-semibold text-gray-800">${agentName} <span class="text-gray-400 font-mono">(${p.agent})</span></td>
+            <td class="py-2.5 px-3 font-semibold text-gray-800">${p.paymentDate || '—'}</td>
+            <td class="py-2.5 px-3 text-gray-600">${cycle}</td>
+            <td class="py-2.5 px-3 font-bold text-gray-800">${formatINR(p.cycleGrandTotal || 0)}</td>
+            <td class="py-2.5 px-3 font-bold text-emerald-600">${formatINR(p.amount || 0)}</td>
+            <td class="py-2.5 px-3">${statusBadge}</td>
+            <td class="py-2.5 px-3 text-right whitespace-nowrap">${undoBtn}${deleteBtn}</td>
+          </tr>
+        `;
+      }).join('');
+    }
+
+    const activeList = list.filter(p => p.status !== 'UNDONE');
+    const totalPaid = activeList.reduce((s, p) => s + (Number(p.amount) || 0), 0);
+
+    await Swal.fire({
+      title: `📜 All Paid Cycles (All Agents)`,
+      width: '1100px',
+      html: `
+        <div class="text-left py-2 font-sans">
+          <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
+            <span class="text-xs text-gray-500">Active cycles: <strong>${activeList.length}</strong> · Total cycles: <strong>${list.length}</strong></span>
+            <span class="text-xs text-gray-500">Total paid: <strong class="text-emerald-600">${formatINR(totalPaid)}</strong></span>
+          </div>
+          <div class="max-h-[500px] overflow-y-auto border border-gray-200 rounded-xl">
+            <table class="w-full text-left">
+              <thead class="bg-gray-50 border-b border-gray-200 text-gray-600 text-[11px] uppercase font-bold sticky top-0">
+                <tr>
+                  <th class="py-2.5 px-3">#</th>
+                  <th class="py-2.5 px-3">Agent</th>
+                  <th class="py-2.5 px-3">Payment Date</th>
+                  <th class="py-2.5 px-3">Cycle Period</th>
+                  <th class="py-2.5 px-3">Grand Total</th>
+                  <th class="py-2.5 px-3">Paid Amount</th>
+                  <th class="py-2.5 px-3">Status</th>
+                  <th class="py-2.5 px-3 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody>${rows}</tbody>
+            </table>
+          </div>
+        </div>
+      `,
+      showConfirmButton: false,
+      showCloseButton: true
+    });
+  } catch (e) {
+    console.error(e);
+    showToast('Failed to load history', 'error');
+  }
+}
+
+// ================================================================
+// ADJUSTMENT SYSTEM (Bonus / Deduction / Advance etc.)
+// ================================================================
+let currentAdjustmentAgent = null;
+
+async function openAddAdjustmentModal(defaultAgent = '') {
+  const users = await getData('users', false);
+  const activeAgents = getActiveAgents(users);
+
+  const agentOptions = Object.entries(activeAgents).map(([uname, u]) =>
+    `<option value="${uname}" ${uname === defaultAgent ? 'selected' : ''}>${u.name || uname} (${uname})</option>`
+  ).join('');
+
+  const now = new Date();
+  const todayDate = getLocalYMD(now);
+  const curTime = now.toTimeString().slice(0, 5);
+
+  const { value: formValues } = await Swal.fire({
+    title: '➕ Add Payment / Adjustment',
+    width: '560px',
+    html: `
+      <div class="text-left text-xs space-y-3 font-sans pt-1">
+        <div class="grid grid-cols-2 gap-2">
+          <div>
+            <label class="block font-semibold text-gray-700 mb-1">Select Agent</label>
+            <select id="adj_agent" class="w-full p-2 border border-gray-300 rounded-lg text-sm bg-white">
+              ${agentOptions}
+            </select>
+          </div>
+          <div>
+            <label class="block font-semibold text-gray-700 mb-1">Type</label>
+            <select id="adj_type" class="w-full p-2 border border-gray-300 rounded-lg text-sm bg-white">
+              <option value="Bonus">🎁 Bonus (Add)</option>
+              <option value="Incentive">⭐ Extra Incentive (Add)</option>
+              <option value="Extra Salary">💵 Extra Salary (Add)</option>
+              <option value="Advance">💸 Salary Advance (Deduct)</option>
+              <option value="Penalty">⚠️ Penalty / Cut (Deduct)</option>
+              <option value="Fuel/Travel Allowance">⛽ Fuel / Travel Allowance (Add)</option>
+              <option value="Other Adjustment">📝 Other Adjustment</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-2 gap-2">
+          <div>
+            <label class="block font-semibold text-gray-700 mb-1">Amount (₹)</label>
+            <input type="number" id="adj_amount" min="1" placeholder="e.g. 500" class="w-full p-2 border border-gray-300 rounded-lg text-sm" />
+          </div>
+          <div>
+            <label class="block font-semibold text-gray-700 mb-1">Date & Time</label>
+            <div class="flex gap-1">
+              <input type="date" id="adj_date" value="${todayDate}" class="w-2/3 p-2 border border-gray-300 rounded-lg text-xs" />
+              <input type="time" id="adj_time" value="${curTime}" class="w-1/3 p-2 border border-gray-300 rounded-lg text-xs" />
+            </div>
+          </div>
+        </div>
+
+        <div class="p-3 bg-gray-50 border border-gray-200 rounded-xl space-y-2">
+          <div class="font-semibold text-gray-800 text-[11px] uppercase tracking-wide">Adjustment Rules</div>
+
+          <div class="flex items-center justify-between">
+            <span class="text-gray-700 font-medium">Salary Effect:</span>
+            <select id="adj_is_deduction" class="p-1 border border-gray-300 rounded text-xs bg-white">
+              <option value="add">➕ Add to Salary (Earnings)</option>
+              <option value="deduct">➖ Deduct from Salary</option>
+              <option value="neutral">Neutral (Record only)</option>
+            </select>
+          </div>
+
+          <div class="flex items-center justify-between">
+            <span class="text-gray-700 font-medium">Deduct from Pickup/Reject Incentives?</span>
+            <select id="adj_deduct_incentives" class="p-1 border border-gray-300 rounded text-xs bg-white">
+              <option value="no">No (Base salary only)</option>
+              <option value="yes">Yes (Can cut from incentives)</option>
+            </select>
+          </div>
+
+          <div class="flex items-center justify-between">
+            <span class="text-gray-700 font-medium">Adjustment Period:</span>
+            <select id="adj_adjust_target" class="p-1 border border-gray-300 rounded text-xs bg-white">
+              <option value="current">Current Month Salary</option>
+              <option value="previous_balance">Previous Balance / Carry Forward</option>
+            </select>
+          </div>
+        </div>
+
+        <div>
+          <label class="block font-semibold text-gray-700 mb-1">Reason / Notes</label>
+          <input type="text" id="adj_reason" placeholder="e.g. Good performance on Sunday pickup rush" class="w-full p-2 border border-gray-300 rounded-lg text-xs" />
+        </div>
+      </div>
+    `,
+    showCancelButton: true,
+    confirmButtonText: '💾 Save Adjustment',
+    confirmButtonColor: '#4f46e5',
+    cancelButtonColor: '#64748b',
+    preConfirm: () => {
+      const agent = document.getElementById('adj_agent').value;
+      const amount = Number(document.getElementById('adj_amount').value);
+      const type = document.getElementById('adj_type').value;
+      const date = document.getElementById('adj_date').value;
+      const time = document.getElementById('adj_time').value;
+      const effect = document.getElementById('adj_is_deduction').value;
+      const deductIncentives = document.getElementById('adj_deduct_incentives').value;
+      const adjustTarget = document.getElementById('adj_adjust_target').value;
+      const reason = document.getElementById('adj_reason').value.trim();
+
+      if (!agent) { Swal.showValidationMessage('Select an agent'); return false; }
+      if (!amount || amount <= 0) { Swal.showValidationMessage('Enter a valid amount'); return false; }
+      if (!date) { Swal.showValidationMessage('Select a date'); return false; }
+
+      return { agent, amount, type, date, time, effect, deductIncentives, adjustTarget, reason };
+    }
+  });
+
+  if (!formValues) return;
+
+  try {
+    const adjId = 'adj_' + Date.now();
+    const entry = {
+      id: adjId,
+      agent: formValues.agent,
+      amount: formValues.amount,
+      type: formValues.type,
+      date: formValues.date,
+      time: formValues.time || '12:00',
+      timestamp: new Date(`${formValues.date}T${formValues.time || '12:00'}`).getTime() || Date.now(),
+      effect: formValues.effect,
+      deductIncentives: formValues.deductIncentives === 'yes',
+      adjustTarget: formValues.adjustTarget,
+      reason: formValues.reason || 'None',
+
+      // History meta
+      createdAt: Date.now(),
+      createdBy: 'admin',
+      createdByName: 'Admin',
+      status: 'ACTIVE', // ACTIVE | REVERTED
+      settledInCycle: null,
+      settledAt: null
+    };
+
+    await db.ref(`adjustments/${formValues.agent}/${adjId}`).set(entry);
+    showToast(`✅ ${formValues.type} of ₹${formValues.amount} saved!`, 'success');
+
+    loadSalaryData(true);
+  } catch (e) {
+    console.error('Error saving adjustment:', e);
+    showToast('Failed to save adjustment', 'error');
+  }
+}
+
+async function openAdjustmentHistoryModal(agentUsername = null) {
+  try {
+    const [snap, paymentsSnap] = await Promise.all([
+      db.ref('adjustments').once('value'),
+      db.ref('salary_payments').once('value')
+    ]);
+    const allAdjustments = snap.val() || {};
+    const allPayments = paymentsSnap.val() || {};
+
+    const paymentIndex = {};
+    for (const [uname, uPays] of Object.entries(allPayments)) {
+      for (const p of Object.values(uPays)) {
+        paymentIndex[p.id] = {
+          agent: uname,
+          paymentDate: p.paymentDate,
+          cycleStartDate: p.cycleStartDate,
+          cycleEndDate: p.cycleEndDate,
+          status: p.status || 'PAID'
+        };
+      }
+    }
+
+    let list = [];
+    if (agentUsername) {
+      const agentList = allAdjustments[agentUsername] || {};
+      list = Object.values(agentList).map(a => ({ ...a, agent: agentUsername }));
+    } else {
+      for (const [uname, uAdj] of Object.entries(allAdjustments)) {
+        for (const item of Object.values(uAdj)) {
+          list.push({ ...item, agent: uname });
+        }
+      }
+    }
+
+    list.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+
+    let rowsHtml = '';
+    if (!list.length) {
+      rowsHtml = '<tr><td colspan="8" class="text-center py-6 text-gray-400">No adjustment entries found.</td></tr>';
+    } else {
+      rowsHtml = list.map(item => {
+        const isAdd = item.effect === 'add';
+        const isDeduct = item.effect === 'deduct';
+        const colorClass = isAdd ? 'text-emerald-700 bg-emerald-50' : (isDeduct ? 'text-rose-700 bg-rose-50' : 'text-gray-700 bg-gray-50');
+        const sign = isAdd ? '+₹' : (isDeduct ? '-₹' : '₹');
+
+        const isReverted = item.status === 'REVERTED';
+
+        let cycleLabel = '—';
+        if (item.settledInCycle && paymentIndex[item.settledInCycle]) {
+          const p = paymentIndex[item.settledInCycle];
+          cycleLabel = `${p.cycleStartDate || '—'} → ${p.cycleEndDate || '—'}`;
+          if (p.status === 'UNDONE') {
+            cycleLabel += ' (undone)';
+          }
+        } else {
+          cycleLabel = 'Current / Open';
+        }
+
+        let statusBadge = '<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-100 text-indigo-800">🟢 ACTIVE</span>';
+        if (isReverted) {
+          statusBadge = '<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-gray-200 text-gray-700">↩️ REVERTED</span>';
+        } else if (item.settledInCycle) {
+          statusBadge = '<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800">✅ SETTLED</span>';
+        }
+
+        const createdInfo = item.createdAt
+          ? new Date(item.createdAt).toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short' })
+          : '—';
+
+        const revertBtn = isReverted
+          ? `<span class="text-[10px] text-gray-400">Reverted</span>`
+          : `<button onclick="revertAdjustment('${item.agent}','${item.id}')" class="text-amber-600 hover:text-amber-800 font-semibold p-1" title="Revert">↩️</button>
+             <button onclick="deleteAdjustment('${item.agent}','${item.id}')" class="text-rose-500 hover:text-rose-700 font-semibold p-1" title="Delete permanently">🗑</button>`;
+
+        return `
+          <tr class="border-b border-gray-100 hover:bg-gray-50 text-xs ${isReverted ? 'opacity-60' : ''}">
+            <td class="py-2.5 px-3 font-medium text-gray-800 whitespace-nowrap">${item.date || '—'} <span class="text-gray-400 font-mono">${item.time || ''}</span></td>
+            <td class="py-2.5 px-3 font-semibold text-gray-700">${item.agent}</td>
+            <td class="py-2.5 px-3"><span class="px-2 py-0.5 rounded font-semibold ${colorClass}">${item.type || '—'}</span></td>
+            <td class="py-2.5 px-3 font-bold ${isAdd ? 'text-emerald-600' : (isDeduct ? 'text-rose-600' : 'text-gray-800')}">${sign}${item.amount || 0}</td>
+            <td class="py-2.5 px-3 text-gray-600 max-w-[160px] truncate" title="${esc(item.reason || '')}">${esc(item.reason || '—')}</td>
+            <td class="py-2.5 px-3 text-gray-600 whitespace-nowrap">${cycleLabel}</td>
+            <td class="py-2.5 px-3">${statusBadge}<div class="text-[9px] text-gray-400 mt-0.5">by ${item.createdByName || item.createdBy || 'admin'} · ${createdInfo}</div></td>
+            <td class="py-2.5 px-3 text-right whitespace-nowrap">${revertBtn}</td>
+          </tr>
+        `;
+      }).join('');
+    }
+
+    await Swal.fire({
+      title: agentUsername ? `Adjustment History: ${agentUsername}` : '📋 All Payments & Adjustments',
+      width: '1150px',
+      html: `
+        <div class="text-left py-2 font-sans">
+          <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
+            <span class="text-xs text-gray-500 font-medium">Total entries: <strong>${list.length}</strong></span>
+            <button onclick="Swal.close(); openAddAdjustmentModal('${agentUsername || ''}')" class="px-3 py-1 bg-indigo-600 text-white rounded-lg text-xs font-semibold hover:bg-indigo-700">
+              ➕ Add New
+            </button>
+          </div>
+          <div class="max-h-[460px] overflow-y-auto border border-gray-200 rounded-xl">
+            <table class="w-full text-left">
+              <thead class="bg-gray-50 border-b border-gray-200 text-gray-600 text-[11px] uppercase font-bold sticky top-0">
+                <tr>
+                  <th class="py-2.5 px-3">Date/Time</th>
+                  <th class="py-2.5 px-3">Agent</th>
+                  <th class="py-2.5 px-3">Type</th>
+                  <th class="py-2.5 px-3">Amount</th>
+                  <th class="py-2.5 px-3">Reason / Notes</th>
+                  <th class="py-2.5 px-3">Cycle</th>
+                  <th class="py-2.5 px-3">Status</th>
+                  <th class="py-2.5 px-3 text-right">Action</th>
+                </tr>
+              </thead>
+              <tbody>${rowsHtml}</tbody>
+            </table>
+          </div>
+          <p class="text-[11px] text-gray-400 mt-3">💡 Revert: settled adjustment ko wapas active kar dega (data safe). Delete: Firebase se permanently hata dega (irreversible).</p>
+        </div>
+      `,
+      showConfirmButton: false,
+      showCloseButton: true
+    });
+  } catch (e) {
+    console.error(e);
+    showToast('Failed to load history', 'error');
+  }
+}
+
+async function revertAdjustment(agent, id) {
+  const confirm = await Swal.fire({
+    title: 'Revert this Adjustment?',
+    html: `
+      <div class="text-left text-xs space-y-2">
+        <p class="text-gray-600">Is adjustment ko revert karne par:</p>
+        <ul class="list-disc list-inside text-gray-700 space-y-1 ml-1">
+          <li>Status <strong>REVERTED</strong> ho jaayega</li>
+          <li>Salary calculation se effect hat jaayega</li>
+          <li>Data delete nahi hoga — history mein dikhega</li>
+        </ul>
+      </div>
+    `,
+    icon: 'question',
+    showCancelButton: true,
+    confirmButtonText: '↩️ Yes, Revert',
+    cancelButtonText: 'Cancel',
+    confirmButtonColor: '#d97706',
+    cancelButtonColor: '#64748b'
+  });
+
+  if (!confirm.isConfirmed) return;
+
+  try {
+    await db.ref(`adjustments/${agent}/${id}`).update({
+      status: 'REVERTED',
+      revertedAt: Date.now(),
+      revertedBy: 'admin',
+      settledInCycle: null,
+      settledAt: null
+    });
+
+    showToast('↩️ Adjustment reverted', 'success');
+    loadSalaryData(true);
+    setTimeout(() => openAdjustmentHistoryModal(agent), 300);
+  } catch (e) {
+    console.error(e);
+    showToast('Failed to revert', 'error');
+  }
+}
+
+async function deleteAdjustment(agent, id) {
+  const confirm = await Swal.fire({
+    title: 'Delete Adjustment?',
+    html: `
+      <div class="text-left text-xs">
+        <p class="text-rose-600 font-semibold mb-2">⚠️ This will PERMANENTLY delete this adjustment from Firebase.</p>
+        <p class="text-gray-600">Agar sirf effect hatana hai to <strong>Revert</strong> use karein.</p>
+      </div>
+    `,
+    icon: 'warning',
+    showCancelButton: true,
+    confirmButtonColor: '#dc2626',
+    cancelButtonColor: '#64748b',
+    confirmButtonText: 'Yes, Delete Permanently'
+  });
+
+  if (!confirm.isConfirmed) return;
+
+  try {
+    await db.ref(`adjustments/${agent}/${id}`).remove();
+    showToast('Adjustment deleted', 'info');
+    loadSalaryData(true);
+    setTimeout(() => openAdjustmentHistoryModal(agent), 300);
+  } catch (e) {
+    showToast('Failed to delete', 'error');
+  }
+}
+
+// ================================================================
+// GLOBAL SEARCH
+// ================================================================
+async function openGlobalSearch() {
+  const modal = $('globalSearchModal');
+  const input = $('globalSearchModalInput');
+  const results = $('globalSearchModalResults');
+
+  if (!modal || !input || !results) return;
+
+  modal.classList.add('open');
+  input.value = '';
+  results.innerHTML = `<div class="empty-state"><i data-lucide="inbox"></i><p class="text-sm font-medium">Type to start searching</p></div>`;
+
+  setTimeout(() => input.focus(), 300);
+
+  if (!allOrders.length) await loadOrders(false);
+
+  if (!inventoryList.length) {
+    inventoryList = allOrders.filter(item => item.status === 'pickup' && !item.sold);
+  }
+
+  if (!salesList.length) {
+    salesList = allOrders.filter(item => item.sold === true && item.status !== 'on_hold');
+  }
+
+  if (!agentsList.length) await loadAgents(false);
+
+  const allData = [];
+
+  allOrders.forEach(item => {
+    allData.push({ ...item, _category: 'Orders', _type: 'order' });
+  });
+
+  inventoryList.forEach(item => {
+    allData.push({ ...item, _category: 'Inventory', _type: 'inventory' });
+  });
+
+  salesList.forEach(item => {
+    allData.push({ ...item, _category: 'Sales', _type: 'sale' });
+  });
+
+  agentsList.forEach(item => {
+    allData.push({
+      name: item.name,
+      username: item.username,
+      mobile: item.mobile,
+      _category: 'Agents',
+      _type: 'agent',
+      id: item.username
+    });
+  });
+
+  modal._searchData = allData;
+
+  if (window.Fuse) {
+    modal._searchFuse = new Fuse(allData, {
+      keys: ['orderId', 'phoneModel', 'imei', 'customerName', 'buyerName', 'agent', 'name', 'username', 'mobile', 'color', 'value'],
+      threshold: 0.3,
+      includeScore: true,
+      ignoreLocation: true,
+      shouldSort: true,
+      minMatchCharLength: 2
+    });
+  } else {
+    modal._searchFuse = null;
+  }
+
+  input.oninput = function () {
+    const query = this.value.trim();
+
+    if (!query) {
+      results.innerHTML = `<div class="empty-state"><i data-lucide="inbox"></i><p class="text-sm font-medium">Type to start searching</p></div>`;
+      return;
+    }
+
+    let resultItems = [];
+
+    if (modal._searchFuse) {
+      resultItems = modal._searchFuse.search(query);
+    } else {
+      const lower = query.toLowerCase();
+
+      resultItems = allData.filter(item => {
+        const text = [
+          item.orderId,
+          item.phoneModel,
+          item.imei,
+          item.customerName,
+          item.buyerName,
+          item.agent,
+          item.name,
+          item.username,
+          item.mobile
+        ].filter(Boolean).join(' ').toLowerCase();
+
+        return text.includes(lower);
+      }).map(item => ({ item }));
+    }
+
+    if (!resultItems.length) {
+      results.innerHTML = `<div class="empty-state"><i data-lucide="search"></i><p class="text-sm font-medium">No results found</p></div>`;
+      return;
+    }
+
+    const groups = {};
+
+    resultItems.forEach(r => {
+      const cat = r.item._category || 'Other';
+      if (!groups[cat]) groups[cat] = [];
+      groups[cat].push(r);
+    });
+
+    let html = '';
+
+    for (const [cat, items] of Object.entries(groups)) {
+      const catId = `cat-${cat.replace(/\s+/g, '-')}`;
+
+      html += `<div class="category-group"><div class="category-title">${cat} <span class="count-badge">${items.length}</span></div>`;
+
+      items.slice(0, 10).forEach(r => {
+        const item = r.item;
+
+        let label = '';
+        let desc = '';
+        let badge = '';
+        let onClick = '';
+
+        if (item._type === 'order' || item._type === 'inventory' || item._type === 'sale') {
+          label = item.orderId || item.id;
+          desc = item.phoneModel || '';
+          badge = `<span class="badge-status ${getStatusClass(item)}">${getStatusDisplay(item)}</span>`;
+          onClick = `onclick="viewOrder('${item.id || item.orderId}')"`;
+        } else if (item._type === 'agent') {
+          label = item.name || item.username;
+          desc = item.username + (item.mobile ? ' | ' + item.mobile : '');
+          badge = `<span class="badge-status admin">Agent</span>`;
+          onClick = `onclick="viewAgentActivity('${item.username}')"`;
+        }
+
+        html += `
+          <div class="result-item" ${onClick}>
+            <div>
+              <span class="text-mono">${label}</span>
+              <span class="text-desc">${desc}</span>
+            </div>
+            <div class="action-buttons">${badge}</div>
+          </div>
+        `;
+      });
+
+      if (items.length > 10) {
+        html += `<div id="${catId}-hidden" style="display:none;">`;
+
+        items.slice(10).forEach(r => {
+          const item = r.item;
+
+          let label = '';
+          let desc = '';
+          let badge = '';
+          let onClick = '';
+
+          if (item._type === 'order' || item._type === 'inventory' || item._type === 'sale') {
+            label = item.orderId || item.id;
+            desc = item.phoneModel || '';
+            badge = `<span class="badge-status ${getStatusClass(item)}">${getStatusDisplay(item)}</span>`;
+            onClick = `onclick="viewOrder('${item.id || item.orderId}')"`;
+          } else if (item._type === 'agent') {
+            label = item.name || item.username;
+            desc = item.username + (item.mobile ? ' | ' + item.mobile : '');
+            badge = `<span class="badge-status admin">Agent</span>`;
+            onClick = `onclick="viewAgentActivity('${item.username}')"`;
+          }
+
+          html += `
+            <div class="result-item" ${onClick}>
+              <div>
+                <span class="text-mono">${label}</span>
+                <span class="text-desc">${desc}</span>
+              </div>
+              <div class="action-buttons">${badge}</div>
+            </div>
+          `;
+        });
+
+        html += `</div>`;
+        html += `<button class="show-more-btn" onclick="toggleShowMore('${catId}', ${items.length}, this)">+${items.length - 10} more</button>`;
+      }
+
+      html += `</div>`;
+    }
+
+    results.innerHTML = html;
+    refreshIcons();
+  };
+}
+
+function closeGlobalSearch() {
+  $('globalSearchModal')?.classList.remove('open');
+  setVal('globalSearchModalInput', '');
+}
+
+function toggleShowMore(catId, totalItems, btn) {
+  const hiddenDiv = $(catId + '-hidden');
+
+  if (!hiddenDiv || !btn) return;
+
+  if (hiddenDiv.style.display === 'none') {
+    hiddenDiv.style.display = 'block';
+    btn.textContent = `Show less (${totalItems - 10} hidden)`;
+  } else {
+    hiddenDiv.style.display = 'none';
+    btn.textContent = `+${totalItems - 10} more`;
+  }
+}
+
+// ================================================================
+// LIVE SEARCH DROPDOWN
+// ================================================================
+function setupLiveSearch(inputId, dropdownId, dataSource, fields) {
+  const input = $(inputId);
+  const dropdown = $(dropdownId);
+
+  if (!input || !dropdown) return;
+
+  input._lsData = dataSource;
+  input._lsFields = fields;
+
+  if (input._lsInit) return;
+
+  input._lsInit = true;
+
+  const handleInput = debounce(function () {
+    const query = this.value.trim();
+    const data = this._lsData || [];
+    const searchFields = this._lsFields || [];
+
+    if (!query) {
+      dropdown.classList.remove('open');
+      dropdown.innerHTML = '';
+      return;
+    }
+
+    let results = [];
+
+    if (window.Fuse) {
+      const fuse = new Fuse(data, {
+        keys: searchFields,
+        threshold: 0.3,
+        includeScore: true,
+        ignoreLocation: true,
+        minMatchCharLength: 2
+      });
+
+      results = fuse.search(query);
+    } else {
+      const lower = query.toLowerCase();
+
+      results = data.filter(item => {
+        const text = searchFields.map(f => item[f]).filter(Boolean).join(' ').toLowerCase();
+        return text.includes(lower);
+      }).map(item => ({ item }));
+    }
+
+    if (!results.length) {
+      dropdown.innerHTML = `<div class="empty-dropdown">No matches found</div>`;
+      dropdown.classList.add('open');
+      return;
+    }
+
+    let html = '';
+    const maxResults = 10;
+
+    results.slice(0, maxResults).forEach((r) => {
+      const item = r.item;
+
+      let primary = '';
+      let extra = [];
+      let clickAction = '';
+      const id = item.id || '';
+
+      if (item.orderId) {
+        primary = item.orderId;
+
+        if (item.phoneModel) extra.push(item.phoneModel);
+        if (item.imei) extra.push('IMEI: ' + item.imei);
+        if (item.customerName) extra.push('Cust: ' + item.customerName);
+        if (item.agent) extra.push('Agent: ' + item.agent);
+
+        if (id) clickAction = `onclick="viewOrder('${id}')"`;
+      } else if (item.name) {
+        primary = item.name;
+        if (item.mobile) extra.push('📱 ' + item.mobile);
+        if (item.username) clickAction = `onclick="viewAgentActivity('${item.username}')"`;
+      } else {
+        primary = item.id || 'Item';
+        if (id) clickAction = `onclick="viewOrder('${id}')"`;
+      }
+
+      html += `
+        <div class="dropdown-item" data-id="${id}" ${clickAction}>
+          <div>
+            <div class="item-primary">${primary}</div>
+            <div class="item-secondary">${extra.join(' · ')}</div>
+          </div>
+          ${item.value !== undefined ? `<span class="item-badge">${formatINR(item.value)}</span>` : ''}
+        </div>
+      `;
+    });
+
+    if (results.length > maxResults) {
+      html += `<div class="dropdown-item" style="color:#94a3b8; font-size:0.8rem; text-align:center;">+${results.length - maxResults} more</div>`;
+    }
+
+    dropdown.innerHTML = html;
+    dropdown.classList.add('open');
+  }, 250);
+
+  input.addEventListener('input', handleInput);
+
+  input.addEventListener('focus', function () {
+    if (this.value.trim()) handleInput.call(this);
+  });
+
+  document.addEventListener('click', function (e) {
+    if (!dropdown.contains(e.target) && e.target !== input) {
+      dropdown.classList.remove('open');
+    }
+  });
+}
+
+// ================================================================
+// REFRESH ALL
+// ================================================================
+async function refreshAll() {
+  if (isRefreshing) return;
+
+  isRefreshing = true;
+  showToast('🔄 Refreshing...', 'info');
+
+  invalidate('pickups', 'pending', 'users', 'deposits', 'attendance', 'salary_payments');
+
+  await Promise.allSettled([
+    loadDashboard(true),
+    loadOrders(true),
+    loadPendingAdmin(true),
+    loadRejectedAdmin(true),
+    loadInventory(true),
+    loadSales(true),
+    loadDeposits(true),
+    loadAgents(true),
+    loadOutsidePickups(true)
+  ]);
+
+  isRefreshing = false;
+  showToast('✅ Refreshed', 'success');
+}
+
+// ================================================================
+// LIVE CLOCK
+// ================================================================
+function updateClock() {
+  const el = $('liveTime');
+  if (!el) return;
+
+  const now = new Date();
+  el.textContent = now.toTimeString().slice(0, 8);
+}
+
+setInterval(updateClock, 1000);
+updateClock();
+
+// ================================================================
+// INJECT SALARY HEADER BUTTONS
+// ================================================================
+function injectSalaryHeaderButtons() {
+  const recalcBtn = document.querySelector('button[onclick="recalculateAllSalary()"]');
+  if (!recalcBtn || !recalcBtn.parentElement) return;
+
+  const parent = recalcBtn.parentElement;
+
+  if (!$('globalAdjustBtn')) {
+    const adjBtn = document.createElement('button');
+    adjBtn.id = 'globalAdjustBtn';
+    adjBtn.className = 'btn-action edit';
+    adjBtn.innerHTML = '<i data-lucide="list"></i> Adjustments';
+    adjBtn.onclick = () => openAdjustmentHistoryModal(null);
+    parent.appendChild(adjBtn);
+  }
+
+  if (!$('globalPayHistBtn')) {
+    const payHistBtn = document.createElement('button');
+    payHistBtn.id = 'globalPayHistBtn';
+    payHistBtn.className = 'btn-action view';
+    payHistBtn.innerHTML = '<i data-lucide="receipt"></i> Paid History';
+    payHistBtn.onclick = () => openAllPaymentsHistoryModal();
+    parent.appendChild(payHistBtn);
+  }
+
+  if (!$('dateActivitiesBtn')) {
+    const dateBtn = document.createElement('button');
+    dateBtn.id = 'dateActivitiesBtn';
+    dateBtn.className = 'btn-action save';
+    dateBtn.innerHTML = '<i data-lucide="calendar-clock"></i> Date Activities';
+    dateBtn.title = 'View / adjust incentive for a specific date';
+    dateBtn.onclick = () => promptDateActivities();
+    parent.appendChild(dateBtn);
+  }
+
+  refreshIcons();
+}
+
+// ================================================================
+// INIT
 // ================================================================
 document.addEventListener('DOMContentLoaded', () => {
-    setupBackNavigation();
+  refreshIcons();
+  loadDashboard(true);
 
-    const overlay = document.createElement('div');
-    overlay.id = 'blockedOverlay';
-    overlay.style.cssText = 'display:none; position:fixed; inset:0; background:rgba(0,0,0,0.8); z-index:9999; align-items:center; justify-content:center; color:white; font-size:20px; font-weight:bold; flex-direction:column; padding:20px; text-align:center;';
-    overlay.innerHTML = `<i data-lucide="lock" class="w-16 h-16 text-red-500 mb-4"></i><p>🔒 You are blocked for today.</p><p class="text-sm text-gray-400 mt-2">Contact admin to unblock.</p><button onclick="logoutUser()" class="mt-4 bg-red-600 px-6 py-3 rounded-xl">Logout</button>`;
-    document.body.appendChild(overlay);
-    lucide.createIcons();
+  const attendanceDate = $('attendanceDate');
+  if (attendanceDate) attendanceDate.value = getLocalYMD();
 
-    document.getElementById('offlineBanner').classList.add('hidden');
-    const loggedIn = checkAuth();
-    if (!loggedIn) {
-        document.getElementById('authOverlay').style.display = 'flex';
-    }
-    if (loggedIn) {
-        loadPendingOrders();
-        const today = getLocalDate();
-        document.getElementById('attendanceDateDisplay').textContent = today;
-        switchTab('pickup');
-    }
-    document.getElementById('loginPassword').addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') loginUser();
-    });
-    document.getElementById('loginUsername').addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') document.getElementById('loginPassword').focus();
-    });
+  const today = new Date();
+
+  const salaryMonth = $('salaryMonth');
+  if (salaryMonth) salaryMonth.value = today.getFullYear() + '-' + String(today.getMonth() + 1).padStart(2, '0');
+
+  const salaryDate = $('salaryDate');
+  if (salaryDate) salaryDate.value = getLocalYMD();
+
+  const depositDate = $('depositDate');
+  if (depositDate) depositDate.value = getLocalYMD();
+
+  // Inject "Current Cycle" button dynamically (no HTML change)
+  const salaryToggleBar = $('salaryModeDate')?.parentElement;
+  if (salaryToggleBar && !$('salaryModeCurrentCycle')) {
+    const btn = document.createElement('button');
+    btn.id = 'salaryModeCurrentCycle';
+    btn.className = 'salary-toggle-btn';
+    btn.textContent = 'Current Cycle';
+    btn.onclick = () => setSalaryMode('current_cycle');
+    salaryToggleBar.appendChild(btn);
+  }
+
+  // Inject global salary header buttons
+  injectSalaryHeaderButtons();
+
+  const agentRole = document.querySelector('input[name="regRole"][value="agent"]');
+  if (agentRole) agentRole.checked = true;
+
+  toggleAdminFields();
+  setSalaryMode('today');
+
+  // Auto refresh only when tab visible
+  setInterval(() => {
+    if (document.hidden) return;
+    refreshCurrentPage(true);
+  }, 300000);
+
+  showToast('👋 Welcome', 'info', 2000);
 });
+
+// ================================================================
+// MODALS / KEYBOARD
+// ================================================================
+const detailModal = $('detailModal');
+
+if (detailModal) {
+  detailModal.addEventListener('click', function (e) {
+    if (e.target === this) closeDetail();
+  });
+}
+
+const sellModal = $('sellModal');
+
+if (sellModal) {
+  sellModal.addEventListener('click', function (e) {
+    if (e.target === this) closeSellModal();
+  });
+}
+
+const activityModal = $('activityModal');
+
+if (activityModal) {
+  activityModal.addEventListener('click', function (e) {
+    if (e.target === this) closeActivityModal();
+  });
+}
+
+const imgViewerModal = $('imgViewerModal');
+
+if (imgViewerModal) {
+  imgViewerModal.addEventListener('click', function (e) {
+    if (e.target === this) closeImageViewer();
+  });
+}
+
+const globalSearchModal = $('globalSearchModal');
+
+if (globalSearchModal) {
+  globalSearchModal.addEventListener('click', function (e) {
+    if (e.target === this) closeGlobalSearch();
+  });
+}
+
+// ================================================================
+// OUTSIDE PICKUPS — ADMIN APPROVAL WORKFLOW
+// ================================================================
+let allOutsidePickups = [];
+let outsidePickupFilter = 'pending';
+
+async function loadOutsidePickups(force = false) {
+  try {
+    const snap = await db.ref('outside_pickups').once('value');
+    const data = snap.val() || {};
+
+    allOutsidePickups = Object.entries(data)
+      .filter(([, item]) => item && typeof item === 'object')
+      .map(([pickupId, item]) => ({ ...item, pickupId }))
+      .sort((a, b) => (Number(b.createdAt) || 0) - (Number(a.createdAt) || 0));
+
+    const pendingCount = allOutsidePickups.filter(p => (p.status || 'pending') === 'pending').length;
+    setText('outsidePickupsBadge', pendingCount);
+    renderOutsidePickupsTable();
+  } catch (e) {
+    console.error('Outside pickups load error:', e);
+    showToast('Error loading outside pickups', 'error');
+    setHTML('outsidePickupsTableBody', `<tr><td colspan="9"><div class="empty-state"><i data-lucide="alert-circle"></i><p class="text-sm font-medium text-red-500">Failed to load</p></div></td></tr>`);
+    refreshIcons();
+  }
+}
+
+function setOutsidePickupFilter(filter) {
+  outsidePickupFilter = filter || 'all';
+  document.querySelectorAll('[data-op-filter]').forEach(button => {
+    button.classList.toggle('active', button.dataset.opFilter === outsidePickupFilter);
+  });
+  renderOutsidePickupsTable();
+}
+
+function renderOutsidePickupsTable() {
+  const tbody = $('outsidePickupsTableBody');
+  if (!tbody) return;
+
+  let list = [...allOutsidePickups];
+  if (outsidePickupFilter !== 'all') {
+    list = list.filter(p => (p.status || 'pending') === outsidePickupFilter);
+  }
+
+  const query = (getVal('outsidePickupSearch') || '').trim().toLowerCase();
+  if (query) {
+    list = list.filter(p => [
+      p.pickupId, p.imei, p.phoneModel, p.rider, p.agentName, p.agent, p.customerName
+    ].filter(Boolean).join(' ').toLowerCase().includes(query));
+  }
+
+  setText('outsidePickupCountDisplay', `${list.length} pickup${list.length === 1 ? '' : 's'}`);
+  if (!list.length) {
+    const filterLabel = outsidePickupFilter === 'all' ? '' : outsidePickupFilter;
+    tbody.innerHTML = `<tr><td colspan="9"><div class="empty-state"><i data-lucide="inbox"></i><p class="text-sm font-medium">No ${esc(filterLabel)} pickups</p></div></td></tr>`;
+    refreshIcons();
+    return;
+  }
+
+  tbody.innerHTML = list.map((p, index) => {
+    const status = p.status || 'pending';
+    const statusClass = status === 'approved' ? 'approved' : status === 'rejected' ? 'rejected' : 'reschedule';
+    const statusLabel = status === 'approved' ? 'Approved' : status === 'rejected' ? 'Rejected' : 'Pending';
+    const createdAt = Number(p.createdAt);
+    const dateStr = createdAt
+      ? new Date(createdAt).toLocaleDateString('en-IN') + ' ' + new Date(createdAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })
+      : (p.timestampIST || '—');
+
+    return `
+      <tr class="order-row border-b border-gray-50">
+        <td class="py-3 px-4 text-gray-400 font-mono text-xs">${index + 1}</td>
+        <td class="py-3 px-4 font-mono font-bold text-gray-800 text-sm">${esc(p.pickupId)}</td>
+        <td class="py-3 px-4 text-gray-600 text-sm">${esc(p.phoneModel || '—')}</td>
+        <td class="py-3 px-4 hidden md:table-cell font-mono text-xs text-gray-500">${esc(p.imei || '—')}</td>
+        <td class="py-3 px-4 font-bold text-gray-700">${formatINR(Number(p.value) || 0)}</td>
+        <td class="py-3 px-4 hidden sm:table-cell text-gray-500 text-sm">${esc(p.rider || p.agentName || p.agent || '—')}</td>
+        <td class="py-3 px-4 hidden lg:table-cell text-xs text-gray-400">${esc(dateStr)}</td>
+        <td class="py-3 px-4"><span class="badge-status ${statusClass}">${statusLabel}</span></td>
+        <td class="py-3 px-4">
+          <div class="flex items-center gap-1.5">
+            <button data-op-action="view" data-op-id="${esc(p.pickupId)}" class="btn-action view" title="View details"><i data-lucide="eye"></i></button>
+            ${status === 'pending' ? `
+              <button data-op-action="approve" data-op-id="${esc(p.pickupId)}" class="btn-action approve" title="Approve"><i data-lucide="check-circle"></i></button>
+              <button data-op-action="reject" data-op-id="${esc(p.pickupId)}" class="btn-action delete" title="Reject"><i data-lucide="x-circle"></i></button>
+            ` : ''}
+            ${status === 'approved' ? `
+              <button data-op-action="copy-whatsapp" data-op-id="${esc(p.pickupId)}" class="btn-action show" title="Copy approval WhatsApp message" aria-label="Copy approval WhatsApp message"><i data-lucide="copy"></i></button>
+            ` : ''}
+            <button data-op-action="edit" data-op-id="${esc(p.pickupId)}" class="btn-action edit" title="Edit pickup" aria-label="Edit pickup"><i data-lucide="pencil"></i></button>
+            <button data-op-action="delete" data-op-id="${esc(p.pickupId)}" class="btn-action delete" title="Permanently delete pickup" aria-label="Permanently delete pickup"><i data-lucide="trash-2"></i></button>
+          </div>
+        </td>
+      </tr>`;
+  }).join('');
+
+  refreshIcons();
+}
+
+const outsidePickupsTableBody = $('outsidePickupsTableBody');
+if (outsidePickupsTableBody) {
+  outsidePickupsTableBody.addEventListener('click', event => {
+    const button = event.target.closest('button[data-op-action]');
+    if (!button) return;
+    const pickupId = button.dataset.opId;
+    const actions = {
+      view: viewOutsidePickup,
+      approve: approveOutsidePickup,
+      reject: rejectOutsidePickup,
+      'copy-whatsapp': copyOutsidePickupWhatsApp,
+      edit: editOutsidePickup,
+      delete: deleteOutsidePickup
+    };
+    const action = actions[button.dataset.opAction];
+    if (action) action(pickupId);
+  });
+}
+
+async function editOutsidePickup(pickupId) {
+  if (!pickupId) return;
+
+  try {
+    const pickupRef = db.ref('outside_pickups/' + pickupId);
+    const snap = await pickupRef.once('value');
+    const pickup = snap.val();
+    if (!pickup) {
+      showToast('Pickup not found', 'error');
+      return;
+    }
+
+    const result = await Swal.fire({
+      title: 'Edit Outside Pickup',
+      html: `
+        <div class="text-left space-y-3">
+          <label class="block text-xs font-semibold text-gray-600">Phone Model
+            <input id="op-edit-model" class="swal2-input" value="${esc(pickup.phoneModel || '')}" placeholder="Phone model">
+          </label>
+          <label class="block text-xs font-semibold text-gray-600">IMEI
+            <input id="op-edit-imei" class="swal2-input" value="${esc(pickup.imei || '')}" placeholder="IMEI">
+          </label>
+          <label class="block text-xs font-semibold text-gray-600">Value (₹)
+            <input id="op-edit-value" type="number" min="0" step="1" class="swal2-input" value="${Number(pickup.value) || 0}" placeholder="Value">
+          </label>
+          <div class="grid grid-cols-2 gap-2">
+            <label class="block text-xs font-semibold text-gray-600">RAM
+              <input id="op-edit-ram" class="swal2-input" value="${esc(pickup.ram || '')}" placeholder="RAM">
+            </label>
+            <label class="block text-xs font-semibold text-gray-600">Storage
+              <input id="op-edit-storage" class="swal2-input" value="${esc(pickup.storage || '')}" placeholder="Storage">
+            </label>
+          </div>
+          <label class="block text-xs font-semibold text-gray-600">Network
+            <input id="op-edit-network" class="swal2-input" value="${esc(pickup.networkType || '')}" placeholder="Network">
+          </label>
+          <label class="block text-xs font-semibold text-gray-600">Customer Name
+            <input id="op-edit-customer" class="swal2-input" value="${esc(pickup.customerName || '')}" placeholder="Customer name">
+          </label>
+          <label class="block text-xs font-semibold text-gray-600">Rider
+            <input id="op-edit-rider" class="swal2-input" value="${esc(pickup.rider || pickup.agentName || pickup.agent || '')}" placeholder="Rider">
+          </label>
+          <label class="block text-xs font-semibold text-gray-600">Aadhaar Number
+            <input id="op-edit-aadhaar" class="swal2-input" value="${esc(pickup.aadhaarNumber || '')}" placeholder="Optional">
+          </label>
+          <label class="block text-xs font-semibold text-gray-600">Bill Number
+            <input id="op-edit-bill" class="swal2-input" value="${esc(pickup.billNumber || '')}" placeholder="Optional">
+          </label>
+        </div>`,
+      focusConfirm: false,
+      showCancelButton: true,
+      confirmButtonText: 'Save Changes',
+      cancelButtonText: 'Cancel',
+      confirmButtonColor: '#4f46e5',
+      preConfirm: () => {
+        const valueInput = document.getElementById('op-edit-value');
+        const value = Number(valueInput.value);
+        if (!Number.isFinite(value) || value < 0) {
+          Swal.showValidationMessage('Please enter a valid non-negative value.');
+          return false;
+        }
+
+        return {
+          phoneModel: document.getElementById('op-edit-model').value.trim(),
+          imei: document.getElementById('op-edit-imei').value.trim(),
+          value,
+          ram: document.getElementById('op-edit-ram').value.trim(),
+          storage: document.getElementById('op-edit-storage').value.trim(),
+          networkType: document.getElementById('op-edit-network').value.trim(),
+          customerName: document.getElementById('op-edit-customer').value.trim(),
+          rider: document.getElementById('op-edit-rider').value.trim(),
+          aadhaarNumber: document.getElementById('op-edit-aadhaar').value.trim(),
+          billNumber: document.getElementById('op-edit-bill').value.trim()
+        };
+      }
+    });
+    if (!result.isConfirmed) return;
+
+    const duplicate = await findDuplicateImei(result.value.imei, pickupId);
+    if (duplicate) {
+      const source = duplicate.source === 'pickups' ? 'existing inventory' : 'another outside pickup';
+      await Swal.fire({
+        icon: 'error',
+        title: 'IMEI Already in Use',
+        text: `This IMEI is already present in ${source}. Please use a different IMEI.`,
+        confirmButtonColor: '#dc2626'
+      });
+      return;
+    }
+
+    const updates = {};
+    Object.entries(result.value).forEach(([field, value]) => {
+      updates[`outside_pickups/${pickupId}/${field}`] = value;
+    });
+    updates[`outside_pickups/${pickupId}/ramStorage`] =
+      [result.value.ram, result.value.storage].filter(Boolean).join('/');
+
+    if (pickup.inventoryCreated === true) {
+      const inventorySnap = await db.ref('pickups/' + pickupId).once('value');
+      const inventoryItem = inventorySnap.val();
+      if (!inventoryItem || inventoryItem.outsidePickup !== true || inventoryItem.orderId !== pickupId) {
+        showToast('Linked inventory item was not found; pickup was not updated', 'error');
+        return;
+      }
+
+      const syncedFields = ['phoneModel', 'imei', 'value', 'ram', 'storage', 'networkType', 'customerName', 'rider', 'aadhaarNumber', 'billNumber'];
+      syncedFields.forEach(field => {
+        updates[`pickups/${pickupId}/${field}`] = result.value[field];
+      });
+      updates[`pickups/${pickupId}/ramStorage`] =
+        [result.value.ram, result.value.storage].filter(Boolean).join('/');
+    }
+
+    await db.ref().update(updates);
+    invalidate('pickups');
+    showToast('Outside pickup updated', 'success');
+    await loadOutsidePickups(true);
+    if (pickup.inventoryCreated === true && currentPageView === 'inventory') await loadInventory(true);
+    if (currentPageView === 'dashboard') loadDashboard(true);
+  } catch (e) {
+    console.error('Outside pickup edit error:', e);
+    showToast('Edit failed: ' + (e.message || 'Unable to update pickup'), 'error');
+  }
+}
+
+async function deleteOutsidePickup(pickupId) {
+  if (!pickupId) return;
+
+  try {
+    const pickupRef = db.ref('outside_pickups/' + pickupId);
+    const snap = await pickupRef.once('value');
+    const pickup = snap.val();
+    if (!pickup) {
+      showToast('Pickup not found', 'error');
+      return;
+    }
+
+    const hasLinkedInventory = pickup.inventoryCreated === true || pickup.status === 'approved';
+    const confirmation = await Swal.fire({
+      icon: 'warning',
+      title: 'Permanently Delete Pickup?',
+      html: `<p>This permanently removes pickup <strong>${esc(pickupId)}</strong> and cannot be undone.${hasLinkedInventory ? ' Its linked Inventory item will also be deleted.' : ''}</p>`,
+      showCancelButton: true,
+      confirmButtonText: 'Delete Permanently',
+      cancelButtonText: 'Cancel',
+      confirmButtonColor: '#dc2626',
+      cancelButtonColor: '#64748b'
+    });
+    if (!confirmation.isConfirmed) return;
+
+    const updates = { [`outside_pickups/${pickupId}`]: null };
+    if (hasLinkedInventory) {
+      const inventorySnap = await db.ref('pickups/' + pickupId).once('value');
+      const inventoryItem = inventorySnap.val();
+      if (inventoryItem && (inventoryItem.outsidePickup !== true || inventoryItem.orderId !== pickupId)) {
+        showToast('Linked inventory item could not be verified; nothing was deleted', 'error');
+        return;
+      }
+      if (inventoryItem) updates[`pickups/${pickupId}`] = null;
+    }
+
+    await db.ref().update(updates);
+    invalidate('pickups');
+    showToast('Outside pickup permanently deleted', 'success');
+    await loadOutsidePickups(true);
+    if (hasLinkedInventory && currentPageView === 'inventory') await loadInventory(true);
+    if (currentPageView === 'dashboard') loadDashboard(true);
+  } catch (e) {
+    console.error('Outside pickup delete error:', e);
+    showToast('Delete failed: ' + (e.message || 'Unable to delete pickup'), 'error');
+  }
+}
+
+async function viewOutsidePickup(pickupId) {
+  try {
+    const snap = await db.ref('outside_pickups/' + pickupId).once('value');
+    const p = snap.val();
+    if (!p) {
+      showToast('Pickup not found', 'error');
+      return;
+    }
+
+    const status = p.status || 'pending';
+    const createdAt = Number(p.createdAt);
+    const dateStr = createdAt ? new Date(createdAt).toLocaleString('en-IN') : (p.timestampIST || '—');
+    const photos = Array.isArray(p.phoneImages) ? p.phoneImages : [];
+    const photoHtml = photos.length
+      ? `<div class="grid grid-cols-3 gap-2 mt-2">${photos.map((image, index) => {
+          let photoUrl = '';
+          try {
+            const parsedUrl = new URL(image);
+            if (parsedUrl.protocol === 'https:') photoUrl = parsedUrl.href;
+          } catch (e) {
+            console.warn('Ignoring invalid outside pickup photo URL:', e);
+          }
+          return photoUrl
+            ? `<a href="${esc(photoUrl)}" target="_blank" rel="noopener noreferrer"><img src="${esc(photoUrl)}" class="w-full h-24 object-cover rounded-lg border border-gray-200" loading="lazy" alt="Phone photo ${index + 1}"></a>`
+            : '';
+        }).join('')}</div>`
+      : '<div class="text-xs text-gray-400 italic">No photos</div>';
+
+    const statusBadge = status === 'approved'
+      ? '<span class="badge-status approved">Approved</span>'
+      : status === 'rejected'
+        ? '<span class="badge-status rejected">Rejected</span>'
+        : '<span class="badge-status reschedule">Pending Approval</span>';
+    const detailHtml = `
+      <div class="text-left text-sm space-y-3">
+        <div class="flex items-center justify-between flex-wrap gap-2">
+          <div>
+            <div class="text-[10px] font-bold text-gray-400 uppercase tracking-wide">Pickup ID</div>
+            <div class="font-mono font-bold text-lg text-gray-800">${esc(pickupId)}</div>
+          </div>
+          ${statusBadge}
+        </div>
+        <div class="bg-gray-50 border border-gray-200 rounded-xl p-3 grid grid-cols-2 gap-2 text-xs">
+          <div><span class="text-gray-400 uppercase font-bold text-[10px]">Rider</span><br><strong>${esc(p.rider || p.agentName || p.agent || '—')}</strong></div>
+          <div><span class="text-gray-400 uppercase font-bold text-[10px]">Date &amp; Time</span><br><strong>${esc(dateStr)}</strong></div>
+        </div>
+        <div class="border border-gray-100 rounded-xl p-3 space-y-1.5 text-xs">
+          <div class="flex justify-between"><span class="text-gray-500">Model:</span><strong>${esc(p.phoneModel || '—')}</strong></div>
+          <div class="flex justify-between"><span class="text-gray-500">IMEI:</span><strong class="font-mono text-[11px]">${esc(p.imei || '—')}</strong></div>
+          <div class="flex justify-between"><span class="text-gray-500">RAM / Storage:</span><strong>${esc(p.ram || '—')} / ${esc(p.storage || '—')}</strong></div>
+          <div class="flex justify-between"><span class="text-gray-500">Network:</span><strong>${esc(p.networkType || '—')}</strong></div>
+          <div class="flex justify-between"><span class="text-gray-500">Agreed Value:</span><strong class="text-green-700">${formatINR(Number(p.value) || 0)}</strong></div>
+          ${p.customerName ? `<div class="flex justify-between"><span class="text-gray-500">Customer:</span><strong>${esc(p.customerName)}</strong></div>` : ''}
+          ${p.aadhaarNumber ? `<div class="flex justify-between"><span class="text-gray-500">Aadhaar:</span><strong class="font-mono text-[11px]">${esc(p.aadhaarNumber)}</strong></div>` : ''}
+          ${p.billNumber ? `<div class="flex justify-between"><span class="text-gray-500">Bill No:</span><strong>${esc(p.billNumber)}</strong></div>` : ''}
+        </div>
+        <div>
+          <div class="text-[10px] font-bold text-gray-400 uppercase tracking-wide mb-1">Phone Photos (${photos.length})</div>
+          ${photoHtml}
+        </div>
+        ${status === 'approved' ? `<div class="bg-green-50 border border-green-200 rounded-xl p-3 text-xs text-green-800"><strong>Approved</strong> — Added to Inventory. Approved at: ${esc(p.approvedAt ? new Date(p.approvedAt).toLocaleString('en-IN') : '—')}</div>` : ''}
+        ${status === 'rejected' ? `<div class="bg-red-50 border border-red-200 rounded-xl p-3 text-xs text-red-800"><strong>Rejected</strong>${p.rejectReason ? ` — Reason: ${esc(p.rejectReason)}` : ''}</div>` : ''}
+      </div>`;
+    const result = await Swal.fire({
+      title: 'Outside Pickup Details',
+      html: detailHtml,
+      width: 'min(640px, 96vw)',
+      showCancelButton: true,
+      ...(status === 'pending' ? {
+        showDenyButton: true,
+        confirmButtonText: 'Approve',
+        denyButtonText: 'Reject',
+        cancelButtonText: 'Close',
+        confirmButtonColor: '#059669',
+        denyButtonColor: '#dc2626'
+      } : {
+        confirmButtonText: 'Close',
+        confirmButtonColor: '#4f46e5'
+      })
+    });
+
+    if (status === 'pending' && result.isConfirmed) await approveOutsidePickup(pickupId);
+    else if (status === 'pending' && result.isDenied) await rejectOutsidePickup(pickupId);
+  } catch (e) {
+    console.error('Outside pickup detail error:', e);
+    showToast('Error loading pickup details', 'error');
+  }
+}
+
+function countLiveInventory(pickups) {
+  return Object.values(pickups || {}).filter(item => item && item.status === 'pickup' && !item.sold).length;
+}
+
+async function approveOutsidePickup(pickupId) {
+  if (!pickupId) return;
+
+  try {
+    const snap = await db.ref('outside_pickups/' + pickupId).once('value');
+    const p = snap.val();
+    if (!p) {
+      showToast('Pickup not found', 'error');
+      return;
+    }
+    if ((p.status || 'pending') !== 'pending' || p.inventoryCreated === true) {
+      Swal.fire({ icon: 'warning', title: 'Already processed', text: 'Only pending pickups can be approved.', confirmButtonColor: '#4f46e5' });
+      return;
+    }
+
+    const confirm = await Swal.fire({
+      title: 'Approve Outside Pickup?',
+      html: `<div class="text-left text-sm space-y-1">
+        <p><strong>Pickup ID:</strong> <span class="font-mono">${esc(pickupId)}</span></p>
+        <p><strong>Model:</strong> ${esc(p.phoneModel || '—')}</p>
+        <p><strong>IMEI:</strong> <span class="font-mono">${esc(p.imei || '—')}</span></p>
+        <p><strong>Value:</strong> ${formatINR(Number(p.value) || 0)}</p>
+        <p class="text-xs text-gray-600 mt-3 pt-2 border-t border-gray-200">This phone will be added to Flipkart Inventory.</p>
+      </div>`,
+      icon: 'question',
+      showCancelButton: true,
+      confirmButtonText: 'Yes, Approve',
+      cancelButtonText: 'Cancel',
+      confirmButtonColor: '#059669',
+      cancelButtonColor: '#64748b'
+    });
+    if (!confirm.isConfirmed) return;
+
+    const duplicate = await findDuplicateImei(p.imei, pickupId);
+    if (duplicate) {
+      const source = duplicate.source === 'pickups' ? 'existing inventory' : 'another outside pickup';
+      await Swal.fire({
+        icon: 'error',
+        title: 'IMEI Already in Use',
+        text: `This IMEI is already present in ${source}. Please choose a different IMEI or reject the duplicate record first.`,
+        confirmButtonColor: '#dc2626'
+      });
+      return;
+    }
+
+    const nowTs = Date.now();
+    const now = new Date(nowTs);
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const istDate = new Date(nowTs + 5.5 * 60 * 60 * 1000);
+    const istString = `${String(istDate.getUTCDate()).padStart(2, '0')}-${months[istDate.getUTCMonth()]}-${istDate.getUTCFullYear()}, ${String(istDate.getUTCHours() % 12 || 12).padStart(2, '0')}:${String(istDate.getUTCMinutes()).padStart(2, '0')} ${istDate.getUTCHours() >= 12 ? 'PM' : 'AM'} IST`;
+    const inventoryRecord = {
+      orderId: pickupId,
+      status: 'pickup',
+      sold: false,
+      outsidePickup: true,
+      phoneModel: p.phoneModel || '',
+      imei: p.imei || '',
+      value: Number(p.value) || 0,
+      ram: p.ram || '',
+      storage: p.storage || '',
+      ramStorage: p.ramStorage || ((p.ram && p.storage) ? p.ram + '/' + p.storage : ''),
+      networkType: p.networkType || '',
+      customerName: p.customerName || 'N/A',
+      aadhaarNumber: p.aadhaarNumber || '',
+      billNumber: p.billNumber || '',
+      phoneImages: p.phoneImages || [],
+      agent: p.agent || p.agentName || '',
+      rider: p.rider || '',
+      timestamp: now.toISOString(),
+      timestampIST: istString,
+      date: now.toLocaleDateString('en-IN'),
+      time: now.toLocaleTimeString('en-IN'),
+      approvedFromOutsidePickupAt: nowTs
+    };
+
+    let transactionIssue = '';
+    const transaction = await db.ref('pickups').transaction(currentPickups => {
+      const pickups = currentPickups || {};
+      const existing = pickups[pickupId];
+      if (existing) {
+        if (existing.outsidePickup === true && existing.orderId === pickupId) return pickups;
+        transactionIssue = 'Pickup ID already exists in inventory.';
+        return;
+      }
+
+      const imei = String(p.imei || '').trim();
+      if (imei && Object.values(pickups).some(item =>
+        item && item.status === 'pickup' && String(item.imei || '').trim() === imei
+      )) {
+        transactionIssue = 'IMEI already exists in inventory.';
+        return;
+      }
+
+      return { ...pickups, [pickupId]: inventoryRecord };
+    }, undefined, false);
+
+    if (!transaction.committed) {
+      Swal.fire({
+        icon: 'error',
+        title: transactionIssue === 'IMEI already exists in inventory.' ? 'IMEI Already in Inventory' : 'Cannot Approve Pickup',
+        text: transactionIssue || 'The inventory changed before approval. Refresh and try again.',
+        confirmButtonColor: '#dc2626'
+      });
+      return;
+    }
+
+    const committedPickups = transaction.snapshot.val() || {};
+    const inventoryCount = countLiveInventory(committedPickups);
+    const approvedPickup = { ...p, pickupId, status: 'approved', approvedAt: nowTs };
+    const whatsappMessage = buildOutsidePickupMessage(approvedPickup, inventoryCount);
+    await db.ref('outside_pickups/' + pickupId).update({
+      status: 'approved',
+      inventoryCreated: true,
+      approvedAt: nowTs,
+      approvedBy: 'admin',
+      inventoryCountAtApproval: inventoryCount,
+      approvalWhatsAppMessage: whatsappMessage
+    });
+
+    invalidate('pickups');
+    showToast('Approved and added to inventory', 'success');
+    await loadOutsidePickups(true);
+    if (currentPageView === 'inventory') loadInventory(true);
+    if (currentPageView === 'dashboard') loadDashboard(true);
+    await showOutsidePickupApprovedModal(approvedPickup, inventoryCount, whatsappMessage);
+  } catch (e) {
+    console.error('Outside pickup approval error:', e);
+    showToast('Approval failed: ' + (e.message || 'Unable to save pickup'), 'error');
+    await loadOutsidePickups(true);
+  }
+}
+
+async function rejectOutsidePickup(pickupId) {
+  if (!pickupId) return;
+
+  try {
+    const snap = await db.ref('outside_pickups/' + pickupId).once('value');
+    const p = snap.val();
+    if (!p) {
+      showToast('Pickup not found', 'error');
+      return;
+    }
+    if ((p.status || 'pending') !== 'pending' || p.inventoryCreated === true) {
+      Swal.fire({ icon: 'warning', title: 'Already processed', text: 'Only pending pickups can be rejected.', confirmButtonColor: '#4f46e5' });
+      return;
+    }
+
+    const result = await Swal.fire({
+      title: 'Reject Outside Pickup?',
+      text: 'Rejecting will not add this phone to inventory.',
+      input: 'text',
+      inputPlaceholder: 'Reason for rejection (optional)',
+      showCancelButton: true,
+      confirmButtonText: 'Reject',
+      cancelButtonText: 'Cancel',
+      confirmButtonColor: '#dc2626',
+      cancelButtonColor: '#64748b'
+    });
+    if (!result.isConfirmed) return;
+
+    const rejectedAt = Date.now();
+    let wasProcessed = false;
+    const rejection = await db.ref('outside_pickups/' + pickupId).transaction(current => {
+      if (!current || (current.status || 'pending') !== 'pending' || current.inventoryCreated === true) {
+        wasProcessed = true;
+        return;
+      }
+      return {
+        ...current,
+        status: 'rejected',
+        rejectReason: (result.value || '').trim() || 'No reason provided',
+        rejectedAt,
+        rejectedBy: 'admin'
+      };
+    }, undefined, false);
+
+    if (!rejection.committed) {
+      showToast(wasProcessed ? 'Pickup was already processed' : 'Rejection was not saved; refresh and try again', 'error');
+      return;
+    }
+
+    showToast('Pickup rejected', 'info');
+    await loadOutsidePickups(true);
+    if (currentPageView === 'dashboard') loadDashboard(true);
+  } catch (e) {
+    console.error('Outside pickup rejection error:', e);
+    showToast('Rejection failed: ' + (e.message || 'Unable to save rejection'), 'error');
+  }
+}
+
+function buildOutsidePickupMessage(p, inventoryCount) {
+  const lines = [
+    '📦 *OUTSIDE PICKUP — FLIPKART*',
+    '',
+    `Pickup ID: ${p.pickupId || '—'}`,
+    `Rider: ${p.rider || p.agentName || '—'}`,
+    `Model: ${p.phoneModel || '—'}`,
+    `RAM / ROM: ${p.ram || '—'} / ${p.storage || '—'}`,
+    `IMEI: ${p.imei || '—'}`,
+    `Network: ${p.networkType || '—'}`,
+    `Agreed Value: ₹${(Number(p.value) || 0).toLocaleString('en-IN')}`
+  ];
+  if (p.customerName && p.customerName !== 'N/A') lines.push(`Customer: ${p.customerName}`);
+  if (p.aadhaarNumber) lines.push(`Aadhaar: ${p.aadhaarNumber}`);
+  if (p.billNumber) lines.push(`Bill Number: ${p.billNumber}`);
+  lines.push('Status: Approved', `Total Flipkart Inventory: ${inventoryCount}`);
+  return lines.join('\n');
+}
+
+async function copyOutsidePickupWhatsApp(pickupId) {
+  try {
+    const snap = await db.ref('outside_pickups/' + pickupId).once('value');
+    const p = snap.val();
+    if (!p || p.status !== 'approved') {
+      showToast('Approved pickup not found', 'error');
+      return;
+    }
+    const message = p.approvalWhatsAppMessage || buildOutsidePickupMessage(
+      { ...p, pickupId },
+      Number(p.inventoryCountAtApproval) || 0
+    );
+    await copyOutsidePickupMessage(message);
+  } catch (e) {
+    console.error('Outside pickup WhatsApp message error:', e);
+    showToast('Could not copy WhatsApp message', 'error');
+  }
+}
+
+async function copyOutsidePickupMessage(message) {
+  try {
+    await navigator.clipboard.writeText(message);
+    showToast('Approval WhatsApp message copied', 'success');
+  } catch (e) {
+    console.warn('Clipboard API unavailable; trying fallback copy:', e);
+    const textarea = document.createElement('textarea');
+    textarea.value = message;
+    textarea.style.position = 'fixed';
+    textarea.style.opacity = '0';
+    document.body.appendChild(textarea);
+    try {
+      textarea.select();
+      const copied = document.execCommand('copy');
+      if (!copied) throw new Error('Clipboard fallback copy was unsuccessful');
+      showToast('Approval WhatsApp message copied', 'success');
+    } catch (fallbackError) {
+      console.error('Clipboard fallback failed:', fallbackError);
+      showToast('Copy failed', 'error');
+    } finally {
+      textarea.remove();
+    }
+  }
+}
+
+async function showOutsidePickupApprovedModal(p, inventoryCount, savedMessage) {
+  const message = savedMessage || p.approvalWhatsAppMessage || buildOutsidePickupMessage(p, inventoryCount);
+  const result = await Swal.fire({
+    title: 'Approved — WhatsApp Message',
+    html: `<div class="text-left">
+      <p class="text-xs text-gray-500 mb-2">Message ready to send to WhatsApp group:</p>
+      <pre style="background:#f1f5f9;padding:12px;border-radius:10px;font-size:12px;line-height:1.5;white-space:pre-wrap;max-height:320px;overflow-y:auto;border:1px solid #e2e8f0;text-align:left;font-family:inherit;">${esc(message)}</pre>
+    </div>`,
+    showDenyButton: true,
+    showCancelButton: true,
+    confirmButtonText: 'Copy Message',
+    denyButtonText: 'Open WhatsApp',
+    cancelButtonText: 'Close',
+    confirmButtonColor: '#059669',
+    denyButtonColor: '#25D366',
+    cancelButtonColor: '#64748b',
+    width: 'min(560px, 96vw)'
+  });
+
+  if (result.isConfirmed) {
+    await copyOutsidePickupMessage(message);
+  } else if (result.isDenied) {
+    window.open('https://wa.me/?text=' + encodeURIComponent(message), '_blank', 'noopener,noreferrer');
+  }
+}
+
+document.addEventListener('keydown', function (e) {
+  if (e.key === 'Escape') {
+    closeDetail();
+    closeSellModal();
+    closeActivityModal();
+    closeSidebar();
+    closeGlobalSearch();
+    closeImageViewer();
+  }
+});
+
+// ================================================================
+// ATTENDANCE CALENDAR SYSTEM
+// ================================================================
+let currentCalendarYear = new Date().getFullYear();
+let currentCalendarMonth = new Date().getMonth() + 1;
+let currentCalendarAgent = null;
+
+async function viewAttendanceCalendar(username = null) {
+  const users = await getData('users', false);
+  const activeAgents = getActiveAgents(users);
+
+  if (!username) {
+    const firstKey = Object.keys(activeAgents)[0];
+    if (!firstKey) { showToast('No active agents', 'warning'); return; }
+    username = firstKey;
+  }
+  currentCalendarAgent = username;
+
+  renderAttendanceCalendarModal();
+}
+
+function changeCalendarMonth(delta) {
+  currentCalendarMonth += delta;
+  if (currentCalendarMonth > 12) {
+    currentCalendarMonth = 1;
+    currentCalendarYear++;
+  } else if (currentCalendarMonth < 1) {
+    currentCalendarMonth = 12;
+    currentCalendarYear--;
+  }
+  renderAttendanceCalendarModal();
+}
+
+async function renderAttendanceCalendarModal() {
+  const username = currentCalendarAgent;
+  const year = currentCalendarYear;
+  const month = currentCalendarMonth;
+  const monthStr = String(month).padStart(2, '0');
+
+  const users = await getData('users', false);
+  const uData = users[username] || { name: username };
+  const activeAgents = getActiveAgents(users);
+
+  const monthNames = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+  const monthLabel = `${monthNames[month - 1]} ${year}`;
+
+  const allAtt = await getData('attendance', true);
+  const userAtt = (allAtt && allAtt[username]) || {};
+
+  const daysInMonth = new Date(year, month, 0).getDate();
+  const firstDayIndex = new Date(year, month - 1, 1).getDay();
+
+  let presentCount = 0;
+  let halfDayCount = 0;
+  let absentCount = 0;
+  let unmarkedCount = 0;
+
+  let calendarCells = '';
+
+  for (let i = 0; i < firstDayIndex; i++) {
+    calendarCells += `<div class="p-1 sm:p-2 min-h-[38px] sm:min-h-[50px] bg-gray-50 rounded-lg border border-gray-100 opacity-30"></div>`;
+  }
+
+  const todayStr = getLocalYMD();
+
+  for (let d = 1; d <= daysInMonth; d++) {
+    const dateStr = `${year}-${monthStr}-${String(d).padStart(2, '0')}`;
+    const att = userAtt[dateStr] || {};
+    const status = att.status || (dateStr <= todayStr ? 'unmarked' : 'future');
+
+    let bg = 'bg-white border-gray-200';
+    let text = 'text-gray-400';
+    let emoji = '';
+    let label = '—';
+
+    if (status === 'present') {
+      if (att.half_day === true) {
+        halfDayCount++;
+        bg = 'bg-amber-50 border-amber-200';
+        text = 'text-amber-800 font-bold';
+        emoji = '🌗';
+        label = 'Half';
+      } else {
+        presentCount++;
+        bg = 'bg-emerald-50 border-emerald-200';
+        text = 'text-emerald-800 font-bold';
+        emoji = '✅';
+        label = 'Present';
+      }
+    } else if (status === 'absent') {
+      absentCount++;
+      bg = 'bg-rose-50 border-rose-200';
+      text = 'text-rose-800 font-bold';
+      emoji = '❌';
+      label = 'Absent';
+    } else if (status === 'unmarked') {
+      unmarkedCount++;
+      bg = 'bg-gray-50 border-gray-200';
+      text = 'text-gray-500 font-medium';
+      emoji = '⚪';
+      label = 'None';
+    } else {
+      bg = 'bg-gray-50 border-gray-100 opacity-60';
+      text = 'text-gray-400';
+      label = '';
+    }
+
+    const isToday = dateStr === todayStr;
+
+    calendarCells += `
+      <div class="p-1 sm:p-2 min-h-[40px] sm:min-h-[55px] rounded-lg sm:rounded-xl border ${bg} flex flex-col justify-between cursor-pointer hover:shadow-md transition"
+           onclick="quickToggleDay('${username}', '${dateStr}', '${status}', ${att.half_day === true})">
+        <div class="flex justify-between items-center text-[10px] sm:text-xs">
+          <span class="font-bold ${isToday ? 'px-1 sm:px-1.5 py-0.5 bg-indigo-600 text-white rounded-full text-[9px] sm:text-[10px]' : 'text-gray-700'}">${d}</span>
+          ${att.timestamp ? `<span class="hidden sm:inline text-[9px] text-gray-400">${new Date(att.timestamp).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</span>` : ''}
+        </div>
+        <div class="text-[9px] sm:text-[11px] mt-0.5 sm:mt-1 ${text} leading-tight">
+          ${emoji}<span class="hidden sm:inline"> ${label}</span>
+        </div>
+      </div>
+    `;
+  }
+
+  const agentSelectOptions = Object.entries(activeAgents).map(([uname, u]) =>
+    `<option value="${uname}" ${uname === username ? 'selected' : ''}>${u.name || uname}</option>`
+  ).join('');
+
+  const attendancePercent = daysInMonth > 0 ? Math.round(((presentCount + (halfDayCount * 0.5)) / daysInMonth) * 100) : 0;
+
+  const html = `
+    <div class="text-left font-sans">
+      <div class="flex flex-wrap items-center justify-between gap-2 mb-3 sm:mb-4 pb-2 sm:pb-3 border-b border-gray-100">
+        <div class="flex items-center gap-2">
+          <label class="text-[10px] sm:text-xs font-semibold text-gray-600">Agent:</label>
+          <select id="cal_agent_select" onchange="currentCalendarAgent=this.value; renderAttendanceCalendarModal();" class="p-1 sm:p-1.5 border border-gray-300 rounded-lg text-[10px] sm:text-xs font-bold text-gray-800 bg-white max-w-[140px] sm:max-w-none">
+            ${agentSelectOptions}
+          </select>
+        </div>
+
+        <div class="flex items-center gap-1 sm:gap-2">
+          <button onclick="changeCalendarMonth(-1)" class="px-1.5 sm:px-2.5 py-1 rounded-lg border border-gray-200 hover:bg-gray-100 font-bold text-gray-700 text-[10px] sm:text-xs">◀ <span class="hidden sm:inline">Prev</span></button>
+          <span class="font-bold text-[11px] sm:text-sm text-gray-800 min-w-[90px] sm:min-w-[130px] text-center">${monthLabel}</span>
+          <button onclick="changeCalendarMonth(1)" class="px-1.5 sm:px-2.5 py-1 rounded-lg border border-gray-200 hover:bg-gray-100 font-bold text-gray-700 text-[10px] sm:text-xs"><span class="hidden sm:inline">Next</span> ▶</button>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-2 sm:grid-cols-4 gap-1.5 sm:gap-2 mb-3 sm:mb-4 text-center">
+        <div class="p-1.5 sm:p-2 bg-emerald-50 border border-emerald-100 rounded-lg sm:rounded-xl">
+          <div class="text-[9px] sm:text-[10px] text-emerald-600 font-semibold uppercase">Present</div>
+          <div class="text-sm sm:text-lg font-bold text-emerald-800">${presentCount}</div>
+        </div>
+        <div class="p-1.5 sm:p-2 bg-amber-50 border border-amber-100 rounded-lg sm:rounded-xl">
+          <div class="text-[9px] sm:text-[10px] text-amber-600 font-semibold uppercase">Half Day</div>
+          <div class="text-sm sm:text-lg font-bold text-amber-800">${halfDayCount}</div>
+        </div>
+        <div class="p-1.5 sm:p-2 bg-rose-50 border border-rose-100 rounded-lg sm:rounded-xl">
+          <div class="text-[9px] sm:text-[10px] text-rose-600 font-semibold uppercase">Absent</div>
+          <div class="text-sm sm:text-lg font-bold text-rose-800">${absentCount}</div>
+        </div>
+        <div class="p-1.5 sm:p-2 bg-indigo-50 border border-indigo-100 rounded-lg sm:rounded-xl">
+          <div class="text-[9px] sm:text-[10px] text-indigo-600 font-semibold uppercase">Attendance %</div>
+          <div class="text-sm sm:text-lg font-bold text-indigo-800">${attendancePercent}%</div>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-7 gap-0.5 sm:gap-1 text-center font-bold text-[9px] sm:text-[11px] text-gray-500 mb-1">
+        <span>Sun</span><span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span><span>Sat</span>
+      </div>
+
+      <div class="grid grid-cols-7 gap-1 sm:gap-1.5 max-h-[320px] sm:max-h-[380px] overflow-y-auto no-scrollbar p-0.5 sm:p-1">
+        ${calendarCells}
+      </div>
+
+      <div class="text-[9px] sm:text-[10px] text-gray-400 mt-2 sm:mt-3 text-center">
+        💡 Click on any date box to instantly change or toggle status (Present / Half / Absent / Unmark).
+      </div>
+    </div>
+  `;
+
+  Swal.fire({
+    title: '<span class="text-sm sm:text-base">📅 Monthly Attendance Calendar</span>',
+    width: 'min(720px, 96vw)',
+    html: html,
+    showConfirmButton: false,
+    showCloseButton: true
+  });
+}
+
+async function quickToggleDay(username, dateStr, currentStatus, isHalfDay) {
+  const { value: newStatus } = await Swal.fire({
+    title: `<span class="text-sm sm:text-base">Date: ${dateStr}</span>`,
+    text: `Update status for ${username}:`,
+    width: 'min(360px, 96vw)',
+    input: 'select',
+    inputOptions: {
+      'present_full': '✅ Present (Full)',
+      'present_half': '🌗 Half Day (50%)',
+      'absent': '❌ Absent',
+      'unmarked': '⚪ Unmarked'
+    },
+    inputValue: isHalfDay ? 'present_half' : (currentStatus === 'present' ? 'present_full' : currentStatus),
+    showCancelButton: true,
+    confirmButtonText: 'Update',
+    confirmButtonColor: '#4f46e5'
+  });
+
+  if (!newStatus) return;
+
+  if (newStatus === 'present_full') {
+    await setAgentAttendanceStatus(username, dateStr, 'present', false);
+  } else if (newStatus === 'present_half') {
+    await setAgentAttendanceStatus(username, dateStr, 'present', true);
+  } else if (newStatus === 'absent') {
+    await setAgentAttendanceStatus(username, dateStr, 'absent', false);
+  } else if (newStatus === 'unmarked') {
+    await db.ref(`attendance/${username}/${dateStr}`).remove();
+    showToast('Marked as unmarked', 'info');
+  }
+
+  loadAttendance(true);
+  renderAttendanceCalendarModal();
+}
+
+// ================================================================
+// Expose functions for inline HTML handlers
+// ================================================================
+window.promptDateActivities = promptDateActivities;
+window.openDateActivitiesModal = openDateActivitiesModal;
+window.saveActivityIncentive = saveActivityIncentive;
+window.resetActivityIncentive = resetActivityIncentive;
+
+// ================================================================
+// ================================================================
+// RIDER STATEMENT SYSTEM v1.1
+// - Click rider name → confirm → calendar range → Yes/No model details
+// - Mobile number NOT shown (per request)
+// - YES: detailed table with model per transaction
+// - NO : daily summary counts only
+// ================================================================
+// ================================================================
+
+function formatDateHuman(dateStr) {
+  if (!dateStr) return '—';
+  const d = new Date(dateStr + 'T00:00:00');
+  if (isNaN(d)) return dateStr;
+  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  return `${String(d.getDate()).padStart(2,'0')} ${months[d.getMonth()]} ${d.getFullYear()}`;
+}
+
+function getWeekdayShort(dateStr) {
+  const d = new Date(dateStr + 'T00:00:00');
+  if (isNaN(d)) return '';
+  return ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][d.getDay()];
+}
+
+// ----------------------------------------------------------------
+// STEP 1: Click rider name → confirm
+// ----------------------------------------------------------------
+async function openRiderStatementFlow(username) {
+  if (!username) return;
+
+  let uName = username;
+  try {
+    const users = await getData('users', false);
+    if (users[username] && users[username].name) uName = users[username].name;
+  } catch (_) {}
+
+  const res = await Swal.fire({
+    title: '📋 (FLIPKART) Rider Statement',
+    html: `
+      <div class="text-center font-sans">
+        <p class="text-sm text-gray-600">View <strong>Pickup / Reject Statement</strong> for:</p>
+        <p class="text-lg font-bold text-indigo-700 mt-2">${esc(uName)}</p>
+        <p class="text-xs text-gray-400 font-mono mt-0.5">${esc(username)}</p>
+        <div class="mt-3 p-3 bg-indigo-50 border border-indigo-100 rounded-xl text-left text-xs">
+          <p class="font-bold text-indigo-900 mb-1">📌 What you'll see:</p>
+          <p class="text-gray-700 leading-relaxed">
+            ✅ Attendance calendar (green/red) · 📦 Pickup & reject counts · 💰 Incentive earnings · 📊 Date-wise breakdown · 📋 Copy-to-share
+          </p>
+        </div>
+      </div>
+    `,
+    showCancelButton: true,
+    confirmButtonText: '📅 Select Date Range',
+    cancelButtonText: 'Cancel',
+    confirmButtonColor: '#4f46e5',
+    cancelButtonColor: '#64748b',
+    width: 480
+  });
+
+  if (!res.isConfirmed) return;
+  openStatementCalendarPicker(username);
+}
+
+// ----------------------------------------------------------------
+// STEP 2: Calendar range picker (green/red attendance)
+// ----------------------------------------------------------------
+async function openStatementCalendarPicker(username) {
+  let users, allAttendance;
+  try {
+    [users, allAttendance] = await Promise.all([
+      getData('users', true),
+      getData('attendance', true)
+    ]);
+  } catch (e) {
+    showToast('Failed to load data', 'error');
+    return;
+  }
+
+  const uData = users[username];
+  if (!uData) {
+    showToast('Rider not found', 'error');
+    return;
+  }
+
+  const userAtt = allAttendance[username] || {};
+
+  let currentYear  = new Date().getFullYear();
+  let currentMonth = new Date().getMonth() + 1;
+  let selectedStart = null;
+  let selectedEnd   = null;
+
+  const renderGrid = () => {
+    const monthStr = String(currentMonth).padStart(2, '0');
+    const daysInMonth = new Date(currentYear, currentMonth, 0).getDate();
+    const firstDay = new Date(currentYear, currentMonth - 1, 1).getDay();
+    const monthName = new Date(currentYear, currentMonth - 1, 1)
+      .toLocaleString('en-US', { month: 'long', year: 'numeric' });
+
+    let cells = '';
+    for (let i = 0; i < firstDay; i++) cells += '<div></div>';
+
+    for (let d = 1; d <= daysInMonth; d++) {
+      const dateStr = `${currentYear}-${monthStr}-${String(d).padStart(2,'0')}`;
+      const att = userAtt[dateStr] || {};
+      const status = att.status || 'unmarked';
+
+      let cls = 'bg-gray-50 border-gray-200 text-gray-500';
+      let icon = '';
+      if (status === 'present') {
+        if (att.half_day) { cls = 'bg-amber-100 border-amber-300 text-amber-800'; icon = '🌗'; }
+        else { cls = 'bg-emerald-100 border-emerald-300 text-emerald-800'; icon = '✅'; }
+      } else if (status === 'absent') {
+        cls = 'bg-rose-100 border-rose-300 text-rose-800';
+        icon = '❌';
+      }
+
+      let ring = '';
+      if (selectedStart && selectedEnd) {
+        if (dateStr >= selectedStart && dateStr <= selectedEnd) ring = 'ring-2 ring-indigo-500 ring-offset-1';
+      } else if (selectedStart && dateStr === selectedStart) {
+        ring = 'ring-2 ring-indigo-500 ring-offset-1';
+      }
+
+      cells += `
+        <div class="stmt-day-tile p-0.5 sm:p-1 min-h-[32px] sm:min-h-[42px] rounded-md sm:rounded-lg border ${cls} ${ring} cursor-pointer hover:scale-105 transition flex flex-col items-center justify-center"
+             data-date="${dateStr}">
+          <div class="text-[9px] sm:text-[11px] font-bold">${d}</div>
+          <div class="text-[8px] sm:text-[10px] leading-none mt-0.5">${icon}</div>
+        </div>
+      `;
+    }
+
+    return { cells, monthName };
+  };
+
+  const updateUI = () => {
+    const { cells, monthName } = renderGrid();
+    const grid = document.getElementById('stmt_cal_grid');
+    const mlbl = document.getElementById('stmt_cal_month');
+    if (grid) grid.innerHTML = cells;
+    if (mlbl) mlbl.textContent = monthName;
+
+    const sel = document.getElementById('stmt_cal_selection');
+    if (sel) {
+      if (selectedStart && selectedEnd) {
+        sel.innerHTML = `<span class="text-emerald-700 font-bold text-[11px] sm:text-xs">✅ Selected: ${formatDateHuman(selectedStart)} → ${formatDateHuman(selectedEnd)}</span>`;
+      } else if (selectedStart) {
+        sel.innerHTML = `<span class="text-indigo-700 font-bold text-[11px] sm:text-xs">📍 Start: ${formatDateHuman(selectedStart)} — ab END date click karein</span>`;
+      } else {
+        sel.innerHTML = `<span class="text-gray-500 text-[11px] sm:text-xs">Click a date to START selection</span>`;
+      }
+    }
+
+    document.querySelectorAll('#stmt_cal_grid .stmt-day-tile').forEach(tile => {
+      tile.onclick = function () {
+        const ds = this.dataset.date;
+        if (!selectedStart || (selectedStart && selectedEnd)) {
+          selectedStart = ds;
+          selectedEnd = null;
+        } else {
+          if (ds < selectedStart) {
+            selectedEnd = selectedStart;
+            selectedStart = ds;
+          } else {
+            selectedEnd = ds;
+          }
+        }
+        updateUI();
+      };
+    });
+  };
+
+  const result = await Swal.fire({
+    title: `<span class="text-sm sm:text-base">📅 ${uData.name || username} — Attendance Calendar</span>`,
+    width: 'min(760px, 96vw)',
+    html: `
+      <div class="text-left font-sans">
+        <div class="flex items-center justify-between mb-2 sm:mb-3 gap-1 sm:gap-2">
+          <button id="stmt_cal_prev" type="button" class="px-2 sm:px-3 py-1 sm:py-1.5 bg-gray-100 hover:bg-gray-200 rounded-lg text-[10px] sm:text-sm font-bold text-gray-700">◀ Prev</button>
+          <span id="stmt_cal_month" class="font-bold text-xs sm:text-base text-gray-800"></span>
+          <button id="stmt_cal_next" type="button" class="px-2 sm:px-3 py-1 sm:py-1.5 bg-gray-100 hover:bg-gray-200 rounded-lg text-[10px] sm:text-sm font-bold text-gray-700">Next ▶</button>
+        </div>
+
+        <div class="grid grid-cols-7 gap-0.5 sm:gap-1 text-center text-[9px] sm:text-[10px] font-bold text-gray-500 mb-1">
+          <span>Sun</span><span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span><span>Sat</span>
+        </div>
+
+        <div id="stmt_cal_grid" class="grid grid-cols-7 gap-0.5 sm:gap-1 mb-2 sm:mb-3"></div>
+
+        <div class="flex flex-wrap gap-1.5 sm:gap-3 text-[9px] sm:text-[10px] text-gray-600 justify-center mb-2">
+          <span class="inline-flex items-center gap-1"><span class="w-2.5 h-2.5 sm:w-3 sm:h-3 bg-emerald-100 border border-emerald-300 rounded"></span> Present</span>
+          <span class="inline-flex items-center gap-1"><span class="w-2.5 h-2.5 sm:w-3 sm:h-3 bg-amber-100 border border-amber-300 rounded"></span> Half Day</span>
+          <span class="inline-flex items-center gap-1"><span class="w-2.5 h-2.5 sm:w-3 sm:h-3 bg-rose-100 border border-rose-300 rounded"></span> Absent</span>
+          <span class="inline-flex items-center gap-1"><span class="w-2.5 h-2.5 sm:w-3 sm:h-3 bg-gray-50 border border-gray-200 rounded"></span> Unmarked</span>
+        </div>
+
+        <div id="stmt_cal_selection" class="text-center text-[11px] sm:text-xs p-2 sm:p-2.5 bg-indigo-50 border border-indigo-100 rounded-lg sm:rounded-xl mb-2"></div>
+
+        <p class="text-[9px] sm:text-[10px] text-gray-400 text-center">ℹ️ Click once to select START date · click again to select END date</p>
+      </div>
+    `,
+    showCancelButton: true,
+    showConfirmButton: true,
+    confirmButtonText: '📊 Continue',
+    cancelButtonText: 'Cancel',
+    confirmButtonColor: '#4f46e5',
+    cancelButtonColor: '#64748b',
+    didOpen: () => {
+      updateUI();
+
+      const prevBtn = document.getElementById('stmt_cal_prev');
+      const nextBtn = document.getElementById('stmt_cal_next');
+
+      if (prevBtn) prevBtn.onclick = () => {
+        currentMonth--;
+        if (currentMonth < 1) { currentMonth = 12; currentYear--; }
+        updateUI();
+      };
+      if (nextBtn) nextBtn.onclick = () => {
+        currentMonth++;
+        if (currentMonth > 12) { currentMonth = 1; currentYear++; }
+        updateUI();
+      };
+    },
+    preConfirm: () => {
+      if (!selectedStart || !selectedEnd) {
+        Swal.showValidationMessage('Please select both start and end dates');
+        return false;
+      }
+      return { from: selectedStart, to: selectedEnd };
+    }
+  });
+
+  if (!result.isConfirmed || !result.value) return;
+
+  // ----------------------------------------------------------------
+  // STEP 3: Ask model details Yes/No
+  // ----------------------------------------------------------------
+  const detailChoice = await Swal.fire({
+    title: '<span class="text-sm sm:text-base">📱 Mobile Model Details?</span>',
+    width: 'min(440px, 96vw)',
+    html: `
+      <div class="text-center font-sans">
+        <p class="text-xs sm:text-sm text-gray-600 mb-3">Statement mein <strong>mobile model</strong> ki detail chahiye?</p>
+        <div class="grid grid-cols-1 gap-2 text-left">
+          <div class="p-2.5 sm:p-3 bg-emerald-50 border-2 border-emerald-300 rounded-lg sm:rounded-xl">
+            <p class="font-bold text-emerald-800 text-xs sm:text-sm">✅ YES — Detailed</p>
+            <p class="text-[10px] sm:text-xs text-gray-600 mt-1">Har pickup/reject ka <strong>model name, order ID, date</strong> dikhega</p>
+          </div>
+          <div class="p-2.5 sm:p-3 bg-gray-50 border-2 border-gray-300 rounded-lg sm:rounded-xl">
+            <p class="font-bold text-gray-800 text-xs sm:text-sm">❌ NO — Summary</p>
+            <p class="text-[10px] sm:text-xs text-gray-600 mt-1">Sirf <strong>kitne pickup, kitne reject</strong> — model details nahi</p>
+          </div>
+        </div>
+      </div>
+    `,
+    showDenyButton: true,
+    showCancelButton: false,
+    confirmButtonText: '✅ YES — Model Details',
+    denyButtonText: '❌ NO — Counts Only',
+    confirmButtonColor: '#059669',
+    denyButtonColor: '#64748b',
+    width: 'min(440px, 96vw)'
+  });
+
+  if (detailChoice.isDismissed) return;
+
+  const showModelDetails = detailChoice.isConfirmed;
+
+  generateRiderStatement(
+    username,
+    result.value.from,
+    result.value.to,
+    showModelDetails
+  );
+}
+
+// ----------------------------------------------------------------
+// STEP 4: Build & show the full statement
+// ----------------------------------------------------------------
+async function generateRiderStatement(username, fromDate, toDate, showModelDetails) {
+  Swal.fire({
+    title: 'Generating statement...',
+    allowOutsideClick: false,
+    didOpen: () => Swal.showLoading()
+  });
+
+  try {
+    const [users, pickups, allAttendance] = await Promise.all([
+      getData('users', true),
+      getData('pickups', true),
+      getData('attendance', true)
+    ]);
+
+    const uData = users[username];
+    if (!uData) { Swal.close(); showToast('Rider not found', 'error'); return; }
+
+    const userAtt = allAttendance[username] || {};
+
+    // Build date array
+    const dates = [];
+    const cur = new Date(fromDate + 'T00:00:00');
+    const endD = new Date(toDate + 'T00:00:00');
+    while (cur <= endD) {
+      dates.push(getLocalYMD(cur));
+      cur.setDate(cur.getDate() + 1);
+    }
+
+    // Group data
+    const pickupsByDate = {};
+    const allOrders = [];
+
+    Object.values(pickups).forEach(ord => {
+      if (ord.agent !== username) return;
+      if (!ord.timestamp) return;
+      if (ord.status === 'on_hold') return;
+      const ds = getLocalYMD(new Date(ord.timestamp));
+      if (ds < fromDate || ds > toDate) return;
+
+      if (!pickupsByDate[ds]) pickupsByDate[ds] = { pickups: [], rejects: [], pending: [] };
+
+      if (ord.status === 'pickup') {
+        pickupsByDate[ds].pickups.push(ord);
+        allOrders.push({ date: ds, type: 'pickup', ord, inc: getActivityIncentive(ord, uData, 'pickup') });
+      } else if (ord.status === 'rejected') {
+        if (ord.incentive_approved) {
+          pickupsByDate[ds].rejects.push(ord);
+          allOrders.push({ date: ds, type: 'reject', ord, inc: getActivityIncentive(ord, uData, 'reject') });
+        } else {
+          pickupsByDate[ds].pending.push(ord);
+          allOrders.push({ date: ds, type: 'pending', ord, inc: 0 });
+        }
+      } else if (ord.status === 'reschedule') {
+        pickupsByDate[ds].pending.push(ord);
+        allOrders.push({ date: ds, type: 'pending', ord, inc: 0 });
+      }
+    });
+
+    // Totals + calendar
+    let totalPickups = 0, totalRejects = 0, totalPending = 0;
+    let totalPickupInc = 0, totalRejectInc = 0;
+    let presentCount = 0, absentCount = 0, halfDayCount = 0;
+
+    let rowsHtml = '';
+    let calendarCells = '';
+    let prevMonthKey = '';
+    let firstCellOffsetDone = false;
+
+    dates.forEach(dateStr => {
+      const att = userAtt[dateStr] || {};
+      const status = att.status || 'unmarked';
+      const dayData = pickupsByDate[dateStr] || { pickups: [], rejects: [], pending: [] };
+
+      const dayPickupInc = dayData.pickups.reduce((s, o) => s + getActivityIncentive(o, uData, 'pickup'), 0);
+      const dayRejectInc = dayData.rejects.reduce((s, o) => s + getActivityIncentive(o, uData, 'reject'), 0);
+
+      totalPickups += dayData.pickups.length;
+      totalRejects += dayData.rejects.length;
+      totalPending += dayData.pending.length;
+      totalPickupInc += dayPickupInc;
+      totalRejectInc += dayRejectInc;
+
+      let attIcon = '—';
+      let attClass = 'text-gray-400';
+      if (status === 'present') {
+        if (att.half_day) { halfDayCount++; attIcon = '🌗 Half'; attClass = 'text-amber-700 font-bold'; }
+        else { presentCount++; attIcon = '✅ Present'; attClass = 'text-emerald-700 font-bold'; }
+      } else if (status === 'absent') {
+        absentCount++; attIcon = '❌ Absent'; attClass = 'text-rose-700 font-bold';
+      }
+
+      // Calendar cell
+      const monthKey = dateStr.substring(0, 7);
+      if (!firstCellOffsetDone) {
+        const firstDow = new Date(fromDate + 'T00:00:00').getDay();
+        for (let i = 0; i < firstDow; i++) calendarCells += '<div></div>';
+        firstCellOffsetDone = true;
+      }
+      if (monthKey !== prevMonthKey) {
+        if (prevMonthKey !== '') calendarCells += '</div></div>';
+        const [yy, mm] = monthKey.split('-').map(Number);
+        const monthLabel = new Date(yy, mm - 1, 1).toLocaleString('en-US', { month: 'long', year: 'numeric' });
+        calendarCells += `<div class="mb-3"><p class="text-xs font-bold text-indigo-700 mb-1 mt-2">${monthLabel}</p><div class="grid grid-cols-7 gap-1">`;
+        prevMonthKey = monthKey;
+      }
+
+      let calCls = 'bg-gray-50 border-gray-200 text-gray-500';
+      let calIcon = '';
+      if (status === 'present') {
+        if (att.half_day) { calCls = 'bg-amber-100 border-amber-300 text-amber-800'; calIcon = '🌗'; }
+        else { calCls = 'bg-emerald-100 border-emerald-300 text-emerald-800'; calIcon = '✅'; }
+      } else if (status === 'absent') {
+        calCls = 'bg-rose-100 border-rose-300 text-rose-800'; calIcon = '❌';
+      }
+      const dayNum = parseInt(dateStr.substring(8), 10);
+      calendarCells += `
+        <div class="p-1 min-h-[38px] rounded-lg border ${calCls} flex flex-col items-center justify-center text-[10px] font-bold">
+          <div>${dayNum}</div>
+          <div class="text-[9px] leading-none mt-0.5">${calIcon}</div>
+        </div>
+      `;
+
+      // Summary row (NO mode)
+      if (!showModelDetails) {
+        const dayTotalInc = dayPickupInc + dayRejectInc;
+        const wd = getWeekdayShort(dateStr);
+        rowsHtml += `
+          <tr class="border-b border-gray-100 text-xs hover:bg-gray-50">
+            <td class="py-2 px-2 font-mono whitespace-nowrap">${dateStr}<div class="text-[9px] text-gray-400">${wd}</div></td>
+            <td class="py-2 px-2 ${attClass} whitespace-nowrap">${attIcon}</td>
+            <td class="py-2 px-2 text-center font-bold text-emerald-700">${dayData.pickups.length || '—'}</td>
+            <td class="py-2 px-2 text-right text-emerald-600 font-semibold whitespace-nowrap">${dayPickupInc ? formatINR(dayPickupInc) : '—'}</td>
+            <td class="py-2 px-2 text-center font-bold text-amber-700">${dayData.rejects.length || '—'}</td>
+            <td class="py-2 px-2 text-right text-amber-600 font-semibold whitespace-nowrap">${dayRejectInc ? formatINR(dayRejectInc) : '—'}</td>
+            <td class="py-2 px-2 text-center text-gray-500">${dayData.pending.length || '—'}</td>
+            <td class="py-2 px-2 text-right font-bold text-indigo-700 whitespace-nowrap">${dayTotalInc ? formatINR(dayTotalInc) : '—'}</td>
+          </tr>
+        `;
+      }
+    });
+    if (prevMonthKey !== '') calendarCells += '</div></div>';
+
+    // ---- Grouped sections for YES mode ----
+    let tableSectionHtml = '';
+
+    if (showModelDetails) {
+      const pickupsArr  = allOrders.filter(x => x.type === 'pickup').sort((a,b) => a.date.localeCompare(b.date));
+      const rejectsArr  = allOrders.filter(x => x.type === 'reject').sort((a,b) => a.date.localeCompare(b.date));
+      const pendingsArr = allOrders.filter(x => x.type === 'pending').sort((a,b) => a.date.localeCompare(b.date));
+
+      const pickupSubTotal = pickupsArr.reduce((s, x) => s + (x.inc || 0), 0);
+      const rejectSubTotal = rejectsArr.reduce((s, x) => s + (x.inc || 0), 0);
+
+      let sections = '';
+
+      if (pickupsArr.length > 0) {
+        sections += `
+          <div class="border-2 border-emerald-300 rounded-xl overflow-hidden mb-2">
+            <div class="bg-emerald-500 text-white p-2 flex justify-between items-center">
+              <span class="font-black text-xs uppercase tracking-wide">✅ PICKUP TRANSACTIONS — ${pickupsArr.length}</span>
+              <span class="font-black text-sm">${formatINR(pickupSubTotal)}</span>
+            </div>
+            <table class="w-full">
+              <tbody>
+                ${pickupsArr.map((item, i) => `
+                  <tr class="border-b border-gray-100 hover:bg-emerald-50 text-xs">
+                    <td class="py-2 px-3 text-gray-400 font-mono w-8">${i + 1}</td>
+                    <td class="py-2 px-3 font-mono whitespace-nowrap font-bold text-gray-700">${item.date}</td>
+                    <td class="py-2 px-3">
+                      <div class="font-bold text-gray-800">${esc(item.ord.phoneModel || '—')}</div>
+                      <div class="text-[10px] text-gray-400 font-mono">#${esc(item.ord.orderId || item.ord.id || '')}</div>
+                    </td>
+                    <td class="py-2 px-3 text-right font-black text-emerald-700 whitespace-nowrap">${formatINR(item.inc)}</td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+        `;
+      }
+
+      if (rejectsArr.length > 0) {
+        sections += `
+          <div class="border-2 border-amber-300 rounded-xl overflow-hidden mb-2">
+            <div class="bg-amber-500 text-white p-2 flex justify-between items-center">
+              <span class="font-black text-xs uppercase tracking-wide">❌ REJECT TRANSACTIONS — ${rejectsArr.length}</span>
+              <span class="font-black text-sm">${formatINR(rejectSubTotal)}</span>
+            </div>
+            <table class="w-full">
+              <tbody>
+                ${rejectsArr.map((item, i) => `
+                  <tr class="border-b border-gray-100 hover:bg-amber-50 text-xs">
+                    <td class="py-2 px-3 text-gray-400 font-mono w-8">${i + 1}</td>
+                    <td class="py-2 px-3 font-mono whitespace-nowrap font-bold text-gray-700">${item.date}</td>
+                    <td class="py-2 px-3">
+                      <div class="font-bold text-gray-800">${esc(item.ord.phoneModel || '—')}</div>
+                      <div class="text-[10px] text-gray-400 font-mono">#${esc(item.ord.orderId || item.ord.id || '')}</div>
+                    </td>
+                    <td class="py-2 px-3 text-right font-black text-amber-700 whitespace-nowrap">${formatINR(item.inc)}</td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+        `;
+      }
+
+      if (pendingsArr.length > 0) {
+        sections += `
+          <div class="border-2 border-gray-300 rounded-xl overflow-hidden mb-2 opacity-80">
+            <div class="bg-gray-400 text-white p-2 flex justify-between items-center">
+              <span class="font-black text-xs uppercase tracking-wide">⏳ PENDING / RESCHEDULED — ${pendingsArr.length} · NOT COUNTED</span>
+              <span class="font-black text-sm">—</span>
+            </div>
+            <table class="w-full">
+              <tbody>
+                ${pendingsArr.map((item, i) => `
+                  <tr class="border-b border-gray-100 text-xs">
+                    <td class="py-2 px-3 text-gray-400 font-mono w-8">${i + 1}</td>
+                    <td class="py-2 px-3 font-mono whitespace-nowrap font-bold text-gray-700">${item.date}</td>
+                    <td class="py-2 px-3">
+                      <div class="font-bold text-gray-600">${esc(item.ord.phoneModel || '—')}</div>
+                      <div class="text-[10px] text-gray-400 font-mono">#${esc(item.ord.orderId || item.ord.id || '')}</div>
+                    </td>
+                    <td class="py-2 px-3 text-right text-gray-400">—</td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+        `;
+      }
+
+      if (!sections) {
+        sections = '<p class="text-center py-6 text-gray-400 text-sm">No transactions in this period</p>';
+      }
+
+      tableSectionHtml = `
+        <div class="mb-3">
+          <p class="text-xs font-bold text-gray-600 uppercase mb-2">📱 Transaction Details — Grouped by Type</p>
+          <div class="max-h-[400px] overflow-y-auto pr-1">
+            ${sections}
+          </div>
+        </div>
+      `;
+    } else {
+      tableSectionHtml = `
+        <div class="mb-3">
+          <p class="text-xs font-bold text-gray-600 uppercase mb-2">📊 Date-wise Summary</p>
+          <div class="max-h-[320px] overflow-y-auto border border-gray-200 rounded-xl">
+            <table class="w-full">
+              <thead class="bg-gray-50 sticky top-0 text-[10px] uppercase text-gray-600 font-bold">
+                <tr>
+                  <th class="py-2 px-2 text-left">Date</th>
+                  <th class="py-2 px-2 text-left">Attendance</th>
+                  <th class="py-2 px-2 text-center">Pickups</th>
+                  <th class="py-2 px-2 text-right">Pickup Inc.</th>
+                  <th class="py-2 px-2 text-center">Rejects</th>
+                  <th class="py-2 px-2 text-right">Reject Inc.</th>
+                  <th class="py-2 px-2 text-center">Pending</th>
+                  <th class="py-2 px-2 text-right">Day Total</th>
+                </tr>
+              </thead>
+              <tbody>${rowsHtml || '<tr><td colspan="8" class="text-center py-6 text-gray-400 text-sm">No data in range</td></tr>'}</tbody>
+            </table>
+          </div>
+        </div>
+      `;
+    }
+
+    const grandTotal = totalPickupInc + totalRejectInc;
+
+    const plainText = buildStatementPlainText({
+      username, uData, fromDate, toDate,
+      totalPickups, totalRejects, totalPending,
+      totalPickupInc, totalRejectInc, grandTotal,
+      showModelDetails, allOrders
+    });
+
+    Swal.close();
+
+    const modalResult = await Swal.fire({
+      title: '',
+      width: 1050,
+      html: `
+        <div class="text-left font-sans">
+          <!-- Header — NO mobile number -->
+          <div class="bg-gradient-to-r from-indigo-600 to-purple-600 text-white p-4 rounded-xl mb-4">
+            <div class="flex items-center justify-between flex-wrap gap-2">
+              <div>
+                <h2 class="text-lg font-bold flex items-center gap-2">📋 (FLIPKART) Rider Statement</h2>
+                <p class="text-base font-bold mt-1">${esc(uData.name || username)}</p>
+                <p class="text-[11px] opacity-90 font-mono">${esc(username)}</p>
+              </div>
+              <div class="text-right text-xs opacity-95">
+                <p class="uppercase font-bold tracking-wide opacity-80">Period</p>
+                <p class="font-bold mt-0.5">${formatDateHuman(fromDate)}</p>
+                <p class="font-bold text-[11px]">→ ${formatDateHuman(toDate)}</p>
+                <p class="text-[10px] mt-1 px-2 py-0.5 bg-white/20 rounded-full inline-block font-bold">
+                  ${showModelDetails ? '📱 Detailed View' : '📊 Summary View'}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <!-- Summary cards -->
+          <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-4">
+            <div class="bg-emerald-50 border border-emerald-200 p-3 rounded-xl text-center">
+              <div class="text-[10px] text-emerald-700 font-bold uppercase">Present</div>
+              <div class="text-xl font-black text-emerald-800 mt-1">${presentCount + halfDayCount}</div>
+              ${halfDayCount > 0 ? `<div class="text-[9px] text-gray-500 mt-0.5">incl. ${halfDayCount} half</div>` : ''}
+            </div>
+            <div class="bg-rose-50 border border-rose-200 p-3 rounded-xl text-center">
+              <div class="text-[10px] text-rose-700 font-bold uppercase">Absent</div>
+              <div class="text-xl font-black text-rose-800 mt-1">${absentCount}</div>
+            </div>
+            <div class="bg-blue-50 border border-blue-200 p-3 rounded-xl text-center">
+              <div class="text-[10px] text-blue-700 font-bold uppercase">Pickups</div>
+              <div class="text-xl font-black text-blue-800 mt-1">${totalPickups}</div>
+              <div class="text-[10px] text-blue-600 font-bold mt-0.5">${formatINR(totalPickupInc)}</div>
+            </div>
+            <div class="bg-amber-50 border border-amber-200 p-3 rounded-xl text-center">
+              <div class="text-[10px] text-amber-700 font-bold uppercase">Rejects</div>
+              <div class="text-xl font-black text-amber-800 mt-1">${totalRejects}</div>
+              <div class="text-[10px] text-amber-600 font-bold mt-0.5">${formatINR(totalRejectInc)}</div>
+            </div>
+          </div>
+
+          <!-- Calendar -->
+          <div class="mb-4">
+            <p class="text-xs font-bold text-gray-600 uppercase mb-2">📅 Attendance Calendar</p>
+            <div class="max-h-[240px] overflow-y-auto border border-gray-200 rounded-xl p-2 bg-white">
+              ${calendarCells || '<p class="text-center text-gray-400 py-4 text-sm">No dates in range</p>'}
+            </div>
+            <div class="flex flex-wrap gap-3 text-[10px] mt-2 text-gray-600 justify-center">
+              <span class="inline-flex items-center gap-1"><span class="w-3 h-3 bg-emerald-100 border border-emerald-300 rounded"></span> Present</span>
+              <span class="inline-flex items-center gap-1"><span class="w-3 h-3 bg-amber-100 border border-amber-300 rounded"></span> Half Day</span>
+              <span class="inline-flex items-center gap-1"><span class="w-3 h-3 bg-rose-100 border border-rose-300 rounded"></span> Absent</span>
+              <span class="inline-flex items-center gap-1"><span class="w-3 h-3 bg-gray-50 border border-gray-200 rounded"></span> Unmarked</span>
+            </div>
+          </div>
+
+          ${tableSectionHtml}
+
+          <!-- Grand total -->
+          <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
+            <div class="bg-indigo-50 border border-indigo-200 p-3 rounded-xl text-center">
+              <div class="text-[10px] text-indigo-700 font-bold uppercase">Pickup Incentive</div>
+              <div class="text-lg font-black text-indigo-800 mt-1">${formatINR(totalPickupInc)}</div>
+            </div>
+            <div class="bg-orange-50 border border-orange-200 p-3 rounded-xl text-center">
+              <div class="text-[10px] text-orange-700 font-bold uppercase">Reject Incentive</div>
+              <div class="text-lg font-black text-orange-800 mt-1">${formatINR(totalRejectInc)}</div>
+            </div>
+            <div class="bg-emerald-50 border-2 border-emerald-300 p-3 rounded-xl text-center">
+              <div class="text-[10px] text-emerald-700 font-bold uppercase">Grand Total</div>
+              <div class="text-lg font-black text-emerald-800 mt-1">${formatINR(grandTotal)}</div>
+            </div>
+          </div>
+        </div>
+      `,
+      showCancelButton: true,
+      showConfirmButton: true,
+      confirmButtonText: '📋 Copy Statement',
+      cancelButtonText: 'Close',
+      confirmButtonColor: '#4f46e5',
+      cancelButtonColor: '#64748b'
+    });
+
+    if (modalResult.isConfirmed) {
+      try {
+        await navigator.clipboard.writeText(plainText);
+        showToast('✅ Statement copied to clipboard!', 'success');
+      } catch (_) {
+        const ta = document.createElement('textarea');
+        ta.value = plainText;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        try { document.execCommand('copy'); showToast('✅ Statement copied!', 'success'); }
+        catch (e) { showToast('Copy failed — please select manually', 'error'); }
+        document.body.removeChild(ta);
+      }
+    }
+
+  } catch (e) {
+    Swal.close();
+    console.error('Statement error:', e);
+    showToast('Failed to generate statement', 'error');
+  }
+}
+
+// ----------------------------------------------------------------
+// Plain text builder — NO mobile, model details if YES
+// ----------------------------------------------------------------
+function buildStatementPlainText(p) {
+  const thick = '════════════════════════════════════════';
+  const thin  = '────────────────────────────────────────';
+  const L = [];
+
+  L.push(thick);
+  L.push('📋 (FLIPKART) RIDER STATEMENT');
+  L.push(thick);
+  L.push('');
+  L.push(`👤 Rider      : ${p.uData.name || p.username}`);
+  L.push(`🆔 Username   : ${p.username}`);
+  L.push(`📅 Period     : ${formatDateHuman(p.fromDate)} → ${formatDateHuman(p.toDate)}`);
+  L.push('');
+  L.push(thin);
+  L.push('📦 WORK SUMMARY');
+  L.push(thin);
+  L.push(`✅ Total Pickups : ${p.totalPickups}`);
+  L.push(`❌ Total Rejects : ${p.totalRejects}`);
+  L.push(`⏳ Total Pending : ${p.totalPending}`);
+  L.push('');
+
+  if (p.showModelDetails && p.allOrders && p.allOrders.length) {
+    const pickupsArr  = p.allOrders.filter(x => x.type === 'pickup').sort((a,b) => a.date.localeCompare(b.date));
+    const rejectsArr  = p.allOrders.filter(x => x.type === 'reject').sort((a,b) => a.date.localeCompare(b.date));
+    const pendingsArr = p.allOrders.filter(x => x.type === 'pending').sort((a,b) => a.date.localeCompare(b.date));
+
+    if (pickupsArr.length > 0) {
+      L.push(thin);
+      L.push(`✅ PICKUP TRANSACTIONS (${pickupsArr.length})`);
+      L.push(thin);
+      pickupsArr.forEach((item, i) => {
+        const model = item.ord.phoneModel || '(no model)';
+        const ordId = item.ord.orderId || item.ord.id || '—';
+        L.push(`${String(i + 1).padStart(2, '0')}. ${formatDateHuman(item.date)}`);
+        L.push(`    📱 Model : ${model}`);
+        L.push(`    🔖 Order : ${ordId}`);
+        L.push(`    💰 Amount: ${formatINR(item.inc)}`);
+      });
+      const sub = pickupsArr.reduce((s, x) => s + (x.inc || 0), 0);
+      L.push('');
+      L.push(`   ➜ Pickup Subtotal: ${formatINR(sub)}`);
+      L.push('');
+    }
+
+    if (rejectsArr.length > 0) {
+      L.push(thin);
+      L.push(`❌ REJECT TRANSACTIONS (${rejectsArr.length})`);
+      L.push(thin);
+      rejectsArr.forEach((item, i) => {
+        const model = item.ord.phoneModel || '(no model)';
+        const ordId = item.ord.orderId || item.ord.id || '—';
+        L.push(`${String(i + 1).padStart(2, '0')}. ${formatDateHuman(item.date)}`);
+        L.push(`    📱 Model : ${model}`);
+        L.push(`    🔖 Order : ${ordId}`);
+        L.push(`    💰 Amount: ${formatINR(item.inc)}`);
+      });
+      const sub = rejectsArr.reduce((s, x) => s + (x.inc || 0), 0);
+      L.push('');
+      L.push(`   ➜ Reject Subtotal: ${formatINR(sub)}`);
+      L.push('');
+    }
+
+    if (pendingsArr.length > 0) {
+      L.push(thin);
+      L.push(`⏳ PENDING / RESCHEDULED (${pendingsArr.length}) — Not Counted`);
+      L.push(thin);
+      pendingsArr.forEach((item, i) => {
+        const model = item.ord.phoneModel || '(no model)';
+        const ordId = item.ord.orderId || item.ord.id || '—';
+        L.push(`${String(i + 1).padStart(2, '0')}. ${formatDateHuman(item.date)}`);
+        L.push(`    📱 Model : ${model}`);
+        L.push(`    🔖 Order : ${ordId}`);
+      });
+      L.push('');
+    }
+  }
+
+  L.push(thick);
+  L.push('💰 EARNINGS SUMMARY');
+  L.push(thick);
+  L.push(`📦 Pickup Incentive : ${formatINR(p.totalPickupInc)}`);
+  L.push(`❌ Reject Incentive : ${formatINR(p.totalRejectInc)}`);
+  L.push(thin);
+  L.push(`💵 GRAND TOTAL      : ${formatINR(p.grandTotal)}`);
+  L.push(thick);
+  L.push('');
+  L.push(`🕒 Generated: ${new Date().toLocaleString('en-IN')}`);
+
+  return L.join('\n');
+}
+
+window.toggleSalesAccess = toggleSalesAccess;
